@@ -1,0 +1,13 @@
+set(SOURCE_FILES kvstore.cpp)
+set(HEADER_FILES kvstore.h kvtraits.h)
+set(OBJECTS)
+
+add_subdirectory(lmdb)
+
+add_definitions(-DFlexisPersistence_EXPORTS)
+
+add_library(FlexisKVStore OBJECT ${SOURCE_FILES} ${OBJECTS})
+
+target_include_directories(FlexisKVStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+set_target_properties(FlexisKVStore PROPERTIES TARGET_OBJECTS $<TARGET_OBJECTS:LmdbStore>)
