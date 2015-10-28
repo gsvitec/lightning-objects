@@ -83,6 +83,12 @@ protected:
     return false;
   }
 
+  ObjectId key() override
+  {
+    m_cursor.get(m_keyval, MDB_GET_CURRENT);
+    return SK_OBJID(m_keyval.data());
+  }
+
   bool next() override
   {
     while(m_cursor.get(m_keyval, MDB_NEXT)) {
@@ -96,6 +102,11 @@ protected:
       }
     }
     return false;
+  }
+
+  void erase() override
+  {
+    m_cursor.del();
   }
 
   virtual void close() override {
@@ -188,7 +199,7 @@ public:
 
 //Start KeyValueStoreImpl implementation
 
-flexis::persistence::KeyValueStore *KeyValueStore::Factory::make(std::string location) const
+KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 {
   return new KeyValueStoreImpl(location, name);
 }

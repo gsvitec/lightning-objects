@@ -2,8 +2,8 @@
 // Created by cse on 10/10/15.
 //
 
-#include <flexis_kvstore.h>
-#include <flexis_kvlibtraits.h>
+#include <kvstore/kvstore.h>
+#include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
 #include <iostream>
 
@@ -87,8 +87,7 @@ void testColoredPolygonIterator(KeyValueStore *kv)
 
 int main()
 {
-  lmdb::KeyValueStore::Factory fact{"test"};
-  KeyValueStore *kv = fact.make(".");
+  KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();

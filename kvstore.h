@@ -86,11 +86,6 @@ using WriteTransactionPtr = std::shared_ptr<kv::WriteTransaction>;
 class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
 {
 public:
-  struct FlexisPersistence_EXPORT Factory
-  {
-    virtual KeyValueStore *make(std::string location) const = 0;
-  };
-
   /**
    * register a type for key/value persistence. It is assumed that a ClassTraits<type> implementation is visibly defined in the
    * current namespace. If this is the first call for this type, a ClassId and a ObjectId generator will be persistently
@@ -146,6 +141,16 @@ protected:
   virtual bool next() = 0;
 
   /**
+   * delete the object at the current cursor position. Cursor is not moved
+   */
+  virtual void erase() = 0;
+
+  /**
+   * @return the objectId of the item at the current cursor position
+   */
+  virtual ObjectId key() = 0;
+
+  /**
    * close the cursor an release all resources
    */
   virtual void close() = 0;
@@ -181,6 +186,16 @@ public:
   ~Cursor() {
     delete m_helper;
   };
+
+  ObjectId key()
+  {
+    return m_helper->key();
+  }
+
+  void erase()
+  {
+    m_helper->erase();
+  }
 
   T *get()
   {
@@ -304,8 +319,8 @@ public:
  */
 class FlexisPersistence_EXPORT WriteTransaction : public ReadTransaction
 {
+  template<typename T, typename V> friend class BasePropertyStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
-  template <typename T, typename F> friend class StoreAccessFP;
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
@@ -360,8 +375,7 @@ protected:
     //put data into buffer
     PropertyId propertyId = 0;
     for(auto info : Traits::properties) {
-
-      //we use the key index (+1) as id
+      //we use the key index (+1) as proeprty id
       propertyId++;
 
       if(!info->enabled) continue;
@@ -424,13 +438,22 @@ public:
   {
     saveObject<T>(objectId, obj, false);
   }
+
+  template <typename T>
+  void erase()
+  {
+    for(auto cursor = openCursor<T>(); !cursor->atEnd(); ++(*cursor)) {
+      T *loaded = cursor->get();
+      //cursor->
+    }
+  }
 };
 
 /**
  * storage trait for base types that go directly into the shallow buffer
  */
 template<typename T, typename V>
-struct SimplePropertyStorage : public StoreAccessBase
+struct BasePropertyStorage : public StoreAccessBase
 {
   void load(ReadTransaction *tr, ReadBuf &buf, void *obj, const PropertyAccessBase *pa, ClassId classId, ObjectId objectId, PropertyId propertyId)
   {
@@ -452,7 +475,7 @@ struct SimplePropertyStorage : public StoreAccessBase
  * storage trait for string, with dynamic size calculation (type.byteSize is 0)
  */
 template<typename T>
-struct SimplePropertyStorage<T, std::string> : public StoreAccessBase
+struct BasePropertyStorage<T, std::string> : public StoreAccessBase
 {
   size_t size(void *obj, const PropertyAccessBase *pa) override {
     std::string val;
@@ -581,18 +604,18 @@ template<typename T, typename V> struct ObjectVectorPropertyStorage : public Sto
   }
 };
 
-template<typename T> struct PropertyStorage<T, short> : public SimplePropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, unsigned short> : public SimplePropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, int> : public SimplePropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, unsigned int> : public SimplePropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, long> : public SimplePropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, unsigned long> : public SimplePropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, long long> : public SimplePropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, unsigned long long> : public SimplePropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, float> : public SimplePropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, double> : public SimplePropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, bool> : public SimplePropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, std::string> : public SimplePropertyStorage<T, std::string>{};
+template<typename T> struct PropertyStorage<T, short> : public BasePropertyStorage<T, short>{};
+template<typename T> struct PropertyStorage<T, unsigned short> : public BasePropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, long>{};
+template<typename T> struct PropertyStorage<T, unsigned int> : public BasePropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, long> : public BasePropertyStorage<T, long>{};
+template<typename T> struct PropertyStorage<T, unsigned long> : public BasePropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, long long> : public BasePropertyStorage<T, long long>{};
+template<typename T> struct PropertyStorage<T, unsigned long long> : public BasePropertyStorage<T, unsigned long long>{};
+template<typename T> struct PropertyStorage<T, float> : public BasePropertyStorage<T, float>{};
+template<typename T> struct PropertyStorage<T, double> : public BasePropertyStorage<T, double>{};
+template<typename T> struct PropertyStorage<T, bool> : public BasePropertyStorage<T, bool>{};
+template<typename T> struct PropertyStorage<T, std::string> : public BasePropertyStorage<T, std::string>{};
 
 template<typename T> struct PropertyStorage<T, std::vector<short>> : public VectorPropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, std::vector<unsigned short>> : public VectorPropertyStorage<T, unsigned short>{};

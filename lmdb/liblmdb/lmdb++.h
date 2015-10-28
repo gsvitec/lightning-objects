@@ -31,7 +31,7 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <lmdb.h>      /* for MDB_*, mdb_*() */
+#include "lmdb.h"      /* for MDB_*, mdb_*() */
 
 #ifdef LMDBXX_DEBUG
 #include <cassert>     /* for assert() */
@@ -1953,6 +1953,13 @@ public:
             const MDB_cursor_op op = MDB_SET) {
     lmdb::val k{&key, sizeof(K)};
     return get(k, nullptr, op);
+  }
+
+  /**
+   * Delete the item to which the cursor refers
+   */
+  void del(unsigned int flags=0) {
+    lmdb::cursor_del(handle(), flags);
   }
 };
 

@@ -388,6 +388,10 @@ struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
 template <typename T> struct ClassTraits;
 
+struct EmptyClass
+{
+};
+
 struct ClassInfo {
   ClassInfo(const ClassInfo &other) = delete;
 
@@ -397,13 +401,15 @@ struct ClassInfo {
 
   ClassInfo(const char *name) : name(name) {}
 };
-template <typename T>
+template <typename T, typename S=EmptyClass>
 struct ClassTraitsBase
 {
   static ClassInfo info;
   static PropertyAccessBase * properties[];
 
-  static unsigned num_properties() {return sizeof(properties) / sizeof(PropertyAccessBase *);}
+  static unsigned num_properties() {
+    return ClassTraits<S>::num_properties() + unsigned(sizeof(properties) / sizeof(PropertyAccessBase *));
+  }
 
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value) {
@@ -418,6 +424,13 @@ struct ClassTraitsBase
   }
 };
 
+template <>
+struct ClassTraits<EmptyClass> {
+  static PropertyAccessBase * properties[0];
+
+  static unsigned num_properties() {return 0;}
+};
+
 template<typename T>
 static PropertyType object_vector_t() {
   using Traits = ClassTraits<T>;
@@ -427,7 +440,7 @@ static PropertyType object_vector_t() {
 template<typename T>
 static PropertyType object_t() {
   using Traits = ClassTraits<T>;
-  return PropertyType(Traits::info.ame);
+  return PropertyType(Traits::info.name);
 }
 
 }

@@ -5,7 +5,7 @@
 #ifndef FLEXIS_LMDBSTORE_H
 #define FLEXIS_LMDBSTORE_H
 
-#include <kvstore.h>
+#include "../kvstore.h"
 
 namespace flexis {
 namespace persistence {
@@ -14,11 +14,11 @@ namespace lmdb {
 class FlexisPersistence_EXPORT KeyValueStore : public flexis::persistence::KeyValueStore
 {
 public:
-  struct FlexisPersistence_EXPORT Factory : public flexis::persistence::KeyValueStore::Factory
+  struct FlexisPersistence_EXPORT Factory
   {
-    const std::string name;
-    Factory(std::string name) : name(name) {}
-    flexis::persistence::KeyValueStore *make(std::string location) const override;
+    const std::string location, name;
+    Factory(std::string location, std::string name) : location(location), name(name) {}
+    operator flexis::persistence::KeyValueStore *() const;
   };
 };
 

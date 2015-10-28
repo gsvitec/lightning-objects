@@ -122,8 +122,7 @@ void test_lmdb_read()
 
 int main()
 {
-  flexislmdb::KeyValueStore::Factory fact{"bench"};
-  KeyValueStore *kv = fact.make(".");
+  KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
