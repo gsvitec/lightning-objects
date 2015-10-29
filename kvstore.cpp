@@ -10,6 +10,8 @@ namespace persistence {
 
 using namespace std;
 
+Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
+
 void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBase * properties[], unsigned numProperties)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;

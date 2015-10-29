@@ -17,6 +17,8 @@ namespace flexis {
 namespace persistence {
 namespace kv {
 
+#define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
+
 using ClassId = uint16_t;
 using ObjectId = uint32_t;
 using PropertyId = uint16_t;
@@ -392,6 +394,37 @@ struct EmptyClass
 {
 };
 
+
+class Properties
+{
+  const unsigned numProps;
+  PropertyAccessBase ** const properties;
+  Properties * const superIter;
+  const unsigned startPos;
+
+  Properties(PropertyAccessBase * properties[], unsigned numProps, Properties *superIter)
+      : numProps(numProps), properties(properties), superIter(superIter), startPos(superIter ? superIter->full_size() : 0)
+  {}
+
+  Properties(const Properties& mit) = delete;
+public:
+  template <typename T, typename S=EmptyClass>
+  static Properties *mk() {
+    return new Properties(
+        ClassTraits<T>::decl_props,
+        ARRAY_SZ(ClassTraits<T>::decl_props),
+        ClassTraits<S>::properties);
+  }
+
+  inline unsigned full_size() {
+    return superIter ? superIter->full_size() + numProps : numProps;
+  }
+
+  PropertyAccessBase * get(unsigned index) {
+    return index >= startPos ? properties[index-startPos] : superIter->get(index);
+  }
+};
+
 struct ClassInfo {
   ClassInfo(const ClassInfo &other) = delete;
 
@@ -401,15 +434,12 @@ struct ClassInfo {
 
   ClassInfo(const char *name) : name(name) {}
 };
-template <typename T, typename S=EmptyClass>
+template <typename T>
 struct ClassTraitsBase
 {
   static ClassInfo info;
-  static PropertyAccessBase * properties[];
-
-  static unsigned num_properties() {
-    return ClassTraits<S>::num_properties() + unsigned(sizeof(properties) / sizeof(PropertyAccessBase *));
-  }
+  static Properties * properties;
+  static PropertyAccessBase * decl_props[];
 
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value) {
@@ -418,7 +448,7 @@ struct ClassTraitsBase
   }
 
   template <typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV value) {
+  static void get(T &d, const PropertyAccessBase *pa, TV &value) {
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
     acc->set(d, value);
   }
@@ -426,9 +456,8 @@ struct ClassTraitsBase
 
 template <>
 struct ClassTraits<EmptyClass> {
-  static PropertyAccessBase * properties[0];
-
-  static unsigned num_properties() {return 0;}
+  static Properties * properties;
+  static PropertyAccessBase * decl_props[0];
 };
 
 template<typename T>
@@ -443,9 +472,9 @@ static PropertyType object_t() {
   return PropertyType(Traits::info.name);
 }
 
-}
-}
-}
+} //kv
+} //persistence
+} //flexis
 
 
 #endif //FLEXIS_FLEXIS_KVTRAITS_H

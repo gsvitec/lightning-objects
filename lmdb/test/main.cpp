@@ -6,6 +6,7 @@
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
 #include <iostream>
+#include <array>
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
@@ -91,6 +92,9 @@ int main()
 
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
+
+  //kv->registerType<flexis::IFlexisOverlay>();
+  kv->registerType<flexis::RectangularOverlay>();
 
   testColored2DPoint(kv);
   testColoredPolygon(kv);

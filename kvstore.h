@@ -8,6 +8,8 @@
 #include <string>
 #include <typeinfo>
 #include <memory>
+#include <functional>
+#include <unordered_map>
 #include <persistence_error.h>
 #include <FlexisPersistence_Export.h>
 #include "kvtraits.h"
@@ -85,6 +87,9 @@ using WriteTransactionPtr = std::shared_ptr<kv::WriteTransaction>;
  */
 class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
 {
+  friend class kv::ReadTransaction;
+  std::unordered_map<ClassId, std::function<void *()>> objectFactories;
+
 public:
   /**
    * register a type for key/value persistence. It is assumed that a ClassTraits<type> implementation is visibly defined in the
@@ -98,7 +103,9 @@ public:
     using Traits = ClassTraits<T>;
 
     unsigned index = 0;
-    updateClassSchema(Traits::info, Traits::properties, Traits::num_properties());
+    updateClassSchema(Traits::info, Traits::decl_props, ARRAY_SZ(Traits::decl_props));
+
+    objectFactories[Traits::info.classId] = []() {return new T();};
   }
 
   /**
@@ -197,7 +204,7 @@ public:
     m_helper->erase();
   }
 
-  T *get()
+  T *get(ObjectId *objId=nullptr)
   {
     T *obj = new T();
     using Traits = ClassTraits<T>;
@@ -210,15 +217,17 @@ public:
     //nothing here
     if(readBuf.empty()) return nullptr;
 
-    PropertyId propertyId = 0;
-    for(auto info : Traits::properties) {
+    if(objId) *objId = key.objectId;
 
+    PropertyId propertyId = 0;
+    for(unsigned px=0, sz=Traits::properties->full_size(); px < sz; px++) {
       //we use the key index (+1) as id
       propertyId++;
 
-      if(!info->enabled) continue;
+      PropertyAccessBase *p = Traits::properties->get(px);
+      if(!p->enabled) continue;
 
-      info->storage->load(m_tr, readBuf, obj, info, m_classId, key.objectId, propertyId);
+      p->storage->load(m_tr, readBuf, obj, p, m_classId, key.objectId, propertyId);
     }
     return obj;
   }
@@ -245,6 +254,8 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
+  template<typename T, typename V> friend class ObjectPropertySPStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertySPStorage;
 
 protected:
   KeyValueStore &store;
@@ -258,8 +269,8 @@ protected:
    */
   template<typename T> T *loadObject(long objectId)
   {
-    T *obj = new T();
     using Traits = ClassTraits<T>;
+    T *obj = (T *)store.objectFactories[Traits::info.classId]();
 
     ClassId classId = Traits::info.classId;
 
@@ -271,13 +282,14 @@ protected:
     if(readBuf.empty()) return nullptr;
 
     PropertyId propertyId = 0;
-    for(auto info : Traits::properties) {
-      //use array index (+1) as id
+    for(unsigned px=0, sz=Traits::properties->full_size(); px < sz; px++) {
+      //we use the key index (+1) as id
       propertyId++;
 
-      if(!info->enabled) continue;
+      PropertyAccessBase *p = Traits::properties->get(px);
+      if(!p->enabled) continue;
 
-      info->storage->load(this, readBuf, obj, info, classId, objectId, propertyId);
+      p->storage->load(this, readBuf, obj, p, classId, objectId, propertyId);
     }
     return obj;
   }
@@ -324,17 +336,19 @@ class FlexisPersistence_EXPORT WriteTransaction : public ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
+  template<typename T, typename V> friend class ObjectPropertySPStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertySPStorage;
 
   /**
    * calculate shallow byte size, i.e. the size of the buffer required for properties that dont't get saved under
    * an individual key
    */
   template<typename T>
-  size_t calculateBuffer(T *obj, PropertyAccessBase *properties[], unsigned numProperties)
+  size_t calculateBuffer(T *obj, Properties *properties)
   {
     size_t size = 0;
-    for(int i=0; i<numProperties; i++) {
-      auto info = properties[i];
+    for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
+      auto info = properties->get(i);
 
       if(!info->enabled) continue;
 
@@ -369,18 +383,19 @@ protected:
     ObjectId objectId = newObject ? ++classInfo.maxObjectId : id;
 
     //create the data buffer
-    size_t size = calculateBuffer(&obj, Traits::properties, Traits::num_properties());
+    size_t size = calculateBuffer(&obj, Traits::properties);
     writeBuf().start(size);
 
     //put data into buffer
     PropertyId propertyId = 0;
-    for(auto info : Traits::properties) {
-      //we use the key index (+1) as proeprty id
+    for(unsigned px=0, sz=Traits::properties->full_size(); px < sz; px++) {
+      //we use the key index (+1) as id
       propertyId++;
 
-      if(!info->enabled) continue;
+      PropertyAccessBase *p = Traits::properties->get(px);
+      if(!p->enabled) continue;
 
-      info->storage->save(this, &obj, info, classId, objectId, propertyId);
+      p->storage->save(this, &obj, p, classId, objectId, propertyId);
     }
 
     if(!putData(classId, objectId, 0, writeBuf()))
@@ -437,6 +452,34 @@ public:
   void updateObject(ObjectId objectId, T &obj)
   {
     saveObject<T>(objectId, obj, false);
+  }
+
+  /**
+   * update a mapped object which is a member of another object
+   * @param objId the objectId of the enclosing object
+   * @param propertyId the id of the property which holds the member
+   * @param m the member object
+   */
+  template <typename T, typename M>
+  void updateMemberObject(ObjectId objId, PropertyId propertyId, M *m) {
+    using Traits = ClassTraits<T>;
+
+    ClassInfo &classInfo = Traits::info;
+    ClassId classId = classInfo.classId;
+
+    //read property data, which is a SK
+    ReadBuf rb;
+    getData(rb, classId, objId, propertyId);
+    StorageKey sk;
+    //got it -> we have the objectId of the member
+    if(rb.read(sk)) {
+      saveObject<M>(sk.objectId, *m, false);
+    }
+  }
+
+  template <typename T>
+  void deleteObject(ObjectId objId) {
+
   }
 
   template <typename T>
@@ -553,7 +596,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
         V *v = tr->getObject<V>(sk.objectId);
         T *tp = reinterpret_cast<T *>(obj);
         ClassTraits<T>::get(*tp, pa, *v);
-        delete obj;
+        delete tp;
       }
     }
   }
@@ -604,6 +647,51 @@ template<typename T, typename V> struct ObjectVectorPropertyStorage : public Sto
   }
 };
 
+/**
+ * storage trait for mapped object vectors
+ */
+template<typename T, typename V> struct ObjectVectorPropertySPStorage : public StoreAccessBase {
+  void save(WriteTransaction *tr, void *obj, const PropertyAccessBase *pa, ClassId classId, ObjectId objectId, PropertyId propertyId)
+  {
+    std::vector<std::shared_ptr<V>> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    size_t psz = StorageKey::byteSize * val.size();
+    WriteBuf propBuf(psz);
+
+    tr->pushWriteBuf();
+    ClassId childClassId = ClassTraits<T>::info.classId;
+    for(std::shared_ptr<V> &v : val) {
+      ObjectId childId = tr->putObject<V>(*v);
+
+      propBuf.append(childClassId, childId, 0);
+    }
+    tr->popWriteBuf();
+    if(!tr->putData(classId, objectId, propertyId, propBuf))
+      throw persistence_error("data was not saved");
+  }
+
+  void load(ReadTransaction *tr, ReadBuf &buf, void *obj, const PropertyAccessBase *pa, ClassId classId, ObjectId objectId, PropertyId propertyId)
+  {
+    std::vector<std::shared_ptr<V>> val;
+
+    tr->getData(buf, classId, objectId, propertyId);
+    if(!buf.empty()) {
+      StorageKey sk;
+      while(buf.read(sk)) {
+        V *obj = tr->getObject<V>(sk.objectId);
+        if(obj) {
+          val.push_back(std::shared_ptr<V>(obj));
+          delete obj;
+        }
+      }
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, val);
+  }
+};
+
 template<typename T> struct PropertyStorage<T, short> : public BasePropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, unsigned short> : public BasePropertyStorage<T, unsigned short>{};
 template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, long>{};
@@ -628,10 +716,19 @@ template<typename T> struct PropertyStorage<T, std::vector<double>> : public Vec
 template<typename T> struct PropertyStorage<T, std::vector<bool>> : public VectorPropertyStorage<T, bool>{};
 template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public VectorPropertyStorage<T, std::string>{};
 
-template <typename O, typename P, P O::*p>
-struct ObjectPropertyAssign : public PropertyAssign<O, P, p> {
+template <typename O, typename P, std::shared_ptr<P> O::*p>
+struct ObjectPropertyAssign : public PropertyAccess<O, P> {
   ObjectPropertyAssign(const char * name)
-      : PropertyAssign<O, P, p>(name, new ObjectPropertyStorage<O, P>(), object_t<P>()) {}
+      : PropertyAccess<O, P>(name, new ObjectPropertyStorage<O, P>(), object_t<P>()) {}
+  void set(O &o, P val) const override { o.*p = val;}
+  P get(O &o) const override { return o.*p;}
+};
+template <typename O, typename P, std::shared_ptr<P> O::*p>
+struct ObjectPropertySPAssign : public PropertyAccess<O, std::shared_ptr<P>> {
+  ObjectPropertySPAssign(const char * name)
+      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPropertyStorage<O, P>(), object_t<P>()) {}
+  void set(O &o, std::shared_ptr<P> val) const override { o.*p = val;}
+  std::shared_ptr<P> get(O &o) const override { return o.*p;}
 };
 
 template <typename O, typename P, std::vector<P> O::*p>
@@ -639,6 +736,12 @@ struct ObjectVectorPropertyAssign : public PropertyAssign<O, std::vector<P>, p> 
   ObjectVectorPropertyAssign(const char * name)
       : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorage<O, P>(), object_vector_t<P>()) {}
 };
+template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
+struct ObjectVectorPropertySPAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
+  ObjectVectorPropertySPAssign(const char * name)
+      : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectVectorPropertySPStorage<O, P>(), object_vector_t<P>()) {}
+};
+
 } //kv
 
 } //persistence
