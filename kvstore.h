@@ -82,13 +82,16 @@ protected:
 using TransactionPtr = std::shared_ptr<kv::ReadTransaction>;
 using WriteTransactionPtr = std::shared_ptr<kv::WriteTransaction>;
 
+using ObjectFactories = std::unordered_map<ClassId, std::function<void *()>>;
+
 /**
  * high-performance key/value store interface
  */
 class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
-  std::unordered_map<ClassId, std::function<void *()>> objectFactories;
+
+  ObjectFactories objectFactories;
 
 public:
   /**
@@ -194,14 +197,15 @@ class Cursor
 
   const ClassId m_classId;
   CursorHelper * const m_helper;
-  ReadTransaction *const m_tr;
+  ReadTransaction * const m_tr;
+  ObjectFactories & m_objectFactories;
   bool m_hasData;
 
 public:
   using Ptr = std::shared_ptr<Cursor<T>>;
 
-  Cursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr)
-      : m_classId(classId), m_helper(helper), m_tr(tr)
+  Cursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr, ObjectFactories &objectFactories)
+      : m_classId(classId), m_helper(helper), m_tr(tr), m_objectFactories(objectFactories)
   {
     m_hasData = helper->start(classId);
   }
@@ -222,8 +226,8 @@ public:
 
   T *get(ObjectId *objId=nullptr)
   {
-    T *obj = new T();
     using Traits = ClassTraits<T>;
+    T *obj = (T *)m_objectFactories[Traits::info.classId]();
 
     //load the data buffer
     ReadBuf readBuf;
@@ -324,7 +328,7 @@ public:
     using Traits = ClassTraits<T>;
     ClassId classId = Traits::info.classId;
 
-    return typename Cursor<T>::Ptr(new Cursor<T>(classId, openCursor(classId), this));
+    return typename Cursor<T>::Ptr(new Cursor<T>(classId, openCursor(classId), this, store.objectFactories));
   }
 
   /**
@@ -637,7 +641,7 @@ template<typename T, typename V> struct ObjectPtrPropertyStorage : public StoreA
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
-    WriteBuf propBuf(sizeof(StorageKey::byteSize));
+    WriteBuf propBuf(StorageKey::byteSize);
 
     ClassId childClassId = ClassTraits<T>::info.classId;
     tr->pushWriteBuf();
@@ -645,7 +649,8 @@ template<typename T, typename V> struct ObjectPtrPropertyStorage : public StoreA
     tr->popWriteBuf();
 
     //update the property so that it holds the object id
-    std::shared_ptr<V> val2(val.get(), object_handler<V>(childId));
+    std::shared_ptr<V> val2(nullptr, object_handler<V>(childId));
+    val2.swap(val);
     ClassTraits<T>::get(*tp, pa, val2);
 
     propBuf.append(childClassId, childId, 0);
@@ -663,7 +668,6 @@ template<typename T, typename V> struct ObjectPtrPropertyStorage : public StoreA
         std::shared_ptr<V> vp = std::shared_ptr<V>(v, object_handler<V>(sk.objectId));
         T *tp = reinterpret_cast<T *>(obj);
         ClassTraits<T>::get(*tp, pa, vp);
-        delete tp;
       }
     }
   }
