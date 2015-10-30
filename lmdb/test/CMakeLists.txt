@@ -1,13 +1,13 @@
 # LMDB test
 
-set(SOURCE_FILES main.cpp ../../kvstore.cpp)
-
 add_definitions(-DFlexisPersistence_EXPORTS)
 
-add_executable(LmdbTest ${SOURCE_FILES} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
+set(DEP_SRC ../../kvstore.cpp ../../../flexis_persistence.cpp)
+
+add_executable(LmdbTest main.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
 add_dependencies(LmdbTest LmdbStore FlexisOverlays)
 
-add_executable(LmdbBench bench.cpp ../../kvstore.cpp $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
+add_executable(LmdbBench bench.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
 add_dependencies(LmdbBench LmdbStore FlexisOverlays)
 
 target_link_libraries(LmdbTest FlexisBase)
