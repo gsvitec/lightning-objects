@@ -219,11 +219,11 @@ struct PropertyType
   const unsigned byteSize;
 
   //name of the mapped type if this is an object type
-  const std::string className;
+  const char *className;
 
   PropertyType(unsigned id, unsigned byteSize, bool isVector=false)
-      : id(id), isVector(isVector), byteSize(byteSize), className("") {}
-  PropertyType(const std::string &clsName, bool isVector=false) :
+      : id(id), isVector(isVector), byteSize(byteSize), className(nullptr) {}
+  PropertyType(const char *clsName, bool isVector=false) :
       id(0), isVector(isVector), byteSize(StorageKey::byteSize), className(clsName) {}
 
   bool operator == (const PropertyType &other) const {
@@ -428,7 +428,7 @@ public:
 struct ClassInfo {
   ClassInfo(const ClassInfo &other) = delete;
 
-  const std::string name;
+  const char *name;
   ClassId classId = 0;
   ObjectId maxObjectId = 0;
 
@@ -441,12 +441,18 @@ struct ClassTraitsBase
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
 
+  /**
+   * put (copy) the value of the given property into value
+   */
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value) {
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
     value = acc->get(d);
   }
 
+  /**
+   * update the given property using value
+   */
   template <typename TV>
   static void get(T &d, const PropertyAccessBase *pa, TV &value) {
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;

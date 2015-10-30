@@ -336,8 +336,8 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
   size_t nameLen = strlen(prop->name) + 1;
   size_t size = nameLen + 7;
   size_t classLen = 0;
-  if(!prop->type.className.empty()) {
-    classLen = prop->type.className.length() + 1;
+  if(prop->type.className) {
+    classLen = strlen(prop->type.className) + 1;
     size += classLen;
   }
 
@@ -358,7 +358,7 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
   write_integer<unsigned>(writePtr, prop->type.byteSize, 2);
   writePtr += 2;
   if(classLen > 0)
-    memcpy(writePtr, prop->type.className.c_str(), classLen);
+    memcpy(writePtr, prop->type.className, classLen);
 
   return val;
 }

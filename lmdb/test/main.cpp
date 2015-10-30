@@ -86,6 +86,11 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+std::shared_ptr<Colored2DPoint> test(std::shared_ptr<Colored2DPoint> p) {
+  std::shared_ptr<Colored2DPoint> p2 = p;
+  return p2;
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};

@@ -12,6 +12,11 @@ using namespace std;
 
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
 
+inline bool streq(string s1, const char *s2) {
+  if(s2 == nullptr) return s1.empty();
+  return s1 == s2;
+}
+
 void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBase * properties[], unsigned numProperties)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
@@ -26,7 +31,7 @@ void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBa
         if(pi->name == properties[i]->name) {
           const PropertyAccessBase * pa = properties[i];
           if(pa->type.id != pi->typeId
-             || pa->type.byteSize != pi->byteSize || pi->className != pa->type.className
+             || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
              || pi->isVector != pa->type.isVector) {
             string msg = string("data type for property [") + pi->name + "] has changed";
             throw incompatible_schema_error(msg.c_str());

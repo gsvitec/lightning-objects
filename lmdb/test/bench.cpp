@@ -129,8 +129,8 @@ int main()
 
   testColored2DPointWrite(kv);
   testColored2DPointRead(kv);
-  test_lmdb_write();
-  test_lmdb_read();
+  //test_lmdb_write();
+  //test_lmdb_read();
 
   delete kv;
   return 0;
