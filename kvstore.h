@@ -94,9 +94,11 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   friend class kv::ReadTransaction;
   friend class kv::WriteTransaction;
 
+  //backward mapping from ClassId, used during polymorphic operations
   ObjectFactories objectFactories;
   ObjectProperties objectProperties;
   ObjectClassInfos objectClassInfos;
+
   std::unordered_map<const std::type_info *, ClassId> typeInfos;
 
 public:
@@ -199,7 +201,7 @@ protected:
 };
 
 /**
- * cursor for iterating over class objects
+ * cursor for iterating over class objects. Note that this cusror is not polymorphic
  */
 template <typename T>
 class Cursor
@@ -209,14 +211,13 @@ class Cursor
   const ClassId m_classId;
   CursorHelper * const m_helper;
   ReadTransaction * const m_tr;
-  ObjectFactories & m_objectFactories;
   bool m_hasData;
 
 public:
   using Ptr = std::shared_ptr<Cursor<T>>;
 
-  Cursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr, ObjectFactories &objectFactories)
-      : m_classId(classId), m_helper(helper), m_tr(tr), m_objectFactories(objectFactories)
+  Cursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr)
+      : m_classId(classId), m_helper(helper), m_tr(tr)
   {
     m_hasData = helper->start(classId);
   }
@@ -238,7 +239,7 @@ public:
   T *get(ObjectId *objId=nullptr)
   {
     using Traits = ClassTraits<T>;
-    T *obj = (T *)m_objectFactories[Traits::info.classId]();
+    T *obj = new T();
 
     //load the data buffer
     ReadBuf readBuf;
@@ -371,7 +372,7 @@ public:
     using Traits = ClassTraits<T>;
     ClassId classId = Traits::info.classId;
 
-    return typename Cursor<T>::Ptr(new Cursor<T>(classId, openCursor(classId), this, store.objectFactories));
+    return typename Cursor<T>::Ptr(new Cursor<T>(classId, openCursor(classId), this));
   }
 
   /**
