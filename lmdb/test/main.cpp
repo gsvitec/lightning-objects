@@ -86,6 +86,29 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+void testPolymorphism(KeyValueStore *kv)
+{
+  flexis::player::SourceInfo si;
+  IFlexisOverlayPtr ro(new RectangularOverlay());
+  IFlexisOverlayPtr to(new TimeCodeOverlay());
+
+  si.userOverlays.push_back(to);
+  si.userOverlays.push_back(ro);
+
+  auto wtxn = kv->beginWrite();
+  ObjectId id = wtxn->putObject(si);
+  wtxn->commit();
+
+  player::SourceInfo *loaded;
+  auto rtxn = kv->beginRead();
+  loaded = rtxn->getObject<player::SourceInfo>(id);
+  rtxn->abort();
+
+  assert(loaded->userOverlays.size() == 2);
+  for(auto &ovl : loaded->userOverlays)
+    cout << ovl->type() << endl;
+}
+
 std::shared_ptr<Colored2DPoint> test(std::shared_ptr<Colored2DPoint> p) {
   std::shared_ptr<Colored2DPoint> p2 = p;
   return p2;
@@ -98,12 +121,14 @@ int main()
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
-  //kv->registerType<flexis::IFlexisOverlay>();
+  kv->registerType<player::SourceInfo>();
   kv->registerType<flexis::RectangularOverlay>();
+  kv->registerType<flexis::TimeCodeOverlay>();
 
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
+  testPolymorphism(kv);
 
   return 0;
 }

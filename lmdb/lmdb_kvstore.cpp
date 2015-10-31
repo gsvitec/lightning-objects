@@ -401,7 +401,8 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     val.assign((char *)0, 0);
     cursor = ::lmdb::cursor::open(txn, dbi);
     while (cursor.get(key, val, MDB_NEXT_NODUP)) {
-      classInfo.classId = read_integer<ClassId>(val.data()+2, 2);
+      ClassId cid = read_integer<ClassId>(val.data()+2, 2);
+      if(cid > classInfo.classId) classInfo.classId = cid;
     }
     cursor.close();
     classInfo.classId++;

@@ -11,6 +11,7 @@
 #include <typeinfo>
 #include <stdexcept>
 #include <stdint.h>
+#include <typeinfo>
 #include "FlexisPersistence_Export.h"
 
 namespace flexis {
@@ -429,10 +430,11 @@ struct ClassInfo {
   ClassInfo(const ClassInfo &other) = delete;
 
   const char *name;
+  const std::type_info &typeinfo;
   ClassId classId = 0;
   ObjectId maxObjectId = 0;
 
-  ClassInfo(const char *name) : name(name) {}
+  ClassInfo(const char *name, const std::type_info &typeinfo) : name(name), typeinfo(typeinfo) {}
 };
 template <typename T>
 struct ClassTraitsBase
