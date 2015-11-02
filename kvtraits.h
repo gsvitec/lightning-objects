@@ -464,7 +464,7 @@ struct ClassTraitsBase
 
 template <>
 struct ClassTraits<EmptyClass> {
-  static Properties * properties;
+  static FlexisPersistence_EXPORT Properties * properties;
   static PropertyAccessBase * decl_props[0];
 };
 
