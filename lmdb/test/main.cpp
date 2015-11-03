@@ -5,8 +5,7 @@
 #include <kvstore/kvstore.h>
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
-#include <iostream>
-#include <array>
+#include "testclasses.h"
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
@@ -86,6 +85,94 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+using OtherThingPtr = shared_ptr<OtherThing>;
+
+void testLazyPolymorphicCursor(KeyValueStore *kv)
+{
+  ObjectId sv_id;
+  {
+    //insert test data
+    SomethingWithALazyVector sv;
+
+    OtherThingPtr ptra(new OtherThingA("Hans"));
+    sv.otherThings.push_back(ptra);
+
+    OtherThingPtr ptrb(new OtherThingB("Otto"));
+    sv.otherThings.push_back(ptrb);
+
+    auto wtxn = kv->beginWrite();
+
+    //save the object proper
+    sv_id = wtxn->putObject(sv);
+
+    //since otherThings is lazy, we need to kick it separately
+    wtxn->updateMember(sv_id, sv, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+
+    wtxn->commit();
+  }
+  cout << "sv_id " << sv_id << endl;
+  {
+    //test deferred full load
+    SomethingWithALazyVector *loaded;
+    auto rtxn = kv->beginRead();
+
+    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    assert(loaded && loaded->otherThings.empty());
+
+    rtxn->loadMember(sv_id, *loaded, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    assert(loaded && loaded->otherThings.size() == 2);
+    for (auto &ot : loaded->otherThings)
+      cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+
+    rtxn->abort();
+  }
+  {
+    //test lazy cursor
+    SomethingWithALazyVector *loaded;
+    auto rtxn = kv->beginRead();
+
+    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    assert(loaded && loaded->otherThings.empty());
+
+    unsigned count = 0;
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, loaded,
+                                                                         PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    for (; !cursor->atEnd(); cursor->next()) {
+      count++;
+      OtherThing *ot = cursor->get();
+      cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+    }
+    assert(count == 2);
+
+    rtxn->abort();
+  }
+  {
+    //test data-only access (no object instantiation, read into mapped memory)
+    SomethingWithALazyVector *loaded;
+    auto rtxn = kv->beginRead();
+
+    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    assert(loaded && loaded->otherThings.empty());
+
+    unsigned count = 0;
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, loaded,
+                                                                         PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    if(!cursor->atEnd()) {
+      for (; !cursor->atEnd(); cursor->next()) {
+        count++;
+        const char *name, *buf=nullptr;
+        double *dval;
+
+        cursor->get(PROPERTY_ID(OtherThing, name), &name, &buf);
+        cursor->get(PROPERTY_ID(OtherThing, dvalue), (const char **)&dval, &buf);
+        cout << name << " dvalue: " << *dval << endl;
+      }
+    }
+    assert(count == 2);
+    rtxn->abort();
+  }
+}
+
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
@@ -104,7 +191,7 @@ void testPolymorphism(KeyValueStore *kv)
   loaded = rtxn->getObject<player::SourceInfo>(id);
   rtxn->abort();
 
-  assert(loaded->userOverlays.size() == 2);
+  assert(loaded && loaded->userOverlays.size() == 2);
   for(auto &ovl : loaded->userOverlays)
     cout << ovl->type() << endl;
 }
@@ -125,10 +212,29 @@ int main()
   kv->registerType<flexis::RectangularOverlay>();
   kv->registerType<flexis::TimeCodeOverlay>();
 
+  kv->registerType<OtherThingA>();
+  kv->registerType<OtherThingB>();
+  kv->registerType<SomethingWithALazyVector>();
+
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
   testPolymorphism(kv);
+  testLazyPolymorphicCursor(kv);
+
+  /*auto rtxn = kv->beginRead();
+
+  for(auto cursor = rtxn->openCursor<SomethingWithALazyVector>(); !cursor->atEnd(); ++(*cursor)) {
+    ObjectId id;
+    SomethingWithALazyVector *loaded = loaded = cursor->get(&id);
+    rtxn->loadMember(id, *loaded, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+
+    cout << id << ": " << loaded->name << endl;
+    for(auto &o : loaded->otherThings)
+      cout << o->sayhello() << " my name is " << o->name << " my number is " << o->dvalue << endl;
+  }
+
+  rtxn->abort();*/
 
   return 0;
 }

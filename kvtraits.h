@@ -111,6 +111,13 @@ public:
     return ret;
   }
 
+  const char *readCString() {
+    const char *cstr = m_readptr;
+    while(*m_readptr) m_readptr++;
+    m_readptr++;
+    return cstr;
+  }
+
   bool read(StorageKey &key)
   {
     if(m_size - (m_readptr - m_data) < 8)
@@ -189,6 +196,16 @@ public:
     m_appendptr += sz;
   }
 
+  void appendCString(const char *data) {
+    while(*data) {
+      *m_appendptr = *data;
+      m_appendptr++;
+      data++;
+    }
+    *m_appendptr = 0;
+    ++m_appendptr;
+  }
+
   void append(ClassId classId, ObjectId objectId, PropertyId propertyId)
   {
     write_integer(m_appendptr, classId, sizeof(ClassId));
@@ -253,6 +270,7 @@ DEF_BASETYPE(double, 11, 8)
 
 //variable size types
 DEF_BASETYPE(string, 12, 0)
+DEF_BASETYPE(cstring, 13, 0)
 
 } //basetypes
 
@@ -271,6 +289,7 @@ TYPETRAITS<unsigned long long>{static const PropertyType &pt(){return basetypes:
 TYPETRAITS<float>             {static const PropertyType &pt(){return basetypes::float_t;}};
 TYPETRAITS<double>            {static const PropertyType &pt(){return basetypes::double_t;}};
 TYPETRAITS<bool>              {static const PropertyType &pt(){return basetypes::bool_t;}};
+TYPETRAITS<const char *>      {static const PropertyType &pt(){return basetypes::cstring_t;}};
 TYPETRAITS<std::string>       {static const PropertyType &pt(){return basetypes::string_t;}};
 
 TYPETRAITSV<short>>             {static const PropertyType &pt(){return basetypes::short_array_t;}};
@@ -284,6 +303,7 @@ TYPETRAITSV<unsigned long long>>{static const PropertyType &pt(){return basetype
 TYPETRAITSV<float>>             {static const PropertyType &pt(){return basetypes::float_array_t;}};
 TYPETRAITSV<double>>            {static const PropertyType &pt(){return basetypes::double_array_t;}};
 TYPETRAITSV<bool>>              {static const PropertyType &pt(){return basetypes::bool_array_t;}};
+TYPETRAITSV<const char *>>       {static const PropertyType &pt(){return basetypes::cstring_array_t;}};
 TYPETRAITSV<std::string>>       {static const PropertyType &pt(){return basetypes::string_array_t;}};
 
 class ReadTransaction;
@@ -291,11 +311,17 @@ class WriteTransaction;
 class PropertyAccessBase;
 
 struct StoreAccessBase {
+  virtual size_t size(const char *buf) {return 0;};
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;};
-  virtual void save(
-      WriteTransaction *tr, void *obj, const PropertyAccessBase *pa, ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
-  virtual void load(
-      ReadTransaction *tr, ReadBuf &buf, void *obj, const PropertyAccessBase *pa, ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
+  virtual void save(WriteTransaction *tr,
+                    ClassId classId, ObjectId objectId,
+                    void *obj, const PropertyAccessBase *pa,
+                    bool force=false) = 0;
+  virtual void load(ReadTransaction *tr,
+                    ReadBuf &buf,
+                    ClassId classId, ObjectId objectId,
+                    void *obj, const PropertyAccessBase *pa,
+                    bool force=false) = 0;
 };
 template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
 
@@ -303,6 +329,7 @@ struct PropertyAccessBase
 {
   const char * const name;
   bool enabled = true;
+  unsigned id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
@@ -369,6 +396,17 @@ struct ValueTraits<std::string>
   }
 };
 
+template <>
+struct ValueTraits<const char *>
+{
+  static void getBytes(ReadBuf &buf, const char *&val) {
+    val = buf.readCString();
+  }
+  static void putBytes(WriteBuf &buf, const char *&val) {
+    buf.appendCString(val);
+  }
+};
+
 template <typename T>
 struct ValueTraitsFloat
 {
@@ -411,10 +449,15 @@ class Properties
 public:
   template <typename T, typename S=EmptyClass>
   static Properties *mk() {
-    return new Properties(
+    Properties *p = new Properties(
         ClassTraits<T>::decl_props,
         ARRAY_SZ(ClassTraits<T>::decl_props),
         ClassTraits<S>::properties);
+
+    for(unsigned i=0; i<p->full_size(); i++)
+      p->get(i)->id = i+1;
+
+    return p;
   }
 
   inline unsigned full_size() {

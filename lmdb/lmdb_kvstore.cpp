@@ -21,13 +21,8 @@ namespace ps = flexis::persistence;
 static const unsigned ObjectId_off = sizeof(ClassId);
 static const unsigned PropertyId_off = sizeof(ClassId) + sizeof(ObjectId);
 
-#define SK_DEF(nm) char nm[StorageKey::byteSize]
-
 #define SK_CONSTR(nm, c, o, p) char nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
 *(PropertyId *)(nm+PropertyId_off) = p
-
-#define SK_ASSIGN(nm, k) *(ClassId *)nm = *(ClassId *)k; *(ObjectId *)(nm+ObjectId_off) = *(ObjectId *)(k+ObjectId_off); \
-*(PropertyId *)(nm+PropertyId_off) = *(PropertyId *)(k+PropertyId_off)
 
 #define SK_RET(nm, k) nm.classId = *(ClassId *)k; nm.objectId = *(ObjectId *)(k+ObjectId_off); \
 nm.propertyId = *(PropertyId *)(k+PropertyId_off)
@@ -57,9 +52,9 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 }
 
 /**
- * LMDB-based class cursor backend
+ * LMDB-based class cursor backend. Iterates over all instances of a given class
  */
-class FlexisPersistence_EXPORT CursorHelper : public flexis::persistence::kv::CursorHelper
+class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -70,15 +65,13 @@ class FlexisPersistence_EXPORT CursorHelper : public flexis::persistence::kv::Cu
   ClassId m_classId;
 
 protected:
-  bool start(ClassId classId) override
+  bool start() override
   {
-    m_classId = classId;
-
-    SK_CONSTR(sk,classId, 0, 0);
+    SK_CONSTR(sk, m_classId, 0, 0);
     m_keyval.assign(sk, sizeof(sk));
 
     if(m_cursor.get(m_keyval, MDB_SET_RANGE)) {
-      return SK_CLASSID(m_keyval.data()) == classId;
+      return SK_CLASSID(m_keyval.data()) == m_classId;
     }
     return false;
   }
@@ -122,10 +115,113 @@ protected:
     }
   }
 
+  const char *getObjectData() override {
+    ::lmdb::val dataval{};
+    if(m_cursor.get(m_keyval, dataval, MDB_GET_CURRENT)) {
+      return dataval.data();
+    }
+    return nullptr;
+  }
+
 public:
-  CursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi) : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(m_txn, m_dbi))
+  ClassCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId)
+      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(m_txn, m_dbi)), m_classId(classId)
   {}
-  ~CursorHelper() {m_cursor.close();}
+  ~ClassCursorHelper() {m_cursor.close();}
+};
+
+/**
+ * LMDB-based class cursor backend. Iterates over all instances of a given class
+ */
+class FlexisPersistence_EXPORT VectorCursorHelper : public flexis::persistence::kv::CursorHelper
+{
+  ::lmdb::txn &m_txn;
+  ::lmdb::dbi &m_dbi;
+
+  ::lmdb::val m_vectordata;
+  size_t m_index, m_size;
+
+  const ClassId m_classId;
+  const ObjectId m_objectId;
+  const PropertyId m_propertyId;
+
+protected:
+  bool start() override
+  {
+    m_index = m_size = 0;
+
+    ::lmdb::val keyval;
+    SK_CONSTR(sk, m_classId, m_objectId, m_propertyId);
+    keyval.assign(sk, sizeof(sk));
+
+    if(m_dbi.get(m_txn, keyval, m_vectordata)) {
+      m_size = m_vectordata.size() / StorageKey::byteSize;
+      return true;
+    }
+    return false;
+  }
+
+  ObjectId key() override
+  {
+    return SK_OBJID(m_vectordata + m_index * StorageKey::byteSize);
+  }
+
+  bool next() override
+  {
+    return ++m_index < m_size;
+  }
+
+  void erase() override
+  {
+    const char *keydata = m_vectordata.data() + m_index * StorageKey::byteSize;
+    ::lmdb::val keyval;
+    keyval.assign(keydata, StorageKey::byteSize);
+    m_dbi.del(m_txn, keyval);
+  }
+
+  virtual void close() override {
+    m_index = m_size = 0;
+  }
+
+  void get(StorageKey &key, ReadBuf &rb) override
+  {
+    if(m_index < m_size) {
+      const char *keydata = m_vectordata.data() + m_index * StorageKey::byteSize;
+      ::lmdb::val keyval;
+      keyval.assign(keydata, StorageKey::byteSize);
+      ::lmdb::val dataval;
+
+      if(m_dbi.get(m_txn, keyval, dataval)) {
+        SK_RET(key, keydata);
+        rb.start(dataval.data(), dataval.size());
+      }
+      else {
+        throw new persistence_error("corrupted vector: item not found");
+      }
+    }
+  }
+
+  const char *getObjectData() override {
+    if(m_index < m_size) {
+      const char *keydata = m_vectordata.data() + m_index * StorageKey::byteSize;
+      ::lmdb::val keyval;
+      keyval.assign(keydata, StorageKey::byteSize);
+      ::lmdb::val dataval;
+
+      if(m_dbi.get(m_txn, keyval, dataval)) {
+        return dataval.data();
+      }
+      else {
+        throw new persistence_error("corrupted vector: item not found");
+      }
+    }
+  }
+
+public:
+  VectorCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId, PropertyId propertyId)
+      : m_txn(txn), m_dbi(dbi), m_classId(classId), m_objectId(objectId), m_propertyId(propertyId)
+  {}
+  ~VectorCursorHelper() {}
 };
 
 /**
@@ -141,7 +237,8 @@ class FlexisPersistence_EXPORT Transaction : public flexis::persistence::kv::Wri
 protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
-  CursorHelper * openCursor(ClassId classId) override;
+  ClassCursorHelper * _openCursor(ClassId classId) override;
+  VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
 public:
   enum class Mode {read, append, write};
@@ -264,9 +361,14 @@ void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, Prop
     buf.start(v.data(), v.size());
 }
 
-CursorHelper * Transaction::openCursor(ClassId classId)
+ClassCursorHelper * Transaction::_openCursor(ClassId classId)
 {
-  return new CursorHelper(m_txn, m_dbi);
+  return new ClassCursorHelper(m_txn, m_dbi, classId);
+}
+
+VectorCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId)
+{
+  return new VectorCursorHelper(m_txn, m_dbi, classId, objectId, propertyId);
 }
 
 ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)
