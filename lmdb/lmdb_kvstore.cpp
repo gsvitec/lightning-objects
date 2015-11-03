@@ -215,6 +215,7 @@ protected:
         throw new persistence_error("corrupted vector: item not found");
       }
     }
+    return nullptr;
   }
 
 public:
