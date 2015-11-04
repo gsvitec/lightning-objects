@@ -18,8 +18,8 @@ static const char * CLASSMETA = "classmeta";
 
 namespace ps = flexis::persistence;
 
-static const unsigned ObjectId_off = sizeof(ClassId);
-static const unsigned PropertyId_off = sizeof(ClassId) + sizeof(ObjectId);
+static const unsigned ObjectId_off = ClassId_sz;
+static const unsigned PropertyId_off = ClassId_sz + ObjectId_sz;
 
 #define SK_CONSTR(nm, c, o, p) char nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
 *(PropertyId *)(nm+PropertyId_off) = p
@@ -38,13 +38,13 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 
   int c = *(ClassId *)k1 - *(ClassId *)k2;
   if(c == 0) {
-    k1 += sizeof(ClassId);
-    k2 += sizeof(ClassId);
+    k1 += ClassId_sz;
+    k2 += ClassId_sz;
 
     c = *(ObjectId *)k1 - *(ObjectId *)k2;
     if(c == 0) {
-      k1 += sizeof(ObjectId);
-      k2 += sizeof(ObjectId);
+      k1 += ObjectId_sz;
+      k2 += ObjectId_sz;
       c = *(PropertyId *)k1 - *(PropertyId *)k2 ;
     }
   }
@@ -131,7 +131,55 @@ public:
 };
 
 /**
- * LMDB-based class cursor backend. Iterates over all instances of a given class
+ * LMDB-based class cursor backend. Iterates over all elements in a top-level collection
+ */
+class FlexisPersistence_EXPORT CollectionCursorHelper : public flexis::persistence::kv::CursorHelper
+{
+  ::lmdb::txn &m_txn;
+  ::lmdb::dbi &m_dbi;
+
+  size_t m_index, m_size;
+
+  const ClassId m_classId;
+  const ObjectId m_collectionId;
+
+  bool start() {
+    return false;
+  }
+
+  bool next() {
+    return false;
+  }
+
+  void erase() {
+
+  }
+
+  ObjectId key() {
+    return 0;
+  }
+
+  void close() {
+
+  }
+
+  void get(StorageKey &key, ReadBuf &rb) {
+
+  }
+
+  const char *getObjectData() {
+    return nullptr;
+  }
+
+public:
+  CollectionCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId collectionId)
+  : m_txn(txn), m_dbi(dbi), m_classId(classId), m_collectionId(collectionId)
+  {}
+  ~CollectionCursorHelper() {}
+};
+
+/**
+ * LMDB-based class cursor backend. Iterates over all elements in a vector (member vaŕiable)
  */
 class FlexisPersistence_EXPORT VectorCursorHelper : public flexis::persistence::kv::CursorHelper
 {
@@ -225,6 +273,38 @@ public:
   ~VectorCursorHelper() {}
 };
 
+class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
+{
+  const ClassId m_classId;
+  const ObjectId m_objectId;
+
+  ::lmdb::txn &m_txn;
+  ::lmdb::dbi &m_dbi;
+  ::lmdb::val keyval;
+  ::lmdb::val dataval;
+  ::lmdb::cursor m_cursor;
+
+public:
+  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId)
+      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(txn, dbi)), m_classId(classId), m_objectId(objectId)
+  {
+    SK_CONSTR(k, classId, objectId, 1);
+    keyval.assign(k, sizeof(k));
+
+    m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
+  }
+
+  bool next() override {
+    m_atEnd = !m_cursor.get(keyval, dataval, MDB_NEXT);
+    if(!m_atEnd)
+      m_atEnd = SK_CLASSID(keyval.data()) != m_classId || SK_OBJID(keyval.data()) != m_objectId;
+  }
+
+  void get(ReadBuf &rb) override {
+    rb.start(dataval.data(), dataval.size());
+  }
+};
+
 /**
  * LMDB-based Transaction
  */
@@ -238,8 +318,14 @@ class FlexisPersistence_EXPORT Transaction : public flexis::persistence::kv::Wri
 protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
+  bool remove(ClassId classId, ObjectId objectId, PropertyId propertyid) override;
+
   ClassCursorHelper * _openCursor(ClassId classId) override;
+  CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
+
+  PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
+  ChunkCursor::Ptr getChunkCursor(ClassId classId, ObjectId objectId) override;
 
 public:
   enum class Mode {read, append, write};
@@ -310,6 +396,8 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name) : m_env(::lmd
   m_env.set_mapsize(sz);
   m_env.set_max_dbs(2);
   m_env.open(m_dbpath.c_str(), MDB_NOLOCK | MDB_NOSUBDIR, 0664);
+
+  m_maxCollectionId = findMaxObjectId(COLLECTION_CLSID);
 }
 
 KeyValueStoreImpl::~KeyValueStoreImpl()
@@ -362,6 +450,28 @@ void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, Prop
     buf.start(v.data(), v.size());
 }
 
+bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId propertyId)
+{
+  SK_CONSTR(kv, classId, objectId, propertyId);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{};
+  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+}
+
+ChunkCursor::Ptr Transaction::getChunkCursor(ClassId classId, ObjectId objectId)
+{
+  return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId));
+}
+
+PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
+{
+  SK_CONSTR(k, classId+1, objectId, 0);
+  ::lmdb::val key {k, sizeof(k)};
+
+  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+  return cursor.find(key, MDB_LAST) ? SK_PROPID(k) : PropertyId(1);
+}
+
 ClassCursorHelper * Transaction::_openCursor(ClassId classId)
 {
   return new ClassCursorHelper(m_txn, m_dbi, classId);
@@ -370,6 +480,11 @@ ClassCursorHelper * Transaction::_openCursor(ClassId classId)
 VectorCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId)
 {
   return new VectorCursorHelper(m_txn, m_dbi, classId, objectId, propertyId);
+}
+
+CollectionCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId collectionId)
+{
+  return new CollectionCursorHelper(m_txn, m_dbi, classId, collectionId);
 }
 
 ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)

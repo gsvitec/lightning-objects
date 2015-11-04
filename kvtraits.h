@@ -21,8 +21,11 @@ namespace kv {
 #define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
 
 using ClassId = uint16_t;
+static const size_t ClassId_sz = 2; //max. 65535 classes
 using ObjectId = uint32_t;
+static const size_t ObjectId_sz = 4; //max 2^32 objects per class
 using PropertyId = uint16_t;
+static const size_t PropertyId_sz = 2; //max. 65535 properies per object
 
 //faster than pow()
 static long byte_facts[] = {
@@ -69,7 +72,7 @@ inline T read_integer(const char *ptr, unsigned bytes)
  */
 struct StorageKey
 {
-  static const unsigned byteSize = sizeof(ClassId) + sizeof(ObjectId) + sizeof(PropertyId);
+  static const unsigned byteSize = ClassId_sz + ObjectId_sz + PropertyId_sz;
 
   ClassId classId;
   ObjectId objectId;
@@ -118,17 +121,24 @@ public:
     return cstr;
   }
 
+  template <typename T>
+  T readInteger(unsigned sz) {
+    T ret = read_integer<T>(m_readptr, sz);
+    m_readptr += sz;
+    return ret;
+  }
+
   bool read(StorageKey &key)
   {
     if(m_size - (m_readptr - m_data) < 8)
       return false;
 
-    key.classId = read_integer<ClassId>(m_readptr, sizeof(ClassId));
-    m_readptr += sizeof(ClassId);
-    key.objectId = read_integer<ObjectId>(m_readptr, sizeof(ObjectId));
-    m_readptr += sizeof(ObjectId);
-    key.propertyId = read_integer<PropertyId>(m_readptr, sizeof(PropertyId));
-    m_readptr += sizeof(PropertyId);
+    key.classId = read_integer<ClassId>(m_readptr, ClassId_sz);
+    m_readptr += ClassId_sz;
+    key.objectId = read_integer<ObjectId>(m_readptr, ObjectId_sz);
+    m_readptr += ObjectId_sz;
+    key.propertyId = read_integer<PropertyId>(m_readptr, PropertyId_sz);
+    m_readptr += PropertyId_sz;
 
     return true;
   }
@@ -196,6 +206,12 @@ public:
     m_appendptr += sz;
   }
 
+  template<typename T>
+  void appendInteger(T num, size_t bytes) {
+    write_integer(m_appendptr, num, bytes);
+    m_appendptr += bytes;
+  }
+
   void appendCString(const char *data) {
     while(*data) {
       *m_appendptr = *data;
@@ -208,12 +224,12 @@ public:
 
   void append(ClassId classId, ObjectId objectId, PropertyId propertyId)
   {
-    write_integer(m_appendptr, classId, sizeof(ClassId));
-    m_appendptr += sizeof(ClassId);
-    write_integer(m_appendptr, objectId, sizeof(ObjectId));
-    m_appendptr += sizeof(ObjectId);
-    write_integer(m_appendptr, propertyId, sizeof(PropertyId));
-    m_appendptr += sizeof(PropertyId);
+    write_integer(m_appendptr, classId, ClassId_sz);
+    m_appendptr += ClassId_sz;
+    write_integer(m_appendptr, objectId, ObjectId_sz);
+    m_appendptr += ObjectId_sz;
+    write_integer(m_appendptr, propertyId, PropertyId_sz);
+    m_appendptr += PropertyId_sz;
   }
 
   const char * data() {
@@ -470,11 +486,13 @@ public:
 };
 
 struct ClassInfo {
+  static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
+
   ClassInfo(const ClassInfo &other) = delete;
 
   const char *name;
   const std::type_info &typeinfo;
-  ClassId classId = 0;
+  ClassId classId = MIN_USER_CLSID;
   ObjectId maxObjectId = 0;
 
   ClassInfo(const char *name, const std::type_info &typeinfo) : name(name), typeinfo(typeinfo) {}

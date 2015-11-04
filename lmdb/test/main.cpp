@@ -85,6 +85,30 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+void testPolymorphism(KeyValueStore *kv)
+{
+  flexis::player::SourceInfo si;
+  IFlexisOverlayPtr ro(new RectangularOverlay());
+  IFlexisOverlayPtr to(new TimeCodeOverlay());
+
+  si.userOverlays.push_back(to);
+  si.userOverlays.push_back(ro);
+
+  auto wtxn = kv->beginWrite();
+  ObjectId id = wtxn->putObject(si);
+  wtxn->commit();
+
+  player::SourceInfo *loaded;
+  auto rtxn = kv->beginRead();
+  loaded = rtxn->getObject<player::SourceInfo>(id);
+  rtxn->abort();
+
+  assert(loaded && loaded->userOverlays.size() == 2);
+  for(auto &ovl : loaded->userOverlays)
+    cout << ovl->type() << endl;
+}
+
+
 using OtherThingPtr = shared_ptr<OtherThing>;
 
 void testLazyPolymorphicCursor(KeyValueStore *kv)
@@ -110,7 +134,6 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
 
     wtxn->commit();
   }
-  cout << "sv_id " << sv_id << endl;
   {
     //test deferred full load
     SomethingWithALazyVector *loaded;
@@ -147,7 +170,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     rtxn->abort();
   }
   {
-    //test data-only access (no object instantiation, read into mapped memory)
+    //test data-only access (no object instantiation, no copying, read into mapped memory)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
@@ -163,8 +186,11 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
         const char *name, *buf=nullptr;
         double *dval;
 
+        //we're passing in buf, so that only the first call will go to the store
         cursor->get(PROPERTY_ID(OtherThing, name), &name, &buf);
+        //buf is set now, so this call will simply return a pointer into buf
         cursor->get(PROPERTY_ID(OtherThing, dvalue), (const char **)&dval, &buf);
+
         cout << name << " dvalue: " << *dval << endl;
       }
     }
@@ -173,32 +199,58 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
   }
 }
 
-void testPolymorphism(KeyValueStore *kv)
+void testPersistentCollection(KeyValueStore *kv)
 {
-  flexis::player::SourceInfo si;
-  IFlexisOverlayPtr ro(new RectangularOverlay());
-  IFlexisOverlayPtr to(new TimeCodeOverlay());
+  ObjectId collectionId;
 
-  si.userOverlays.push_back(to);
-  si.userOverlays.push_back(ro);
+  {
+    //save test data
+    vector<OtherThingPtr> vect;
 
-  auto wtxn = kv->beginWrite();
-  ObjectId id = wtxn->putObject(si);
-  wtxn->commit();
+    vect.push_back(OtherThingPtr(new OtherThingA("Hans")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Otto")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Gabi")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Josef")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Mario")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Fred")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Gunter")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Johannes")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Friedrich")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Thomas")));
 
-  player::SourceInfo *loaded;
-  auto rtxn = kv->beginRead();
-  loaded = rtxn->getObject<player::SourceInfo>(id);
-  rtxn->abort();
+    auto wtxn = kv->beginWrite();
 
-  assert(loaded && loaded->userOverlays.size() == 2);
-  for(auto &ovl : loaded->userOverlays)
-    cout << ovl->type() << endl;
-}
+    collectionId = wtxn->putCollection(vect, 4);
 
-std::shared_ptr<Colored2DPoint> test(std::shared_ptr<Colored2DPoint> p) {
-  std::shared_ptr<Colored2DPoint> p2 = p;
-  return p2;
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+
+    vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
+    assert(loaded.size() == 10);
+
+    for (auto &ot : loaded)
+      cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+
+    rtxn->abort();
+  }
+  {
+    //iterate over collection w/ cursor
+    auto rtxn = kv->beginRead();
+
+    unsigned count = 0;
+    auto cursor = rtxn->openCursor<OtherThing>(collectionId);
+    for (; !cursor->atEnd(); cursor->next()) {
+      count++;
+      OtherThing *ot = cursor->get();
+      cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+    }
+    assert(count == 2);
+
+    rtxn->abort();
+  }
 }
 
 int main()
@@ -216,11 +268,12 @@ int main()
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();
 
-  testColored2DPoint(kv);
+  /*testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
   testPolymorphism(kv);
-  testLazyPolymorphicCursor(kv);
+  testLazyPolymorphicCursor(kv);*/
+  testPersistentCollection(kv);
 
   /*auto rtxn = kv->beginRead();
 

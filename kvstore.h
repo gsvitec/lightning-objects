@@ -15,12 +15,13 @@
 #include "kvtraits.h"
 
 #define PROPERTY_ID(cls, name) ClassTraits<cls>::PropertyIds::name
-#define PROPERTY(cls, name) ClassTraits<cls>::decl_props[ClassTraits<cls>::PropertyIds::name-1]
 
 namespace flexis {
 namespace persistence {
 
 using namespace kv;
+
+static const ClassId COLLECTION_CLSID = 1;
 
 class incompatible_schema_error : public persistence_error
 {
@@ -103,6 +104,9 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   ObjectClassInfos objectClassInfos;
 
   std::unordered_map<const std::type_info *, ClassId> typeInfos;
+
+protected:
+  ObjectId m_maxCollectionId;
 
 public:
   /**
@@ -387,6 +391,19 @@ template<typename T> struct SimpleCursor : public Cursor<T, SimpleFact> {
       : Cursor<T, SimpleFact>(classId, helper, tr, SimpleFact<T>()) {}
 };
 
+class ChunkCursor
+{
+protected:
+  bool m_atEnd;
+
+public:
+  using Ptr = std::shared_ptr<ChunkCursor>;
+
+  bool atEnd() {return m_atEnd;}
+  virtual bool next() = 0;
+  virtual void get(ReadBuf &rb) = 0;
+};
+
 /**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
@@ -485,6 +502,17 @@ protected:
 
   virtual CursorHelper * _openCursor(ClassId classId) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
+  virtual CursorHelper * _openCursor(ClassId classId, ObjectId collectionId) = 0;
+
+  /**
+   * @return the highes currently stored property ID for the given values
+   */
+  virtual PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) = 0;
+
+  /**
+   * @return a cursor ofer a chunked object (e.g., collection)
+   */
+  virtual ChunkCursor::Ptr getChunkCursor(ClassId classId, ObjectId objectId) = 0;
 
 public:
   virtual ~ReadTransaction() {}
@@ -506,13 +534,60 @@ public:
    * given property is not vector-valued. The cursor is polymorphic
    */
   template <typename T, typename V> typename PolyCursor<V>::Ptr openCursor(ObjectId objectId, T *obj, PropertyId propertyId) {
-    using Traits = ClassTraits<T>;
-    ClassId classId = Traits::info.classId;
+    ClassId t_classId = ClassTraits<T>::info.classId;
+    ClassId v_classId = ClassTraits<V>::info.classId;
 
     return typename PolyCursor<V>::Ptr(
-        new PolyCursor<V>(classId,
-                          _openCursor(classId, objectId, propertyId),
+        new PolyCursor<V>(v_classId,
+                          _openCursor(t_classId, objectId, propertyId),
                           this, &store.objectFactories, &store.objectProperties));
+  }
+
+  /**
+   * @param collectionId the id of a top-level collection
+   * @return a cursor over the contents of the collection. The cursor is polymorphic
+   */
+  template <typename V> typename PolyCursor<V>::Ptr openCursor(ObjectId collectionId) {
+    return typename PolyCursor<V>::Ptr(
+        new PolyCursor<V>(0, _openCursor(COLLECTION_CLSID, collectionId),
+                          this, &store.objectFactories, &store.objectProperties));
+  }
+
+  /**
+   * @param collectionId the id of a top-level collection
+   * @return a cursor over the contents of the collection. The cursor is non-polymorphic
+   */
+  template <typename V> typename SimpleCursor<V>::Ptr openSimpleCursor(ObjectId collectionId) {
+    return typename SimpleCursor<V>::Ptr(
+        new SimpleCursor<V>(0, _openCursor(COLLECTION_CLSID, collectionId), this));
+  }
+
+  /**
+   * load a top-level (chunked) collection
+   *
+   * @param collectionId an id returned from a previous #putCollection call
+   */
+  template <typename T> std::vector<std::shared_ptr<T>> getCollection(ObjectId collectionId)
+  {
+    std::vector<std::shared_ptr<T>> result;
+    for(ChunkCursor::Ptr cc=getChunkCursor(COLLECTION_CLSID, collectionId); !cc->atEnd(); cc->next()) {
+      ReadBuf buf;
+      cc->get(buf);
+
+      unsigned chunkSize = buf.readInteger<unsigned>(2);
+      ObjectId firstId = buf.readInteger<ObjectId>(ObjectId_sz); //throw away
+
+      for(unsigned i=0; i<chunkSize; i++) {
+        StorageKey sk;
+        buf.read(sk);
+
+        T *obj = loadObject<T>(sk.classId, sk.objectId);
+        if(obj) result.push_back(std::shared_ptr<T>(obj));
+        else
+          throw persistence_error("collection object not found");
+      }
+    }
+    return result;
   }
 
   /**
@@ -520,7 +595,7 @@ public:
    *
    * @return the object, or nullptr if the key does not exist. The returned object is owned by the caller
    */
-  template<typename T> T *getObject(long objectId)
+  template<typename T> T *getObject(ObjectId objectId)
   {
     return loadObject<T>(objectId);
   }
@@ -621,8 +696,16 @@ protected:
     curBuf = &writeBufStart;
   }
 
+  /**
+   * non-polymorphic save. Use in statically typed context
+   *
+   * @param id the object id
+   * @param obj the object to save
+   * @param newObject whether the object key needs to be generated
+   * @param shallow skip vector properties that go to separate keys
+   */
   template <typename T>
-  ObjectId saveObject(ObjectId id, T &obj, bool newObject)
+  ObjectId saveObject(ObjectId id, T &obj, bool newObject, bool shallow=false)
   {
     using Traits = ClassTraits<T>;
 
@@ -641,7 +724,7 @@ protected:
       propertyId++;
 
       PropertyAccessBase *p = Traits::properties->get(px);
-      if(!p->enabled) continue;
+      if((shallow && p->type.isVector) || !p->enabled) continue;
 
       p->storage->save(this, classId, objectId, &obj, p);
     }
@@ -654,6 +737,33 @@ protected:
     return objectId;
   }
 
+  /**
+   * non-polymorphic object removal
+   */
+  template <typename T>
+  bool removeObject(ObjectId objectId, T &obj)
+  {
+    using Traits = ClassTraits<T>;
+    ClassId classId = Traits::info.classId;
+
+    //first kill all separately stored (vector) properties
+    PropertyId propertyId = 0;
+    for(unsigned px=0, sz=Traits::properties->full_size(); px < sz; px++) {
+      PropertyAccessBase *p = Traits::properties->get(px);
+      if(p->type.isVector) remove(classId, objectId, p->id);
+    }
+    //now remove the object proper
+    remove(classId, objectId, 0);
+  }
+
+  /**
+   * polymorphic save. Use if saving from a polymorphic collection
+   *
+   * @param classId the actual classId of the object to save, possibly a subclass of T
+   * @param id the object id
+   * @param obj the object to save
+   * @param newObject whether the object key needs to be generated
+   */
   template <typename T>
   ObjectId saveObject(ClassId classId, ObjectId id, T &obj, bool newObject)
   {
@@ -698,9 +808,51 @@ protected:
   }
 
   /**
+   * save a collection chunk (non-polymorphic)
+   *
+   * @param vect the collection proper
+   * @param collectionId the id of the collection
+   * @param elementClassId the classid of the collection elements
+   * @param chunkId the chunk index
+   * @param chunkSize the chunk size
+   * @param vectIndex the running index into the collection
+   */
+  template <typename T>
+  void saveChunk(const std::vector<std::shared_ptr<T>> &vect,
+                 ObjectId collectionId, ClassId elementClassId, PropertyId chunkId,
+                 unsigned chunkSize, size_t &vectIndex, bool poly)
+  {
+    WriteBuf writeBuf;
+    writeBuf.start(chunkSize * StorageKey::byteSize+2+ObjectId_sz);
+    writeBuf.appendInteger(chunkSize, 2); //chunk header: size
+
+    ClassId childClassId = elementClassId;
+    for(unsigned i=0; i<chunkSize; i++) {
+      ObjectId oid;
+      if(poly) {
+        childClassId = getClassId(typeid(*vect[vectIndex]));
+        oid = saveObject(childClassId, 0, *vect[vectIndex], true);
+      }
+      else
+        oid = saveObject(0, *vect[vectIndex], true);
+
+      if(i==0) writeBuf.appendInteger(oid, ObjectId_sz); //chunk header: id of first element
+
+      writeBuf.append(childClassId, oid, vectIndex);
+      vectIndex++;
+    }
+    putData(COLLECTION_CLSID, collectionId, chunkId, writeBuf);
+  }
+
+  /**
    * save a sub-object data buffer
    */
   virtual bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) = 0;
+
+  /**
+   * remove an object from the KV store
+   */
+  virtual bool remove(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
 
 public:
   virtual ~WriteTransaction()
@@ -734,7 +886,8 @@ public:
   }
 
   /**
-   * update a member variable of the given, already persistent object.
+   * update a member variable of the given, already persistent object. The current variable state is written to the
+   * store
    *
    * @param objectId an Id obtained from a previous put
    * @param obj the persistent object
@@ -747,11 +900,17 @@ public:
     using Traits = ClassTraits<T>;
 
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    pa->storage->save(this, Traits::info.classId, objId, &obj, pa, true);
+    if(pa->type.isVector)
+      //vector goes to a separate key, no need to touch the object buffer
+      pa->storage->save(this, Traits::info.classId, objId, &obj, pa, true);
+    else
+      //update the complete shallow buffer
+      saveObject<T>(objId, obj, false, true);
   }
 
   /**
-   * update a member variable of the given, already persistent object.
+   * update a member variable of the given, already persistent object. The current variable state is written to the
+   * store
    *
    * @param obj the persistent object pointer. Note that this pointer must have been obtained from the KV store
    * @param propertyId the propertyId (1-based index of the declared property). Note that the template type
@@ -760,26 +919,60 @@ public:
   template <typename T>
   void updateMember(std::shared_ptr<T> &obj, PropertyId propertyId)
   {
-    using Traits = ClassTraits<T>;
-
     ObjectId objId = get_objectid(obj);
-
-    PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    pa->storage->save(this, Traits::info.classId, objId, &obj, pa, true);
+    updateMember(objId, *obj, propertyId);
   }
 
+  /**
+   * save a top-level (chunked) collection. Non-polymorphic
+   */
   template <typename T>
-  void deleteObject(ObjectId objId) {
-
-  }
-
-  template <typename T>
-  void erase()
+  ObjectId putCollection(const std::vector<std::shared_ptr<T>> &vect, unsigned chunkSize=500, bool poly=true)
   {
-    for(auto cursor = openCursor<T>(); !cursor->atEnd(); ++(*cursor)) {
-      T *loaded = cursor->get();
-      //cursor->
-    }
+    size_t numChunks = vect.size() / chunkSize;
+    unsigned rem = unsigned(vect.size() % chunkSize);
+
+    ClassId elementCid = ClassTraits<T>::info.classId;
+    ObjectId collectionId = ++store.m_maxCollectionId;
+
+    size_t index = 0;
+    for(size_t i=0; i<numChunks; i++)
+      saveChunk(vect, collectionId, elementCid, i+1, chunkSize, index, poly);
+    if(rem)
+      saveChunk(vect, collectionId, elementCid, PropertyId(numChunks+1), rem, index, poly);
+
+    return collectionId;
+  }
+
+  /**
+   * append to a top-level (chunked) collection. Non-polymorphic
+   */
+  template <typename T>
+  void appendCollection(ObjectId collectionId,
+                        const std::vector<std::shared_ptr<T>> &vect, unsigned chunkSize=500, bool poly=true)
+  {
+    size_t numChunks = vect.size() / chunkSize;
+    unsigned rem = unsigned(vect.size() % chunkSize);
+
+    ClassId elementCid = ClassTraits<T>::info.classId;
+
+    size_t index = 0;
+    size_t maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + 1;
+
+    for(size_t i=0; i<numChunks; i++)
+      saveChunk(vect, collectionId, elementCid, PropertyId(maxChunk + i), chunkSize, index, poly);
+    if(rem)
+      saveChunk(vect, collectionId, elementCid, PropertyId(maxChunk +numChunks), rem, index, poly);
+  }
+
+  template <typename T>
+  void deleteObject(ObjectId objectId, T &obj) {
+    removeObject(objectId, obj);
+  }
+
+  template <typename T>
+  void deleteObject(std::shared_ptr<T> obj) {
+    removeObject(get_objectid(obj), obj);
   }
 };
 
@@ -797,8 +990,8 @@ struct BasePropertyStorage : public StoreAccessBase
     ClassTraits<T>::put(*tp, pa, val);
     ValueTraits<V>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr,
-            ReadBuf &buf, ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -831,8 +1024,8 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
     ClassTraits<T>::put(*tp, pa, val);
     ValueTraits<const char *>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr,
-            ReadBuf &buf, ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -864,8 +1057,8 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
     ClassTraits<T>::put(*tp, pa, val);
     ValueTraits<std::string>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr,
-            ReadBuf &buf, ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -880,7 +1073,7 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
 template<typename T, typename V>
 struct VectorPropertyStorage : public StoreAccessBase {
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -895,13 +1088,14 @@ struct VectorPropertyStorage : public StoreAccessBase {
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
   }
-  void load(ReadTransaction *tr,
-            ReadBuf &buf, ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     std::vector<V> val;
 
     ReadBuf readBuf;
     tr->getData(readBuf, classId, objectId, pa->id);
+
     if(!readBuf.empty()) {
       V v;
       ValueTraits<V>::getBytes(readBuf, v);
@@ -913,47 +1107,43 @@ struct VectorPropertyStorage : public StoreAccessBase {
 };
 
 /**
- * storage trait for mapped object references w/ raw pointer
+ * storage trait for mapped object references. Value-based, therefore non-polymorphic
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessBase
 {
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
-    WriteBuf propBuf(sizeof(StorageKey::byteSize));
-
+    //save the value object
     ClassId childClassId = ClassTraits<T>::info.classId;
     tr->pushWriteBuf();
     ObjectId childId = tr->putObject<V>(val);
     tr->popWriteBuf();
 
-    propBuf.append(childClassId, childId, 0);
-
-    if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
+    //save the key in this objects write buffer
+    tr->writeBuf().append(childClassId, childId, 0);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force=false) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
-    tr->getData(buf, classId, objectId, pa->id);
-    if(!buf.empty()) {
-      StorageKey sk;
-      if(buf.read(sk)) {
-        V *v = tr->getObject<V>(sk.objectId);
-        T *tp = reinterpret_cast<T *>(obj);
-        ClassTraits<T>::get(*tp, pa, *v);
-        delete tp;
-      }
-    }
+    StorageKey sk;
+    buf.read(sk);
+
+    V *v = tr->getObject<V>(sk.objectId);
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, *v);
+
+    //inefficient - delete the transport object, which was copied into the vector
+    delete tp;
   }
 };
 
 /**
- * storage trait for mapped object references w/ raw pointer
+ * storage trait for mapped object references. Pointer-based, polymorphic
  */
 template<typename T, typename V> class ObjectPtrPropertyStorage : public StoreAccessBase
 {
@@ -974,6 +1164,8 @@ public:
     ClassId childClassId = 0;
     ObjectId childId = 0;
     if(val) {
+      //save the pointed-to object
+
       ClassId childClassId = tr->getClassId(typeid(*val));
       tr->pushWriteBuf();
       ObjectId childId;
@@ -993,32 +1185,28 @@ public:
       ClassTraits<T>::get(*tp, pa, val2);
     }
 
-    WriteBuf propBuf(StorageKey::byteSize);
-    propBuf.append(childClassId, childId, 0);
-
-    if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
+    //save the key in this objects write buffer
+    tr->writeBuf().append(childClassId, childId, 0);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
     if(m_lazy && !force) return;
 
-    tr->getData(buf, classId, objectId, pa->id);
-    if(!buf.empty()) {
-      StorageKey sk;
-      if(buf.read(sk) && sk.classId > 0) {
-        V *v = tr->getObject<V>(sk.objectId);
-        std::shared_ptr<V> vp = std::shared_ptr<V>(v, object_handler<V>(sk.objectId));
-        T *tp = reinterpret_cast<T *>(obj);
-        ClassTraits<T>::get(*tp, pa, vp);
-      }
+    StorageKey sk;
+    buf.read(sk);
+
+    if(sk.classId > 0) {
+      V *v = tr->getObject<V>(sk.objectId);
+      std::shared_ptr<V> vp = std::shared_ptr<V>(v, object_handler<V>(sk.objectId));
+      T *tp = reinterpret_cast<T *>(obj);
+      ClassTraits<T>::get(*tp, pa, vp);
     }
   }
 };
 
 /**
- * storage trait for mapped object vectors
+ * storage trait for mapped object vectors. Value-based, therefore not polymorphic
  */
 template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessBase
 {
@@ -1046,6 +1234,8 @@ public:
       propBuf.append(childClassId, childId, 0);
     }
     tr->popWriteBuf();
+
+    //vector goes into a separate property key
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
   }
@@ -1057,10 +1247,13 @@ public:
 
     std::vector<V> val;
 
-    tr->getData(buf, classId, objectId, pa->id);
-    if(!buf.empty()) {
+    //load vector base (array of object keys) data from property key
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    if(!readBuf.empty()) {
       StorageKey sk;
-      while(buf.read(sk)) {
+      while(readBuf.read(sk)) {
         V *obj = tr->getObject<V>(sk.objectId);
         val.push_back(*obj);
         delete obj;
@@ -1072,7 +1265,7 @@ public:
 };
 
 /**
- * storage trait for mapped object vectors
+ * storage trait for mapped object pointer vectors. Polymorphic
  */
 template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessBase
 {
@@ -1110,6 +1303,8 @@ public:
       propBuf.append(childClassId, childId, 0);
     }
     tr->popWriteBuf();
+
+    //vector goes into a separate property key
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
   }
@@ -1121,10 +1316,13 @@ public:
 
     std::vector<std::shared_ptr<V>> val;
 
-    tr->getData(buf, classId, objectId, pa->id);
-    if(!buf.empty()) {
+    //load vector base (array of object keys) data from property key
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    if(!readBuf.empty()) {
       StorageKey sk;
-      while(buf.read(sk)) {
+      while(readBuf.read(sk)) {
         V *obj = tr->loadObject<V>(sk.classId, sk.objectId);
         val.push_back(std::shared_ptr<V>(obj, object_handler<V>(sk.objectId)));
       }
