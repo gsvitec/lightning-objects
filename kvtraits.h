@@ -98,6 +98,8 @@ protected:
 public:
   ReadBuf() {}
 
+  const char *cur() {return m_readptr;}
+
   void start(char *data, size_t size) {
     m_size = size;
     m_readptr = m_data = data;

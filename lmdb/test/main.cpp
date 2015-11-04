@@ -29,6 +29,7 @@ void testColored2DPoint(KeyValueStore *kv)
   rtxn->abort();
 
   assert(p2 && p2->x == 2.0f && p2->y == 3.0f && p2->r == 4.0f && p2->g == 5.0f && p2->b == 6.0f && p2->a == 7.5f);
+  delete p2;
 }
 
 void testColoredPolygon(KeyValueStore *kv)
@@ -62,6 +63,7 @@ void testColoredPolygon(KeyValueStore *kv)
   rtxn->abort();
 
   assert(loaded && loaded->pts.size() == 3);
+  delete loaded;
 }
 
 void testColoredPolygonIterator(KeyValueStore *kv)
@@ -69,16 +71,18 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   auto rtxn = kv->beginRead();
 
   for(auto cursor = rtxn->openCursor<ColoredPolygon>(); !cursor->atEnd(); ++(*cursor)) {
-    ColoredPolygon *loaded = loaded = cursor->get();
+    ColoredPolygon *loaded = cursor->get();
     if(loaded) {
       cout << "loaded ColoredPolygon visible: " << loaded->visible << " pts: " << loaded->pts.size() << endl;
+      delete loaded;
     }
   }
 
   for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); ++(*cursor)) {
-    Colored2DPoint *loaded = loaded = cursor->get();
+    Colored2DPoint *loaded = cursor->get();
     if(loaded) {
       cout << "loaded Colored2DPoint x: " << loaded->x << " y: " << loaded->y << endl;
+      delete loaded;
     }
   }
 
@@ -106,6 +110,7 @@ void testPolymorphism(KeyValueStore *kv)
   assert(loaded && loaded->userOverlays.size() == 2);
   for(auto &ovl : loaded->userOverlays)
     cout << ovl->type() << endl;
+  delete loaded;
 }
 
 
@@ -148,6 +153,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
     rtxn->abort();
+    delete loaded;
   }
   {
     //test lazy cursor
@@ -164,10 +170,12 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
       count++;
       OtherThing *ot = cursor->get();
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+      delete ot;
     }
     assert(count == 2);
 
     rtxn->abort();
+    delete loaded;
   }
   {
     //test data-only access (no object instantiation, no copying, read into mapped memory)
@@ -196,6 +204,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     }
     assert(count == 2);
     rtxn->abort();
+    delete loaded;
   }
 }
 
@@ -231,6 +240,7 @@ void testPersistentCollection(KeyValueStore *kv)
     vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
     assert(loaded.size() == 10);
 
+    cout << "FULLY LOADED COLLECTION:" << endl;
     for (auto &ot : loaded)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
@@ -240,14 +250,16 @@ void testPersistentCollection(KeyValueStore *kv)
     //iterate over collection w/ cursor
     auto rtxn = kv->beginRead();
 
+    cout << "COLLECTION CURSOR:" << endl;
     unsigned count = 0;
     auto cursor = rtxn->openCursor<OtherThing>(collectionId);
     for (; !cursor->atEnd(); cursor->next()) {
       count++;
       OtherThing *ot = cursor->get();
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+      delete ot;
     }
-    assert(count == 2);
+    assert(count == 10);
 
     rtxn->abort();
   }
@@ -268,11 +280,11 @@ int main()
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();
 
-  /*testColored2DPoint(kv);
+  testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
   testPolymorphism(kv);
-  testLazyPolymorphicCursor(kv);*/
+  testLazyPolymorphicCursor(kv);
   testPersistentCollection(kv);
 
   /*auto rtxn = kv->beginRead();
@@ -289,5 +301,6 @@ int main()
 
   rtxn->abort();*/
 
+  delete kv;
   return 0;
 }

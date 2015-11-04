@@ -206,6 +206,9 @@ protected:
    */
   virtual void get(StorageKey &key, ReadBuf &rb) = 0;
 
+  /**
+   * @return the data at the current cursor position
+   */
   virtual const char *getObjectData() = 0;
 };
 
@@ -574,10 +577,10 @@ public:
       ReadBuf buf;
       cc->get(buf);
 
-      unsigned chunkSize = buf.readInteger<unsigned>(2);
-      ObjectId firstId = buf.readInteger<ObjectId>(ObjectId_sz); //throw away
+      size_t chunkSize = buf.readInteger<size_t>(4);
+      buf.readInteger<ObjectId>(ObjectId_sz); //throw away
 
-      for(unsigned i=0; i<chunkSize; i++) {
+      for(size_t i=0; i<chunkSize; i++) {
         StorageKey sk;
         buf.read(sk);
 
@@ -820,14 +823,14 @@ protected:
   template <typename T>
   void saveChunk(const std::vector<std::shared_ptr<T>> &vect,
                  ObjectId collectionId, ClassId elementClassId, PropertyId chunkId,
-                 unsigned chunkSize, size_t &vectIndex, bool poly)
+                 size_t chunkSize, size_t &vectIndex, bool poly)
   {
     WriteBuf writeBuf;
-    writeBuf.start(chunkSize * StorageKey::byteSize+2+ObjectId_sz);
-    writeBuf.appendInteger(chunkSize, 2); //chunk header: size
+    writeBuf.start(chunkSize * StorageKey::byteSize+4+ObjectId_sz);
+    writeBuf.appendInteger(chunkSize, 4); //chunk header: size
 
     ClassId childClassId = elementClassId;
-    for(unsigned i=0; i<chunkSize; i++) {
+    for(size_t i=0; i<chunkSize; i++) {
       ObjectId oid;
       if(poly) {
         childClassId = getClassId(typeid(*vect[vectIndex]));
@@ -838,7 +841,7 @@ protected:
 
       if(i==0) writeBuf.appendInteger(oid, ObjectId_sz); //chunk header: id of first element
 
-      writeBuf.append(childClassId, oid, vectIndex);
+      writeBuf.append(childClassId, oid, 0);
       vectIndex++;
     }
     putData(COLLECTION_CLSID, collectionId, chunkId, writeBuf);
@@ -927,10 +930,10 @@ public:
    * save a top-level (chunked) collection. Non-polymorphic
    */
   template <typename T>
-  ObjectId putCollection(const std::vector<std::shared_ptr<T>> &vect, unsigned chunkSize=500, bool poly=true)
+  ObjectId putCollection(const std::vector<std::shared_ptr<T>> &vect, size_t chunkSize=500, bool poly=true)
   {
     size_t numChunks = vect.size() / chunkSize;
-    unsigned rem = unsigned(vect.size() % chunkSize);
+    size_t rem = vect.size() % chunkSize;
 
     ClassId elementCid = ClassTraits<T>::info.classId;
     ObjectId collectionId = ++store.m_maxCollectionId;
@@ -949,10 +952,10 @@ public:
    */
   template <typename T>
   void appendCollection(ObjectId collectionId,
-                        const std::vector<std::shared_ptr<T>> &vect, unsigned chunkSize=500, bool poly=true)
+                        const std::vector<std::shared_ptr<T>> &vect, size_t chunkSize=500, bool poly=true)
   {
     size_t numChunks = vect.size() / chunkSize;
-    unsigned rem = unsigned(vect.size() % chunkSize);
+    size_t rem = vect.size() % chunkSize;
 
     ClassId elementCid = ClassTraits<T>::info.classId;
 

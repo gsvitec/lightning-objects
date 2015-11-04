@@ -52,7 +52,7 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 }
 
 /**
- * LMDB-based class cursor backend. Iterates over all instances of a given class
+ * class cursor backend. Iterates over all instances of a given class
  */
 class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::kv::CursorHelper
 {
@@ -131,51 +131,125 @@ public:
 };
 
 /**
- * LMDB-based class cursor backend. Iterates over all elements in a top-level collection
+ * cursor over collection chunks
+ */
+class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
+{
+  const ClassId m_classId;
+  const ObjectId m_objectId;
+
+  ::lmdb::txn &m_txn;
+  ::lmdb::dbi &m_dbi;
+  ::lmdb::val keyval;
+  ::lmdb::val dataval;
+  ::lmdb::cursor m_cursor;
+
+public:
+  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId)
+      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(txn, dbi)), m_classId(classId), m_objectId(objectId)
+  {
+    SK_CONSTR(k, classId, objectId, 1);
+    keyval.assign(k, sizeof(k));
+
+    m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
+  }
+
+  bool next() override {
+    m_atEnd = !m_cursor.get(keyval, dataval, MDB_NEXT);
+    if(!m_atEnd)
+      m_atEnd = SK_CLASSID(keyval.data()) != m_classId || SK_OBJID(keyval.data()) != m_objectId;
+  }
+
+  void get(ReadBuf &rb) override {
+    rb.start(dataval.data(), dataval.size());
+  }
+};
+
+
+/**
+ * collection cursor backend. Iterates over all elements in a top-level collection
  */
 class FlexisPersistence_EXPORT CollectionCursorHelper : public flexis::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
 
-  size_t m_index, m_size;
-
   const ClassId m_classId;
   const ObjectId m_collectionId;
 
-  bool start() {
+  ReadBuf m_readBuf;
+  size_t m_chunkSize, m_chunkIndex;
+  const char *m_data = nullptr;
+  ChunkCursorImpl *m_chunkCursor = nullptr;
+
+  bool prepare_chunk() {
+    m_chunkSize = m_chunkIndex=0;
+    if(!m_chunkCursor->atEnd()) {
+      m_chunkCursor->get(m_readBuf);
+      m_chunkSize = m_readBuf.readInteger<size_t>(4);
+      m_readBuf.readInteger<ObjectId>(ObjectId_sz); //throw away
+      m_data = m_readBuf.cur();
+      return true;
+    }
     return false;
   }
 
-  bool next() {
-    return false;
+protected:
+  bool start() {
+    m_chunkCursor = new ChunkCursorImpl(m_txn, m_dbi, m_classId, m_collectionId);
+    return prepare_chunk();
+  }
+
+  bool next()
+  {
+    if(++m_chunkIndex >= m_chunkSize) {
+      m_chunkCursor->next();
+      if(!prepare_chunk()) return false;
+    }
+    else
+      m_data = m_readBuf.cur() + m_chunkIndex * StorageKey::byteSize;
+    return true;
   }
 
   void erase() {
-
+    throw persistence_error("not implemented");
   }
 
   ObjectId key() {
-    return 0;
+    return SK_OBJID(m_data);
   }
 
   void close() {
-
   }
 
-  void get(StorageKey &key, ReadBuf &rb) {
+  void get(StorageKey &key, ReadBuf &rb)
+  {
+    key.classId = SK_CLASSID(m_data);
+    key.objectId = SK_OBJID(m_data);
+    key.propertyId = SK_PROPID(m_data);
 
+    ::lmdb::val keyval {m_data, StorageKey::byteSize};
+    ::lmdb::val dataval;
+
+    if(m_dbi.get(m_txn, keyval, dataval))
+      rb.start(dataval.data(), dataval.size());
   }
 
-  const char *getObjectData() {
-    return nullptr;
+  const char *getObjectData()
+  {
+    ::lmdb::val keyval {m_data, StorageKey::byteSize};
+    ::lmdb::val dataval;
+
+    return m_dbi.get(m_txn, keyval, dataval) ? dataval.data() : nullptr;
   }
 
 public:
   CollectionCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId collectionId)
   : m_txn(txn), m_dbi(dbi), m_classId(classId), m_collectionId(collectionId)
   {}
-  ~CollectionCursorHelper() {}
+  ~CollectionCursorHelper() {
+    if(m_chunkCursor) delete m_chunkCursor;
+  }
 };
 
 /**
@@ -271,38 +345,6 @@ public:
       : m_txn(txn), m_dbi(dbi), m_classId(classId), m_objectId(objectId), m_propertyId(propertyId)
   {}
   ~VectorCursorHelper() {}
-};
-
-class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
-{
-  const ClassId m_classId;
-  const ObjectId m_objectId;
-
-  ::lmdb::txn &m_txn;
-  ::lmdb::dbi &m_dbi;
-  ::lmdb::val keyval;
-  ::lmdb::val dataval;
-  ::lmdb::cursor m_cursor;
-
-public:
-  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId)
-      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(txn, dbi)), m_classId(classId), m_objectId(objectId)
-  {
-    SK_CONSTR(k, classId, objectId, 1);
-    keyval.assign(k, sizeof(k));
-
-    m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
-  }
-
-  bool next() override {
-    m_atEnd = !m_cursor.get(keyval, dataval, MDB_NEXT);
-    if(!m_atEnd)
-      m_atEnd = SK_CLASSID(keyval.data()) != m_classId || SK_OBJID(keyval.data()) != m_objectId;
-  }
-
-  void get(ReadBuf &rb) override {
-    rb.start(dataval.data(), dataval.size());
-  }
 };
 
 /**
