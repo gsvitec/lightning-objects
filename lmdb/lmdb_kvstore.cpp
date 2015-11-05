@@ -145,13 +145,27 @@ class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
   ::lmdb::cursor m_cursor;
 
 public:
-  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId)
+  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId, bool atEnd=false)
       : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(txn, dbi)), m_classId(classId), m_objectId(objectId)
   {
-    SK_CONSTR(k, classId, objectId, 1);
-    keyval.assign(k, sizeof(k));
+    if(atEnd) {
+      SK_CONSTR(k, classId, objectId, 0xFFFF);
+      keyval.assign(k, sizeof(k));
 
-    m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
+      auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+      m_atEnd = !(cursor.get(keyval, nullptr, MDB_SET_RANGE)
+                && cursor.get(keyval, dataval, MDB_PREV) && SK_CLASSID(keyval.data()) == classId);
+    }
+    else {
+      SK_CONSTR(k, classId, objectId, 1);
+      keyval.assign(k, sizeof(k));
+
+      m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
+    }
+  }
+
+  PropertyId chunkId() override {
+    return SK_PROPID(keyval.data());
   }
 
   bool next() override {
@@ -162,6 +176,10 @@ public:
 
   void get(ReadBuf &rb) override {
     rb.start(dataval.data(), dataval.size());
+  }
+
+  void close() override {
+    m_cursor.close();
   }
 };
 
@@ -367,7 +385,7 @@ protected:
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
-  ChunkCursor::Ptr getChunkCursor(ClassId classId, ObjectId objectId) override;
+  ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
 public:
   enum class Mode {read, append, write};
@@ -500,18 +518,21 @@ bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId property
   return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
 }
 
-ChunkCursor::Ptr Transaction::getChunkCursor(ClassId classId, ObjectId objectId)
+ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd)
 {
-  return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId));
+  return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId, atEnd));
 }
 
 PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
 {
-  SK_CONSTR(k, classId+1, objectId, 0);
+  SK_CONSTR(k, classId, objectId, 0xFFFF);
   ::lmdb::val key {k, sizeof(k)};
 
   auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
-  return cursor.find(key, MDB_LAST) ? SK_PROPID(k) : PropertyId(1);
+  if(cursor.get(key, nullptr, MDB_SET_RANGE) && cursor.get(key, nullptr, MDB_PREV) && SK_CLASSID(key.data()) == classId) {
+    return SK_PROPID(key.data());
+  }
+  return PropertyId(0);
 }
 
 ClassCursorHelper * Transaction::_openCursor(ClassId classId)

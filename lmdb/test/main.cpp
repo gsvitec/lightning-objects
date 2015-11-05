@@ -2,6 +2,7 @@
 // Created by cse on 10/10/15.
 //
 
+#include <sstream>
 #include <kvstore/kvstore.h>
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
@@ -261,6 +262,52 @@ void testPersistentCollection(KeyValueStore *kv)
     }
     assert(count == 10);
 
+    rtxn->abort();
+  }
+  {
+    //append more test data
+    vector<OtherThingPtr> vect;
+
+    vect.push_back(OtherThingPtr(new OtherThingA("Marcel")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Marianne")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Nicolas")));
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->appendCollection(collectionId, vect, 4);
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
+    assert(loaded.size() == 13);
+    rtxn->abort();
+  }
+  {
+    //use write cursor to append more test data
+    auto wtxn = kv->beginWrite();
+
+    auto writer = wtxn->openWriter<OtherThing>(collectionId, 4);
+    for(int i=0; i<20; i++) {
+      stringstream ss;
+      ss << "Test_" << i;
+      writer->append(OtherThingPtr(new OtherThingB(ss.str().c_str())));
+    }
+    writer->close();
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
+
+    cout << "APPEND TEST:" << endl;
+    for(auto ot : loaded)
+      cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
+
+    assert(loaded.size() == 33);
     rtxn->abort();
   }
 }

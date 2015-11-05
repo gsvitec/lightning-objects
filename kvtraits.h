@@ -234,7 +234,7 @@ public:
     m_appendptr += PropertyId_sz;
   }
 
-  const char * data() {
+  char * data() {
     return m_data;
   }
 
