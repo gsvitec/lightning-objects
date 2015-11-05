@@ -227,10 +227,12 @@ void testPersistentCollection(KeyValueStore *kv)
     vect.push_back(OtherThingPtr(new OtherThingB("Johannes")));
     vect.push_back(OtherThingPtr(new OtherThingB("Friedrich")));
     vect.push_back(OtherThingPtr(new OtherThingB("Thomas")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Rudi")));
+    vect.push_back(OtherThingPtr(new OtherThingB("Sabine")));
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putCollection(vect, 4);
+    collectionId = wtxn->putCollection(vect, 128);
 
     wtxn->commit();
   }
@@ -239,7 +241,7 @@ void testPersistentCollection(KeyValueStore *kv)
     auto rtxn = kv->beginRead();
 
     vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
-    assert(loaded.size() == 10);
+    assert(loaded.size() == 12);
 
     cout << "FULLY LOADED COLLECTION:" << endl;
     for (auto &ot : loaded)
@@ -260,10 +262,11 @@ void testPersistentCollection(KeyValueStore *kv)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
       delete ot;
     }
-    assert(count == 10);
+    assert(count == 12);
 
     rtxn->abort();
   }
+#if 0
   {
     //append more test data
     vector<OtherThingPtr> vect;
@@ -274,7 +277,7 @@ void testPersistentCollection(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    wtxn->appendCollection(collectionId, vect, 4);
+    wtxn->appendCollection(collectionId, vect, 128);
 
     wtxn->commit();
   }
@@ -289,13 +292,13 @@ void testPersistentCollection(KeyValueStore *kv)
     //use write cursor to append more test data
     auto wtxn = kv->beginWrite();
 
-    auto writer = wtxn->openWriter<OtherThing>(collectionId, 4);
+    auto appender = wtxn->appendCollection<OtherThing>(collectionId, 128);
     for(int i=0; i<20; i++) {
       stringstream ss;
       ss << "Test_" << i;
-      writer->append(OtherThingPtr(new OtherThingB(ss.str().c_str())));
+      appender->append(OtherThingPtr(new OtherThingB(ss.str().c_str())));
     }
-    writer->close();
+    appender->close();
     wtxn->commit();
   }
   {
@@ -310,6 +313,7 @@ void testPersistentCollection(KeyValueStore *kv)
     assert(loaded.size() == 33);
     rtxn->abort();
   }
+#endif
 }
 
 int main()
@@ -327,26 +331,12 @@ int main()
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();
 
-  testColored2DPoint(kv);
+  /*testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
   testPolymorphism(kv);
-  testLazyPolymorphicCursor(kv);
+  testLazyPolymorphicCursor(kv);*/
   testPersistentCollection(kv);
-
-  /*auto rtxn = kv->beginRead();
-
-  for(auto cursor = rtxn->openCursor<SomethingWithALazyVector>(); !cursor->atEnd(); ++(*cursor)) {
-    ObjectId id;
-    SomethingWithALazyVector *loaded = loaded = cursor->get(&id);
-    rtxn->loadMember(id, *loaded, PROPERTY_ID(SomethingWithALazyVector, otherThings));
-
-    cout << id << ": " << loaded->name << endl;
-    for(auto &o : loaded->otherThings)
-      cout << o->sayhello() << " my name is " << o->name << " my number is " << o->dvalue << endl;
-  }
-
-  rtxn->abort();*/
 
   delete kv;
   return 0;

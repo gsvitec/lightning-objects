@@ -172,7 +172,7 @@ public:
     m_atEnd = !m_cursor.get(keyval, dataval, MDB_NEXT);
     if(!m_atEnd)
       m_atEnd = SK_CLASSID(keyval.data()) != m_classId || SK_OBJID(keyval.data()) != m_objectId;
-    return m_atEnd;
+    return !m_atEnd;
   }
 
   void get(ReadBuf &rb) override {

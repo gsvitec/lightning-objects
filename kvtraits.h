@@ -146,9 +146,13 @@ public:
   }
 };
 
+typedef std::vector<char> auxbuffer_t;
+
 class WriteBuf
 {
   WriteBuf(const WriteBuf &other) = delete;
+
+  auxbuffer_t * m_auxbuf = nullptr;
 
   char *m_appendptr = nullptr;
   char * m_data = nullptr;
@@ -160,6 +164,7 @@ public:
   WriteBuf() {}
   WriteBuf(WriteBuf *_prev) : prev(_prev) {}
   WriteBuf(size_t sz) {start(sz);}
+  WriteBuf(auxbuffer_t &auxbuf) {start(auxbuf);}
 
   ~WriteBuf() {
     if(m_data) free(m_data);
@@ -193,53 +198,102 @@ public:
     m_appendptr = m_data;
   }
 
+  void start(auxbuffer_t &auxbuf)
+  {
+    m_auxbuf = &auxbuf;
+  }
+
   void reset() {
+    if(m_auxbuf) m_auxbuf->clear();
     m_appendptr = m_data;
   }
 
-  char *allocate(size_t size) {
-    char *ret = m_appendptr;
-    m_appendptr += size;
+  char *allocate(size_t size)
+  {
+    char * ret;
+    if(m_auxbuf) {
+      size_t sz = m_auxbuf->size();
+      m_auxbuf->resize(sz + size);
+      ret = &(*m_auxbuf)[sz];
+    }
+    else {
+      ret = m_appendptr;
+      m_appendptr += size;
+    }
     return ret;
   }
 
-  void append(const char *data, size_t sz) {
-    memcpy(m_appendptr, data, sz);
-    m_appendptr += sz;
+  void append(const char *data, size_t size)
+  {
+    if(m_auxbuf) {
+      size_t sz = m_auxbuf->size();
+      m_auxbuf->resize(sz + size);
+      memcpy(&(*m_auxbuf)[sz], data, sz);
+    }
+    else {
+      memcpy(m_appendptr, data, size);
+      m_appendptr += size;
+    }
   }
 
   template<typename T>
   void appendInteger(T num, size_t bytes) {
-    write_integer(m_appendptr, num, bytes);
-    m_appendptr += bytes;
+    if(m_auxbuf) {
+      size_t sz = m_auxbuf->size();
+      m_auxbuf->resize(sz + bytes);
+      write_integer(&(*m_auxbuf)[sz], num, bytes);
+    }
+    else {
+      write_integer(m_appendptr, num, bytes);
+      m_appendptr += bytes;
+    }
   }
 
   void appendCString(const char *data) {
     while(*data) {
-      *m_appendptr = *data;
-      m_appendptr++;
+      if(m_auxbuf) m_auxbuf->push_back(*data);
+      else {
+        *m_appendptr = *data;
+        m_appendptr++;
+      }
       data++;
     }
-    *m_appendptr = 0;
-    ++m_appendptr;
+    if(m_auxbuf) m_auxbuf->push_back(0);
+    else {
+      *m_appendptr = 0;
+      ++m_appendptr;
+    }
   }
 
   void append(ClassId classId, ObjectId objectId, PropertyId propertyId)
   {
-    write_integer(m_appendptr, classId, ClassId_sz);
-    m_appendptr += ClassId_sz;
-    write_integer(m_appendptr, objectId, ObjectId_sz);
-    m_appendptr += ObjectId_sz;
-    write_integer(m_appendptr, propertyId, PropertyId_sz);
-    m_appendptr += PropertyId_sz;
+    if(m_auxbuf) {
+      size_t sz = m_auxbuf->size();
+      m_auxbuf->resize(sz + ClassId_sz + ObjectId_sz + PropertyId_sz);
+      char * data = &(*m_auxbuf)[sz];
+
+      write_integer(data, classId, ClassId_sz);
+      data += ClassId_sz;
+      write_integer(data, objectId, ObjectId_sz);
+      data += ObjectId_sz;
+      write_integer(data, propertyId, PropertyId_sz);
+    }
+    else {
+      write_integer(m_appendptr, classId, ClassId_sz);
+      m_appendptr += ClassId_sz;
+      write_integer(m_appendptr, objectId, ObjectId_sz);
+      m_appendptr += ObjectId_sz;
+      write_integer(m_appendptr, propertyId, PropertyId_sz);
+      m_appendptr += PropertyId_sz;
+    }
   }
 
   char * data() {
-    return m_data;
+    return m_auxbuf ? &m_auxbuf->front() : m_data;
   }
 
   size_t size() {
-    return m_size;
+    return m_auxbuf ? m_auxbuf->size() : m_size;
   }
 };
 
