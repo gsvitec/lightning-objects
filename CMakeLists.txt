@@ -1,5 +1,5 @@
 set(SOURCE_FILES kvstore.cpp)
-set(HEADER_FILES kvstore.h kvtraits.h)
+set(HEADER_FILES kvstore.h kvtraits.h kvbuf.h)
 set(OBJECTS)
 
 add_subdirectory(lmdb)

@@ -257,45 +257,39 @@ public:
 };
 
 /**
- * cursor for iterating over top-level collections
+ * top-level collection cursor
  */
-template <typename T, template <typename T> class Fact>
-class CollectionCursor
+class CollectionCursorBase
 {
-  const ClassId m_declClass;
+protected:
   ChunkCursor::Ptr m_chunkCursor;
   ReadTransaction * const m_tr;
   const ObjectId m_collectionId;
-  Fact<T> m_fact;
 
   ReadBuf m_readBuf;
   size_t m_elementCount = 0, m_curElement = 0;
 
 public:
-  using Ptr = std::shared_ptr<CollectionCursor<T, Fact>>;
+  CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor);
+  bool atEnd();
+  bool next();
+};
 
-  CollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor, Fact<T> fact)
-      : m_declClass(ClassTraits<T>::info.classId), m_collectionId(collectionId), m_tr(tr), m_chunkCursor(chunkCursor), m_fact(fact)
-  {
-    if(!m_chunkCursor->atEnd()) {
-      m_chunkCursor->get(m_readBuf);
-      m_elementCount = m_readBuf.readInteger<size_t>(4);
-    }
-  }
+/**
+ * cursor for iterating over top-level object collections
+ */
+template <typename T, template <typename T> class Fact>
+class ObjectCollectionCursor : public CollectionCursorBase
+{
+  const ClassId m_declClass;
+  Fact<T> m_fact;
 
-  bool atEnd() {
-    return m_curElement >= m_elementCount;
-  }
+public:
+  using Ptr = std::shared_ptr<ObjectCollectionCursor<T, Fact>>;
 
-  bool next()
-  {
-    if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
-      m_chunkCursor->get(m_readBuf);
-      m_elementCount = m_readBuf.readInteger<size_t>(4);
-      m_curElement = 0;
-    }
-    return m_curElement < m_elementCount;
-  }
+  ObjectCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor, Fact<T> fact)
+      : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::info.classId), m_fact(fact)
+  {}
 
   T *get()
   {
@@ -320,19 +314,40 @@ public:
 };
 
 /**
+ * cursor for iterating over top-level object collections
+ */
+template <typename T>
+class ValueCollectionCursor : public CollectionCursorBase
+{
+public:
+  using Ptr = std::shared_ptr<ValueCollectionCursor<T>>;
+
+  ValueCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+      : CollectionCursorBase(collectionId, tr, chunkCursor)
+  {}
+
+  T get()
+  {
+    T val;
+    ValueTraits<T>::getBytes(m_readBuf, val);
+    return val;
+  }
+};
+
+/**
  * polymorphic collection cursor
  */
-template<typename T> struct PolyCollectionCursor :public CollectionCursor<T, PolyFact> {
+template<typename T> struct PolyCollectionCursor :public ObjectCollectionCursor<T, PolyFact> {
   PolyCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr cc,
                        ObjectFactories *factories, ObjectProperties *properties)
-      : CollectionCursor<T, PolyFact>(collectionId, tr, cc, PolyFact<T>(factories, properties)) {}
+      : ObjectCollectionCursor<T, PolyFact>(collectionId, tr, cc, PolyFact<T>(factories, properties)) {}
 };
 /**
  * non-polymorphic collection cursor
  */
-template<typename T> struct SimpleCollectionCursor : public CollectionCursor<T, SimpleFact> {
+template<typename T> struct SimpleCollectionCursor : public ObjectCollectionCursor<T, SimpleFact> {
   SimpleCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr cc)
-      : CollectionCursor<T, SimpleFact>(collectionId, tr, cc, SimpleFact<T>()) {}
+      : ObjectCollectionCursor<T, SimpleFact>(collectionId, tr, cc, SimpleFact<T>()) {}
 };
 
 /**
@@ -497,7 +512,7 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
-  template <typename T> friend class CollectionAppender;
+  friend class CollectionAppenderBase;
 
 protected:
   KeyValueStore &store;
@@ -633,7 +648,7 @@ public:
   }
 
   /**
-   * @param collectionId the id of a top-level collection
+   * @param collectionId the id of a top-level object collection
    * @return a cursor over the contents of the collection. The cursor is polymorphic
    */
   template <typename V> typename PolyCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
@@ -652,13 +667,23 @@ public:
   }
 
   /**
-   * load a top-level (chunked) collection
+   * @param collectionId the id of a top-level collection
+   * @return a cursor over the contents of the collection. The cursor is non-polymorphic
+   */
+  template <typename V> typename ValueCollectionCursor<V>::Ptr openValueCursor(ObjectId collectionId) {
+    return typename ValueCollectionCursor<V>::Ptr(
+        new ValueCollectionCursor<V>(collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId)));
+  }
+
+  /**
+   * load a top-level (chunked) object collection
    *
    * @param collectionId an id returned from a previous #putCollection call
    */
-  template <typename T> std::vector<std::shared_ptr<T>> getCollection(ObjectId collectionId)
+  template <typename T, template <typename T> class Ptr=std::shared_ptr>
+  std::vector<Ptr<T>> getCollection(ObjectId collectionId)
   {
-    std::vector<std::shared_ptr<T>> result;
+    std::vector<Ptr<T>> result;
     for(ChunkCursor::Ptr cc= _openChunkCursor(COLLECTION_CLSID, collectionId); !cc->atEnd(); cc->next()) {
       ReadBuf buf;
       cc->get(buf);
@@ -672,6 +697,29 @@ public:
         if(obj) result.push_back(std::shared_ptr<T>(obj));
         else
           throw persistence_error("collection object not found");
+      }
+    }
+    return result;
+  }
+
+  /**
+   * load a top-level (chunked) scalar collection
+   *
+   * @param collectionId an id returned from a previous #putCollection call
+   */
+  template <typename T>
+  std::vector<T> getValueCollection(ObjectId collectionId)
+  {
+    std::vector<T> result;
+    for(ChunkCursor::Ptr cc= _openChunkCursor(COLLECTION_CLSID, collectionId); !cc->atEnd(); cc->next()) {
+      ReadBuf buf;
+      cc->get(buf);
+
+      size_t elementCount = buf.readInteger<size_t>(4);
+      for(size_t i=0; i < elementCount; i++) {
+        T val;
+        ValueTraits<T>::getBytes(buf, val);
+        result.push_back(val);
       }
     }
     return result;
@@ -734,6 +782,27 @@ public:
   virtual void abort() = 0;
 };
 
+class CollectionAppenderBase
+{
+protected:
+  ChunkCursor::Ptr m_chunkCursor;
+  const ObjectId m_collectionId;
+  const size_t m_chunkSize;
+  WriteTransaction * const m_wtxn;
+
+  WriteBuf &m_writeBuf;
+
+  size_t m_elementCount;
+  bool m_writePending;
+  PropertyId m_chunkId;
+
+  CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize);
+  void finalizePut();
+
+public:
+  void close();
+};
+
 /**
  * Transaction for read and write operations. Only one write transaction can be active at a time, and it should
  * be accessed from one thread only
@@ -747,7 +816,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public ReadTransaction
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
-  template <typename T> friend class CollectionAppender;
+  friend class CollectionAppenderBase;
 
   /**
    * calculate shallow byte size, i.e. the size of the buffer required for properties that dont't get saved under
@@ -897,24 +966,20 @@ protected:
   }
 
   /**
-   * save collection chunks
+   * save object collection chunks
    *
    * @param vect the collection
    * @param collectionId the id of the collection
-   * @param elementClassId the classid of the collection element type (elements may be subclasses)
    * @param chunkId the chunk index
-   * @param chunkSize the chunk size
-   * @param vectIndex the running index into the collection
-   * @param poly lookup classIds dynamically
+   * @param chunkSize the chunk size in bytes
+   * @param poly lookup classes dynamically (slight runtime overhead)
    */
-  template <typename T>
-  void saveChunks(const std::vector<std::shared_ptr<T>> &vect,
+  template <typename T, template <typename T> class Ptr>
+  void saveChunks(const std::vector<Ptr<T>> &vect,
                  ObjectId collectionId, PropertyId chunkId, size_t chunkSize, bool poly)
   {
-    auxbuffer_t buf;
-    buf.resize(4); //reserve bytes for size
-
-    writeBuf().start(buf);
+    writeBuf().start(1024 * 512, 1024 * 256);
+    writeBuf().allocate(4); //reserve bytes for size
 
     size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++) {
@@ -943,17 +1008,50 @@ protected:
 
         writeObject(classId, objectId, *vect[i], Traits::properties, true);
       }
-      if(buf.size() >= chunkSize) {
-        write_integer(&buf[0], elementCount + 1, 4);
+      if(writeBuf().size() >= chunkSize) {
+        write_integer(writeBuf().data(), elementCount + 1, 4);
         putData(COLLECTION_CLSID, collectionId, ++chunkId, writeBuf());
         writeBuf().reset();
-        buf.resize(4); //reserve bytes for size
+        writeBuf().allocate(4); //reserve bytes for size
         elementCount = 0;
       }
       else elementCount++;
     }
     if(elementCount) {
-      write_integer(&buf[0], elementCount, 4);
+      write_integer(writeBuf().data(), elementCount, 4);
+      putData(COLLECTION_CLSID, collectionId, ++chunkId, writeBuf());
+      writeBuf().reset();
+    }
+  }
+
+  /**
+   * save scalar collection chunks
+   *
+   * @param vect the collection
+   * @param collectionId the id of the collection
+   * @param chunkId the chunk index
+   * @param chunkSize the chunk size in bytes
+   */
+  template <typename T>
+  void saveChunks(const std::vector<T> &vect, ObjectId collectionId, PropertyId chunkId, size_t chunkSize)
+  {
+    writeBuf().start(1024 * 512, 1024 * 256);
+    writeBuf().allocate(4); //reserve bytes for size
+
+    size_t elementCount = 0;
+    for(size_t i=0, vectSize = vect.size(); i<vectSize; i++) {
+      ValueTraits<T>::putBytes(writeBuf(), vect[i]);
+      if(writeBuf().size() >= chunkSize) {
+        write_integer(writeBuf().data(), elementCount + 1, 4);
+        putData(COLLECTION_CLSID, collectionId, ++chunkId, writeBuf());
+        writeBuf().reset();
+        writeBuf().allocate(4); //reserve bytes for size
+        elementCount = 0;
+      }
+      else elementCount++;
+    }
+    if(elementCount) {
+      write_integer(writeBuf().data(), elementCount, 4);
       putData(COLLECTION_CLSID, collectionId, ++chunkId, writeBuf());
       writeBuf().reset();
     }
@@ -1045,8 +1143,8 @@ public:
    * @param chunkSize size of keys chunk
    * @param poly emply polymorphic type resolution.
    */
-  template <typename T>
-  ObjectId putCollection(const std::vector<std::shared_ptr<T>> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE,
+  template <typename T, template <typename T> class Ptr>
+  ObjectId putCollection(const std::vector<Ptr<T>> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE,
                          bool poly = true)
   {
     ObjectId collectionId = ++store.m_maxCollectionId;
@@ -1056,20 +1154,43 @@ public:
     return collectionId;
   }
 
+  template <typename T>
+  ObjectId putCollection(const std::vector<T> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE)
+  {
+    ObjectId collectionId = ++store.m_maxCollectionId;
+
+    saveChunks(vect, collectionId, 0, chunkSize);
+
+    return collectionId;
+  }
+
   /**
-   * append to a top-level (chunked) collection.
+   * append to a top-level (chunked) object collection.
    *
    * @param vect the collection contents
    * @param chunkSize size of keys chunk
    * @param poly emply polymorphic type resolution.
    */
-  template <typename T>
+  template <typename T, template <typename T> class Ptr>
   void appendCollection(ObjectId collectionId,
-                        const std::vector<std::shared_ptr<T>> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE,
+                        const std::vector<Ptr<T>> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE,
                         bool poly = true)
   {
     PropertyId maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + PropertyId(1);
     saveChunks(vect, collectionId, maxChunk, chunkSize, poly);
+  }
+
+  /**
+   * append to a top-level (chunked) value collection.
+   *
+   * @param vect the collection contents
+   * @param chunkSize size of keys chunk
+   */
+  template <typename T>
+  void appendCollection(ObjectId collectionId, const std::vector<T> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE)
+  {
+    PropertyId maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + PropertyId(1);
+    saveChunks(vect, collectionId, maxChunk, chunkSize);
   }
 
   template <typename T>
@@ -1083,65 +1204,24 @@ public:
   }
 
   /**
-  * appender for sequentially extending a top-level, chunked collection
+  * appender for sequentially extending a top-level, chunked object collection
   */
   template <typename T>
-  class CollectionAppender
+  class ObjectCollectionAppender : public CollectionAppenderBase
   {
-    ChunkCursor::Ptr m_chunkCursor;
-    const ObjectId m_collectionId;
-    const size_t m_chunkSize;
     const bool m_poly;
     ObjectClassInfos * const m_objectClassInfos;
     ObjectProperties * const m_objectProperties;
 
-    WriteTransaction * const m_wtxn;
-
-    WriteBuf &m_writeBuf;
-    auxbuffer_t m_auxbuf;
-
-    size_t m_elementCount;
-    bool m_writePending;
-    PropertyId m_chunkId;
-
-  public:
-    using Ptr = std::shared_ptr<CollectionAppender>;
-
-    CollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId,
-                       size_t chunkSize, ObjectClassInfos *objectClassInfos, ObjectProperties *objectProperties, bool poly)
-        : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId),
-          m_objectClassInfos(objectClassInfos), m_objectProperties(objectProperties), m_poly(poly),
-          m_writeBuf(m_wtxn->writeBuf())
-    {
-      m_auxbuf.resize(4); //reserve bytes for size
-
-      m_writeBuf.start(m_auxbuf);
-      m_writePending = false;
-
-      if(!m_chunkCursor->atEnd()) {
-        ReadBuf rb;
-        m_chunkCursor->get(rb);
-
-        if(rb.size() < m_chunkSize) {
-          m_elementCount = rb.readInteger<size_t>(4);
-          m_writeBuf.append(rb.cur(), rb.size()-4);
-          m_chunkId = m_chunkCursor->chunkId();
-        }
-        else
-          m_chunkId = m_chunkCursor->chunkId()+PropertyId(1);
-      }
-      else m_chunkId = m_wtxn->getMaxPropertyId(COLLECTION_CLSID, collectionId);
-    }
-
-    void put(std::shared_ptr<T> obj)
+  protected:
+    void _put(T &obj)
     {
       ClassId cid;
       ObjectId oid;
 
-      m_elementCount++;
       Properties *properties;
       if(m_poly) {
-        cid = m_wtxn->getClassId(typeid(*obj));
+        cid = m_wtxn->getClassId(typeid(obj));
 
         ClassInfo *classInfo = m_objectClassInfos->at(cid);
         oid = ++classInfo->maxObjectId;
@@ -1155,44 +1235,78 @@ public:
       char * hdr = m_writeBuf.allocate(ClassId_sz + ObjectId_sz);
       write_integer<ClassId>(hdr, cid, ClassId_sz);
       write_integer<ObjectId>(hdr+ClassId_sz, oid, ObjectId_sz);
-      m_wtxn->writeObject(cid, oid, *obj, properties, false);
+      m_wtxn->writeObject(cid, oid, obj, properties, false);
 
-      if(m_writeBuf.size() >= m_chunkSize) {
-        write_integer(&m_auxbuf[0], m_elementCount, 4);
-        m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
-
-        m_auxbuf.resize(4); //reserve bytes for size
-        m_writeBuf.start(m_auxbuf);
-        m_chunkId++;
-        m_elementCount = 0;
-        m_writePending = false;
-      }
-      else m_writePending = true;
+      finalizePut();
     }
 
-    void close() {
-      if(m_writePending) {
-        write_integer(m_writeBuf.data(), m_elementCount, 4); //chunk header: size
-        m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
-      }
-      m_chunkCursor->close();
+  public:
+    using Ptr = std::shared_ptr<ObjectCollectionAppender>;
+
+    ObjectCollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId,
+                             size_t chunkSize, ObjectClassInfos *objectClassInfos, ObjectProperties *objectProperties, bool poly)
+        : CollectionAppenderBase(chunkCursor, wtxn, collectionId, chunkSize),
+          m_objectClassInfos(objectClassInfos), m_objectProperties(objectProperties), m_poly(poly)
+    {
+    }
+
+    void put(std::shared_ptr<T> obj) {
+      _put(*obj);
+    }
+
+    void put(T *obj) {
+      _put(*obj);
     }
   };
 
   /**
-   * create an appender for the given top-level collection
+  * appender for sequentially extending a top-level, chunked value collection
+  */
+  template <typename T>
+  class ValueCollectionAppender : public CollectionAppenderBase
+  {
+  public:
+    using Ptr = std::shared_ptr<ValueCollectionAppender>;
+
+    ValueCollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
+        : CollectionAppenderBase(chunkCursor, wtxn, collectionId, chunkSize)
+    {}
+
+    void put(T val)
+    {
+      ValueTraits<T>::putBytes(m_writeBuf, val);
+      finalizePut();
+    }
+  };
+
+  /**
+   * create an appender for the given top-level object collection
    *
    * @param collectionId the id of a top-level collection
    * @param chunkSize the keychunk size
    * @param bool poly whether polymorphic type resolution should be employed
    * @return a writer over the contents of the collection.
    */
-  template <typename V> typename CollectionAppender<V>::Ptr appendCollection(
+  template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
       ObjectId collectionId, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE, bool poly = true)
   {
-    return typename CollectionAppender<V>::Ptr(new CollectionAppender<V>(
+    return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
         _openChunkCursor(COLLECTION_CLSID, collectionId, true),
         this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, poly));
+  }
+
+  /**
+   * create an appender for the given top-level value collection
+   *
+   * @param collectionId the id of a top-level collection
+   * @param chunkSize the keychunk size
+   * @return a writer over the contents of the collection.
+   */
+  template <typename V> typename ValueCollectionAppender<V>::Ptr appendValueCollection(
+      ObjectId collectionId, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE)
+  {
+    return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(
+        _openChunkCursor(COLLECTION_CLSID, collectionId, true), this, collectionId, chunkSize));
   }
 };
 

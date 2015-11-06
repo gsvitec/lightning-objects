@@ -48,5 +48,80 @@ void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBa
   }
 }
 
+namespace kv {
+
+CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+: m_collectionId(collectionId), m_tr(tr), m_chunkCursor(chunkCursor)
+{
+  if(!m_chunkCursor->atEnd()) {
+    m_chunkCursor->get(m_readBuf);
+    m_elementCount = m_readBuf.readInteger<size_t>(4);
+  }
 }
+
+bool CollectionCursorBase::atEnd() {
+  return m_curElement >= m_elementCount;
 }
+
+bool CollectionCursorBase::next()
+{
+  if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
+    m_chunkCursor->get(m_readBuf);
+    m_elementCount = m_readBuf.readInteger<size_t>(4);
+    m_curElement = 0;
+  }
+  return m_curElement < m_elementCount;
+}
+
+CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn,
+                                               ObjectId collectionId, size_t chunkSize)
+    : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId), m_writeBuf(m_wtxn->writeBuf())
+{
+  m_writeBuf.start(1024 * 1024);
+  m_writeBuf.allocate(4);
+  m_writePending = false;
+
+  if(!m_chunkCursor->atEnd()) {
+    ReadBuf rb;
+    m_chunkCursor->get(rb);
+
+    if(rb.size() < m_chunkSize) {
+      m_elementCount = rb.readInteger<size_t>(4);
+      m_writeBuf.append(rb.cur(), rb.size()-4);
+      m_chunkId = m_chunkCursor->chunkId();
+    }
+    else
+      m_chunkId = m_chunkCursor->chunkId()+PropertyId(1);
+  }
+  else m_chunkId = m_wtxn->getMaxPropertyId(COLLECTION_CLSID, collectionId);
+}
+
+void CollectionAppenderBase::finalizePut()
+{
+  m_elementCount++;
+
+  if(m_writeBuf.size() >= m_chunkSize) {
+    write_integer(m_writeBuf.data(), m_elementCount, 4);
+    m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
+
+    m_writeBuf.reset();
+    m_writeBuf.allocate(4);
+    m_chunkId++;
+    m_elementCount = 0;
+    m_writePending = false;
+  }
+  else m_writePending = true;
+}
+
+void CollectionAppenderBase::close() {
+  if(m_writePending) {
+    write_integer(m_writeBuf.data(), m_elementCount, 4); //chunk header: size
+    m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
+  }
+  m_chunkCursor->close();
+}
+
+}
+
+} //persistence
+} //flexis

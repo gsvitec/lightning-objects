@@ -39,6 +39,78 @@ void testColored2DPointWrite(KeyValueStore *kv)
   DUR()
 }
 
+void testValueCollection(KeyValueStore *kv) {
+  //test to persistent collection of scalar (primitve) values
+  ObjectId collectionId;
+
+  {
+    //save test data
+    vector<double> vect;
+    for(unsigned i=0; i<1000; i++)
+      vect.push_back(1.44 * i);
+
+    auto wtxn = kv->beginWrite();
+    collectionId = wtxn->putCollection(vect, 128);
+    wtxn->commit();
+  }
+  /*{
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+    assert(loaded.size() == 1000);
+    rtxn->abort();
+  }*/
+  {
+    //iterate over collection w/ cursor
+    auto rtxn = kv->beginRead();
+
+    unsigned count = 0;
+    auto cursor = rtxn->openValueCursor<double>(collectionId);
+    for (; !cursor->atEnd(); cursor->next()) {
+      count++;
+      double val = cursor->get();
+    }
+    assert(count == 1000);
+
+    rtxn->abort();
+  }
+  {
+    //append more test data.
+    vector<double> vect;
+
+    for(unsigned i=1; i<1001; i++)
+      vect.push_back(5.66 * i);
+
+    auto wtxn = kv->beginWrite();
+    wtxn->appendCollection(collectionId, vect, 128);
+    wtxn->commit();
+  }
+  /*{
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+    assert(loaded.size() == 2000);
+    rtxn->abort();
+  }*/
+  {
+    //use appender to add more test data
+    auto wtxn = kv->beginWrite();
+
+    auto appender = wtxn->appendValueCollection<double>(collectionId, 128);
+    for(int i=0; i<1000; i++) appender->put(6.55 * i);
+    appender->close();
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+    assert(loaded.size() == 3000);
+    rtxn->abort();
+  }
+}
+
 void testColored2DPointRead(KeyValueStore *kv)
 {
   BEG()
@@ -124,13 +196,15 @@ int main()
 {
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
-  kv->registerType<Colored2DPoint>();
+  /*kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
   testColored2DPointWrite(kv);
   testColored2DPointRead(kv);
   test_lmdb_write();
-  test_lmdb_read();
+  test_lmdb_read();*/
+
+  testValueCollection(kv);
 
   delete kv;
   return 0;
