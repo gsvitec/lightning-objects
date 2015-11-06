@@ -237,7 +237,7 @@ public:
     return (T *)m_factories->at(classId)();
   }
   Properties *properties(ClassId classId) {
-    return m_properties->at(classId);;
+    return m_properties->at(classId);
   }
 };
 
@@ -1068,10 +1068,8 @@ public:
                         const std::vector<std::shared_ptr<T>> &vect, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE,
                         bool poly = true)
   {
-    ClassId elementCid = ClassTraits<T>::info.classId;
     PropertyId maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + PropertyId(1);
-
-    saveChunks(vect, collectionId, elementCid, maxChunk, chunkSize, poly);
+    saveChunks(vect, collectionId, maxChunk, chunkSize, poly);
   }
 
   template <typename T>
@@ -1094,69 +1092,79 @@ public:
     const ObjectId m_collectionId;
     const size_t m_chunkSize;
     const bool m_poly;
+    ObjectClassInfos * const m_objectClassInfos;
+    ObjectProperties * const m_objectProperties;
 
     WriteTransaction * const m_wtxn;
-    WriteBuf m_writeBuf;
-    size_t m_curSize;
-    bool m_markFirst, m_writePending;
+
+    WriteBuf &m_writeBuf;
+    auxbuffer_t m_auxbuf;
+
+    size_t m_elementCount;
+    bool m_writePending;
     PropertyId m_chunkId;
 
   public:
     using Ptr = std::shared_ptr<CollectionAppender>;
 
-    CollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize, bool poly)
+    CollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId,
+                       size_t chunkSize, ObjectClassInfos *objectClassInfos, ObjectProperties *objectProperties, bool poly)
         : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId),
-          m_writeBuf(chunkSize * StorageKey::byteSize+4+ObjectId_sz), m_poly(poly)
+          m_objectClassInfos(objectClassInfos), m_objectProperties(objectProperties), m_poly(poly),
+          m_writeBuf(m_wtxn->writeBuf())
     {
-      m_writeBuf.appendInteger(chunkSize, 4); //chunk header: size
-      m_markFirst = true;
+      m_auxbuf.resize(4); //reserve bytes for size
+
+      m_writeBuf.start(m_auxbuf);
       m_writePending = false;
 
-      m_curSize = 0;
       if(!m_chunkCursor->atEnd()) {
         ReadBuf rb;
         m_chunkCursor->get(rb);
-        size_t chunkSizeX = rb.readInteger<size_t>(4);
 
-        if(chunkSizeX < m_chunkSize) {
-          m_markFirst = false;
-          m_writeBuf.append(rb.cur(), ObjectId_sz + chunkSizeX * StorageKey::byteSize);
-          m_curSize = chunkSizeX;
+        if(rb.size() < m_chunkSize) {
+          m_elementCount = rb.readInteger<size_t>(4);
+          m_writeBuf.append(rb.cur(), rb.size()-4);
           m_chunkId = m_chunkCursor->chunkId();
         }
         else
-          m_chunkId = m_chunkCursor->chunkId()+1;
+          m_chunkId = m_chunkCursor->chunkId()+PropertyId(1);
       }
       else m_chunkId = m_wtxn->getMaxPropertyId(COLLECTION_CLSID, collectionId);
     }
 
-    void append(std::shared_ptr<T> obj)
+    void put(std::shared_ptr<T> obj)
     {
       ClassId cid;
       ObjectId oid;
 
+      m_elementCount++;
+      Properties *properties;
       if(m_poly) {
         cid = m_wtxn->getClassId(typeid(*obj));
-        oid = m_wtxn->saveObject(cid, 0, *obj, true);
+
+        ClassInfo *classInfo = m_objectClassInfos->at(cid);
+        oid = ++classInfo->maxObjectId;
+        properties = m_objectProperties->at(cid);
       }
       else {
         cid = ClassTraits<T>::info.classId;
-        oid = m_wtxn->saveObject(0, *obj, true);
+        oid = ++ClassTraits<T>::info.maxObjectId;
+        properties = ClassTraits<T>::properties;
       }
-      if(m_markFirst) {
-        m_markFirst = false;
-        m_writeBuf.appendInteger<ObjectId>(oid, ObjectId_sz);
-      }
-      m_writeBuf.append(cid, oid, 0);
+      char * hdr = m_writeBuf.allocate(ClassId_sz + ObjectId_sz);
+      write_integer<ClassId>(hdr, cid, ClassId_sz);
+      write_integer<ObjectId>(hdr+ClassId_sz, oid, ObjectId_sz);
+      m_wtxn->writeObject(cid, oid, *obj, properties, false);
 
-      if(++m_curSize == m_chunkSize) {
+      if(m_writeBuf.size() >= m_chunkSize) {
+        write_integer(&m_auxbuf[0], m_elementCount, 4);
         m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
 
-        m_writeBuf.start(m_chunkSize * StorageKey::byteSize+4+ObjectId_sz);
-        m_writeBuf.appendInteger(m_chunkSize, 4); //chunk header: size
-        m_markFirst = true;
+        m_auxbuf.resize(4); //reserve bytes for size
+        m_writeBuf.start(m_auxbuf);
         m_chunkId++;
-        m_curSize = 0;
+        m_elementCount = 0;
         m_writePending = false;
       }
       else m_writePending = true;
@@ -1164,7 +1172,7 @@ public:
 
     void close() {
       if(m_writePending) {
-        write_integer(m_writeBuf.data(), m_curSize, 4); //chunk header: size
+        write_integer(m_writeBuf.data(), m_elementCount, 4); //chunk header: size
         m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
       }
       m_chunkCursor->close();
@@ -1183,7 +1191,8 @@ public:
       ObjectId collectionId, size_t chunkSize = DEFAULT_OBJECTS_CHUNKSIZE, bool poly = true)
   {
     return typename CollectionAppender<V>::Ptr(new CollectionAppender<V>(
-        _openChunkCursor(COLLECTION_CLSID, collectionId, true), this, collectionId, chunkSize, poly));
+        _openChunkCursor(COLLECTION_CLSID, collectionId, true),
+        this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, poly));
   }
 };
 

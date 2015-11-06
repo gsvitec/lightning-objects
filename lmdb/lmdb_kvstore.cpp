@@ -145,16 +145,22 @@ class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
   ::lmdb::cursor m_cursor;
 
 public:
-  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId, bool atEnd=false)
+  ChunkCursorImpl(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId, ObjectId objectId, bool toEnd=false)
       : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(txn, dbi)), m_classId(classId), m_objectId(objectId)
   {
-    if(atEnd) {
+    if(toEnd) {
       SK_CONSTR(k, classId, objectId, 0xFFFF);
       keyval.assign(k, sizeof(k));
 
       auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
-      m_atEnd = !(cursor.get(keyval, nullptr, MDB_SET_RANGE)
-                && cursor.get(keyval, dataval, MDB_PREV) && SK_CLASSID(keyval.data()) == classId);
+
+      bool ok;
+      if(cursor.get(keyval, nullptr, MDB_SET_RANGE))
+        ok = cursor.get(keyval, dataval, MDB_PREV);
+      else
+        ok = cursor.get(keyval, dataval, MDB_LAST);
+
+      m_atEnd = !(ok && SK_CLASSID(keyval.data()) == classId && SK_OBJID(keyval.data()) == objectId);
     }
     else {
       SK_CONSTR(k, classId, objectId, 1);
@@ -530,7 +536,14 @@ PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
   ::lmdb::val key {k, sizeof(k)};
 
   auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
-  if(cursor.get(key, nullptr, MDB_SET_RANGE) && cursor.get(key, nullptr, MDB_PREV) && SK_CLASSID(key.data()) == classId) {
+
+  bool ok;
+  if(cursor.get(key, nullptr, MDB_SET_RANGE))
+    ok = cursor.get(key, nullptr, MDB_PREV);
+  else
+    ok = cursor.get(key, nullptr, MDB_LAST);
+
+  if(ok && SK_CLASSID(key.data()) == classId) {
     return SK_PROPID(key.data());
   }
   return PropertyId(0);

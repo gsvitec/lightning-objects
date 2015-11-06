@@ -266,7 +266,6 @@ void testPersistentCollection(KeyValueStore *kv)
 
     rtxn->abort();
   }
-#if 0
   {
     //append more test data
     vector<OtherThingPtr> vect;
@@ -285,18 +284,18 @@ void testPersistentCollection(KeyValueStore *kv)
     //load saved collection
     auto rtxn = kv->beginRead();
     vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
-    assert(loaded.size() == 13);
+    assert(loaded.size() == 15);
     rtxn->abort();
   }
   {
-    //use write cursor to append more test data
+    //use appender to add more test data
     auto wtxn = kv->beginWrite();
 
     auto appender = wtxn->appendCollection<OtherThing>(collectionId, 128);
     for(int i=0; i<20; i++) {
       stringstream ss;
       ss << "Test_" << i;
-      appender->append(OtherThingPtr(new OtherThingB(ss.str().c_str())));
+      appender->put(OtherThingPtr(new OtherThingB(ss.str().c_str())));
     }
     appender->close();
     wtxn->commit();
@@ -310,10 +309,9 @@ void testPersistentCollection(KeyValueStore *kv)
     for(auto ot : loaded)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
-    assert(loaded.size() == 33);
+    assert(loaded.size() == 35);
     rtxn->abort();
   }
-#endif
 }
 
 int main()
@@ -331,11 +329,11 @@ int main()
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();
 
-  /*testColored2DPoint(kv);
+  testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
   testPolymorphism(kv);
-  testLazyPolymorphicCursor(kv);*/
+  testLazyPolymorphicCursor(kv);
   testPersistentCollection(kv);
 
   delete kv;

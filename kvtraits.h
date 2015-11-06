@@ -98,13 +98,14 @@ protected:
 public:
   ReadBuf() {}
 
-  const char *cur() {return m_readptr;}
+  char *&cur() {return m_readptr;}
 
   void start(char *data, size_t size) {
     m_size = size;
     m_readptr = m_data = data;
   }
 
+  size_t size() {return m_size;}
   bool empty() {return m_size == 0;}
 
   /**
@@ -228,7 +229,7 @@ public:
     if(m_auxbuf) {
       size_t sz = m_auxbuf->size();
       m_auxbuf->resize(sz + size);
-      memcpy(&(*m_auxbuf)[sz], data, sz);
+      memcpy(&(*m_auxbuf)[sz], data, size);
     }
     else {
       memcpy(m_appendptr, data, size);
