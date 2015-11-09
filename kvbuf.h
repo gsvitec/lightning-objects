@@ -18,6 +18,9 @@ static const size_t ObjectId_sz = 4; //max 2^32 objects per class
 using PropertyId = uint16_t;
 static const size_t PropertyId_sz = 2; //max. 65535 properies per object
 
+static const size_t ObjectHeader_sz = ClassId_sz + ObjectId_sz + 4;
+static const size_t ChunkHeader_sz = 4 * 3;
+
 /**
  * a storage key. This structure must not be changed (lest db files become unreadable)
  */

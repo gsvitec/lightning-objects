@@ -136,7 +136,7 @@ public:
   /**
    * @return a transaction object that allows reading the database.
    */
-  virtual TransactionPtr beginRead() = 0;
+  virtual TransactionPtr beginRead(bool blockWrite=false) = 0;
 
   /**
    * @param append enable append mode. Append mode, if supported, is useful if a large number of homogenous simple objects
@@ -148,11 +148,16 @@ public:
    *
    * @return a transaction object that allows reading + writing the database.
    * @throws InvalidArgumentException if in append mode the above prerequisites are not met
+   * @throws persistence_error if write operations are currently blocked (beginRead(true))
    */
   virtual WriteTransactionPtr beginWrite(bool append=false) = 0;
 };
 
 namespace kv {
+
+size_t readChunkStartIndex(const char *data);
+void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
+void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size);
 
 /**
  * custom deleter used to store the objectId inside a std::shared_ptr
@@ -294,8 +299,9 @@ public:
 
   T *get()
   {
-    ClassId classId = m_readBuf.readInteger<ClassId>(ClassId_sz);
-    ObjectId objectId = m_readBuf.readInteger<ObjectId>(ObjectId_sz);
+    ClassId classId;
+    ObjectId objectId;
+    readObjectHeader(m_readBuf, &classId, &objectId, 0);
 
     T *obj = m_fact.makeObj(classId);
     Properties *properties = m_fact.properties(classId);
@@ -496,6 +502,29 @@ template<typename T> struct SimpleClassCursor : public ClassCursor<T, SimpleFact
 };
 
 /**
+ * container for a raw data pointer obtained from a top-level value collection
+ */
+template <typename V> class CollectionData
+{
+protected:
+  V *m_data;
+
+public:
+  using Ptr = std::shared_ptr<CollectionData>;
+
+  virtual ~CollectionData() {}
+  V *data() {return m_data;};
+};
+
+template <typename V> class CopiedCollectionData : public CollectionData<V>
+{
+public:
+  ~CopiedCollectionData() {
+    free(CollectionData<V>::m_data);
+  }
+};
+
+/**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
 class FlexisPersistence_EXPORT ReadTransaction
@@ -505,11 +534,18 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
+  friend class CollectionCursorBase;
   friend class CollectionAppenderBase;
 
 protected:
   KeyValueStore &store;
-  ReadTransaction(KeyValueStore &store) : store(store) {}
+  bool m_blockWrites;
+
+  ReadTransaction(KeyValueStore &store, bool blockWrites=false) : store(store) {}
+
+  void setBlockWrites(bool blockWrites) {
+    m_blockWrites = blockWrites;
+  }
 
   /**
    * @return the ObjectId which was (hopefully) stored with a custom deleter
@@ -607,6 +643,16 @@ protected:
   virtual PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) = 0;
 
   /**
+   * retrieve info about a chunk to be appended to a given collection
+   *
+   * @param propertyId (out) the collectionId of the highest stored chunk + 1
+   * @param startIndex (out) the startIndex of the first element to be stored into the new chunk
+   *
+   * @return true if the collection was found and info retrieved
+   */
+  virtual bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startindex) = 0;
+
+  /**
    * @return a cursor ofer a chunked object (e.g., collection)
    */
   virtual ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd=false) = 0;
@@ -681,12 +727,13 @@ public:
       ReadBuf buf;
       cc->get(buf);
 
-      buf.readInteger<size_t>(4); //data size
-      size_t elementCount = buf.readInteger<size_t>(4);
+      size_t elementCount;
+      readChunkHeader(buf, 0, 0, &elementCount);
 
       for(size_t i=0; i < elementCount; i++) {
-        ClassId cid = buf.readInteger<ClassId>(ClassId_sz);
-        ObjectId oid = buf.readInteger<ObjectId>(ObjectId_sz);
+        ClassId cid;
+        ObjectId oid;
+        readObjectHeader(buf, &cid, &oid, 0);
 
         T *obj = readObject<T>(buf, cid, oid);
         if(obj) result.push_back(std::shared_ptr<T>(obj));
@@ -710,8 +757,8 @@ public:
       ReadBuf buf;
       cc->get(buf);
 
-      buf.readInteger<size_t>(4); //data size
-      size_t elementCount = buf.readInteger<size_t>(4);
+      size_t elementCount;
+      readChunkHeader(buf, 0, 0, &elementCount);
 
       for(size_t i=0; i < elementCount; i++) {
         T val;
@@ -720,6 +767,14 @@ public:
       }
     }
     return result;
+  }
+
+  template <typename V> typename
+  CollectionData<V>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex)
+  {
+    if(!m_blockWrites)
+      throw persistence_error("value collection data requires write-blocking transaction");
+
   }
 
   /**
@@ -787,7 +842,7 @@ protected:
   const size_t m_chunkSize;
   WriteTransaction * const m_wtxn;
 
-  size_t m_elementCount;
+  size_t m_elementCount, m_startIndex;
   PropertyId m_chunkId;
 
   CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize);
@@ -833,25 +888,19 @@ class FlexisPersistence_EXPORT WriteTransaction : public ReadTransaction
   WriteBuf writeBufStart;
   WriteBuf  *curBuf;
 
-  inline void writeChunkHeader(size_t elementCount)
-  {
-    write_integer(writeBuf().data(), writeBuf().size(), 4);
-    write_integer(writeBuf().data()+4, elementCount, 4);
-  }
+  void writeChunkHeader(size_t startIndex, size_t elementCount);
+  void writeObjectHeader(ClassId classId, ObjectId objectId, size_t size);
 
-  inline bool startChunk(ObjectId collectionId, PropertyId chunkId, size_t chunkSize, size_t elementCount)
-  {
-    if(elementCount > 0) writeChunkHeader(elementCount);
-
-    //allocate a new chunk
-    char * data;
-    if(allocData(COLLECTION_CLSID, collectionId, chunkId, chunkSize, &data)) {
-      writeBuf().start(data, chunkSize);
-      writeBuf().allocate(8); //reserve bytes for header
-      return true;
-    }
-    return false;
-  }
+  /**
+   * start a new chunk by allocating memory from the KV store for it. Also write the chunk header for the
+   * current chunk, if any
+   *
+   * @param collectionId
+   * @param chunkId
+   * @param chunkSize
+   * @param elementCount the number of elements written to the current chunk. Used to write the header. If
+   */
+  bool startChunk(ObjectId collectionId, PropertyId chunkId, size_t chunkSize, size_t startIndex, size_t elementCount);
 
 protected:
   const bool m_append;
@@ -987,9 +1036,9 @@ protected:
    */
   template <typename T, template <typename T> class Ptr>
   void saveChunks(const std::vector<Ptr<T>> &vect,
-                 ObjectId collectionId, PropertyId chunkId, size_t chunkSize, bool poly)
+                 ObjectId collectionId, PropertyId chunkId, size_t chunkSize, size_t startIndex, bool poly)
   {
-    if(!vect.empty()) startChunk(collectionId, chunkId, chunkSize, 0);
+    if(!vect.empty()) startChunk(collectionId, chunkId, chunkSize, 0, 0);
 
     size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
@@ -999,19 +1048,15 @@ protected:
         Properties *properties = store.objectProperties[classId];
         ObjectId objectId = ++classInfo->maxObjectId;
 
-        size_t size = calculateBuffer(&(*vect[i]), properties) + ClassId_sz + ObjectId_sz;
+        size_t size = calculateBuffer(&(*vect[i]), properties) + ObjectHeader_sz;
         if(writeBuf().avail() < size) {
           if(elementCount == 0) throw persistence_error("chunk size too small");
-          startChunk(collectionId, ++chunkId, chunkSize, elementCount);
+          startIndex += elementCount;
+          startChunk(collectionId, ++chunkId, chunkSize, startIndex, elementCount);
           elementCount = 0;
         }
 
-        //object header
-        char * hdr = writeBuf().allocate(ClassId_sz + ObjectId_sz);
-        write_integer<ClassId>(hdr, classId, ClassId_sz);
-        write_integer<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
-
-        //object data
+        writeObjectHeader(classId, objectId, size);
         writeObject(classId, objectId, *vect[i], properties, true);
       }
       else {
@@ -1021,23 +1066,19 @@ protected:
         ClassId classId = classInfo.classId;
         ObjectId objectId = ++classInfo.maxObjectId;
 
-        size_t size = calculateBuffer(&(*vect[i]), Traits::properties) + ClassId_sz + ObjectId_sz;
+        size_t size = calculateBuffer(&(*vect[i]), Traits::properties) + ObjectHeader_sz;
         if(writeBuf().avail() < size) {
           if(elementCount == 0) throw persistence_error("chunk size too small");
-          startChunk(collectionId, ++chunkId, chunkSize, elementCount);
+          startIndex += elementCount;
+          startChunk(collectionId, ++chunkId, chunkSize, startIndex, elementCount);
           elementCount = 0;
         }
 
-        //object header
-        char * hdr = writeBuf().allocate(ClassId_sz + ObjectId_sz);
-        write_integer<ClassId>(hdr, classId, ClassId_sz);
-        write_integer<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
-
-        //object data;
+        writeObjectHeader(classId, objectId, size);
         writeObject(classId, objectId, *vect[i], Traits::properties, true);
       }
     }
-    if(elementCount) writeChunkHeader(elementCount);
+    if(elementCount) writeChunkHeader(startIndex + elementCount, elementCount);
 
     writeBuf().reset();
   }
@@ -1051,20 +1092,21 @@ protected:
    * @param chunkSize the chunk size in bytes
    */
   template <typename T>
-  void saveChunks(const std::vector<T> &vect, ObjectId collectionId, PropertyId chunkId, size_t chunkSize)
+  void saveChunks(const std::vector<T> &vect, ObjectId collectionId, PropertyId chunkId, size_t chunkSize, size_t startIndex)
   {
-    if(!vect.empty()) startChunk(collectionId, chunkId, chunkSize, 0);
+    if(!vect.empty()) startChunk(collectionId, chunkId, chunkSize, 0, 0);
 
     size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(writeBuf().avail() < ValueTraits<T>::size(vect[i])) {
         if(elementCount == 0) throw persistence_error("chunk size too small");
-        startChunk(collectionId, ++chunkId, chunkSize, elementCount);
+        startIndex += elementCount;
+        startChunk(collectionId, ++chunkId, chunkSize, startIndex, elementCount);
         elementCount = 0;
       }
       ValueTraits<T>::putBytes(writeBuf(), vect[i]);
     }
-    if(elementCount) writeChunkHeader(elementCount);
+    if(elementCount) writeChunkHeader(startIndex + elementCount, elementCount);
 
     writeBuf().reset();
   }
@@ -1154,10 +1196,10 @@ public:
   }
 
   /**
-   * save a top-level (chunked) collection.
+   * save a top-level (chunked) object collection.
    *
    * @param vect the collection contents
-   * @param chunkSize size of keys chunk
+   * @param chunkSize size of chunk
    * @param poly emply polymorphic type resolution.
    */
   template <typename T, template <typename T> class Ptr>
@@ -1166,17 +1208,23 @@ public:
   {
     ObjectId collectionId = ++store.m_maxCollectionId;
 
-    saveChunks(vect, collectionId, 1, chunkSize, poly);
+    saveChunks(vect, collectionId, 1, chunkSize, 0, poly);
 
     return collectionId;
   }
 
+  /**
+   * save a top-level (chunked) value collection.
+   *
+   * @param vect the collection contents
+   * @param chunkSize size of chunk
+   */
   template <typename T>
-  ObjectId putCollection(const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
+  ObjectId putValueCollection(const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
   {
     ObjectId collectionId = ++store.m_maxCollectionId;
 
-    saveChunks(vect, collectionId, 1, chunkSize);
+    saveChunks(vect, collectionId, 1, chunkSize, 0);
 
     return collectionId;
   }
@@ -1185,7 +1233,7 @@ public:
    * append to a top-level (chunked) object collection.
    *
    * @param vect the collection contents
-   * @param chunkSize size of keys chunk
+   * @param chunkSize size of chunk
    * @param poly emply polymorphic type resolution.
    */
   template <typename T, template <typename T> class Ptr>
@@ -1193,8 +1241,12 @@ public:
                         const std::vector<Ptr<T>> &vect, size_t chunkSize = CHUNKSIZE,
                         bool poly = true)
   {
-    PropertyId maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + PropertyId(1);
-    saveChunks(vect, collectionId, maxChunk, chunkSize, poly);
+    PropertyId maxChunkId;
+    size_t startIndex;
+    if(!getNextChunkInfo(collectionId, &maxChunkId, &startIndex))
+      throw persistence_error("collection not found");
+
+    saveChunks(vect, collectionId, maxChunkId, chunkSize, startIndex, poly);
   }
 
   /**
@@ -1204,10 +1256,14 @@ public:
    * @param chunkSize size of keys chunk
    */
   template <typename T>
-  void appendCollection(ObjectId collectionId, const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
+  void appendValueCollection(ObjectId collectionId, const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
   {
-    PropertyId maxChunk = getMaxPropertyId(COLLECTION_CLSID, collectionId) + PropertyId(1);
-    saveChunks(vect, collectionId, maxChunk, chunkSize);
+    PropertyId maxChunkId;
+    size_t startIndex;
+    if(!getNextChunkInfo(collectionId, &maxChunkId, &startIndex))
+      throw persistence_error("collection not found");
+
+    saveChunks(vect, collectionId, maxChunkId, chunkSize, startIndex);
   }
 
   template <typename T>
@@ -1249,12 +1305,10 @@ public:
         oid = ++ClassTraits<T>::info.maxObjectId;
         properties = ClassTraits<T>::properties;
       }
-      size_t size = calculateBuffer(&obj, properties) + ClassId_sz + ObjectId_sz;
+      size_t size = calculateBuffer(&obj, properties) + ObjectHeader_sz;
       preparePut(size);
 
-      char * hdr = m_wtxn->writeBuf().allocate(ClassId_sz + ObjectId_sz);
-      write_integer<ClassId>(hdr, cid, ClassId_sz);
-      write_integer<ObjectId>(hdr+ClassId_sz, oid, ObjectId_sz);
+      m_wtxn->writeObjectHeader(cid, oid, size);
       m_wtxn->writeObject(cid, oid, obj, properties, false);
     }
 

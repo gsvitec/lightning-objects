@@ -209,99 +209,6 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
   }
 }
 
-void testValueCollection(KeyValueStore *kv) {
-  //test to persistent collection of scalar (primitve) values
-  ObjectId collectionId;
-
-  {
-    //save test data
-    vector<double> vect;
-
-    for(unsigned i=0; i<10; i++)
-      vect.push_back(1.44 * i);
-
-    auto wtxn = kv->beginWrite();
-
-    collectionId = wtxn->putCollection(vect, 128);
-
-    wtxn->commit();
-  }
-  {
-    //load saved collection
-    auto rtxn = kv->beginRead();
-
-    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
-    assert(loaded.size() == 10);
-
-    cout << "FULLY LOADED VALUE COLLECTION:" << endl;
-    for (auto ot : loaded)
-      cout << "value: " << ot << endl;
-
-    rtxn->abort();
-  }
-  {
-    //iterate over collection w/ cursor
-    auto rtxn = kv->beginRead();
-
-    cout << "VALUE COLLECTION CURSOR:" << endl;
-    unsigned count = 0;
-    auto cursor = rtxn->openValueCursor<double>(collectionId);
-    for (; !cursor->atEnd(); cursor->next()) {
-      count++;
-      double val = cursor->get();
-      cout << "value: " << val << endl;
-    }
-    assert(count == 10);
-
-    rtxn->abort();
-  }
-  {
-    //append more test data. Actually, this could be of any type, but then you'd have to know
-    //exactly when to read what
-    vector<double> vect;
-
-    for(unsigned i=1; i<6; i++)
-      vect.push_back(5.66 * i);
-
-    auto wtxn = kv->beginWrite();
-
-    wtxn->appendCollection(collectionId, vect, 128);
-
-    wtxn->commit();
-  }
-  {
-    //load saved collection
-    auto rtxn = kv->beginRead();
-    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
-    assert(loaded.size() == 15);
-    rtxn->abort();
-  }
-  {
-    //use appender to add more test data
-    auto wtxn = kv->beginWrite();
-
-    auto appender = wtxn->appendValueCollection<double>(collectionId, 128);
-    for(int i=0; i<20; i++) {
-      appender->put(6.55 * i);
-    }
-    appender->close();
-
-    wtxn->commit();
-  }
-  {
-    //load saved collection
-    auto rtxn = kv->beginRead();
-    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
-
-    cout << "APPEND TEST:" << endl;
-    for(auto ot : loaded)
-      cout << "value: " << ot << endl;
-
-    assert(loaded.size() == 35);
-    rtxn->abort();
-  }
-}
-
 void testObjectCollection(KeyValueStore *kv)
 {
   //test polymorphic access to persistent collection
@@ -415,6 +322,134 @@ void testObjectCollection(KeyValueStore *kv)
   }
 }
 
+//test persistent collection of scalar (primitve) values
+void testValueCollection(KeyValueStore *kv)
+{
+  ObjectId collectionId;
+
+  {
+    //save test data
+    vector<double> vect;
+
+    for(unsigned i=0; i<10; i++)
+      vect.push_back(1.44 * i);
+
+    auto wtxn = kv->beginWrite();
+
+    collectionId = wtxn->putValueCollection(vect, 128);
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+    assert(loaded.size() == 10);
+
+    cout << "FULLY LOADED VALUE COLLECTION:" << endl;
+    for (auto ot : loaded)
+      cout << "value: " << ot << endl;
+
+    rtxn->abort();
+  }
+  {
+    //iterate over collection w/ cursor
+    auto rtxn = kv->beginRead();
+
+    cout << "VALUE COLLECTION CURSOR:" << endl;
+    unsigned count = 0;
+    auto cursor = rtxn->openValueCursor<double>(collectionId);
+    for (; !cursor->atEnd(); cursor->next()) {
+      count++;
+      double val = cursor->get();
+      cout << "value: " << val << endl;
+    }
+    assert(count == 10);
+
+    rtxn->abort();
+  }
+  {
+    //append more test data. Actually, this could be of any type, but then you'd have to know
+    //exactly when to read what
+    vector<double> vect;
+
+    for(unsigned i=1; i<6; i++)
+      vect.push_back(5.66 * i);
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->appendValueCollection(collectionId, vect, 128);
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+    assert(loaded.size() == 15);
+    rtxn->abort();
+  }
+  {
+    //use appender to add more test data
+    auto wtxn = kv->beginWrite();
+
+    auto appender = wtxn->appendValueCollection<double>(collectionId, 128);
+    for(int i=0; i<20; i++) {
+      appender->put(6.55 * i);
+    }
+    appender->close();
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection
+    auto rtxn = kv->beginRead();
+    vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
+
+    cout << "APPEND TEST:" << endl;
+    for(auto ot : loaded)
+      cout << "value: " << ot << endl;
+
+    assert(loaded.size() == 35);
+    rtxn->abort();
+  }
+}
+
+//test persistent collection of scalar (primitve) values sub-array API
+void testValueCollectionArrays(KeyValueStore *kv)
+{
+  ObjectId collectionId;
+
+  {
+    //save test data
+    vector<double> vect;
+
+    for(unsigned i=0; i<1000; i++)
+      vect.push_back(1.44 * i);
+
+    auto wtxn = kv->beginWrite();
+
+    collectionId = wtxn->putValueCollection(vect, 128);
+
+    wtxn->commit();
+  }
+  {
+    //load saved collection arrays
+    auto rtxn = kv->beginRead(true);
+
+    CollectionData<double>::Ptr cd = rtxn->getValueCollectionData<double>(collectionId, 500, 100);
+    double *data = cd->data();
+    assert(data[0] == 1.44 * 500 && data[99] == 1.44 * 600);
+
+    cd = rtxn->getValueCollectionData<double>(collectionId, 100, 50);
+    data = cd->data();
+    assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 150);
+
+    rtxn->abort();
+  }
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
@@ -437,6 +472,7 @@ int main()
   testLazyPolymorphicCursor(kv);
   testObjectCollection(kv);
   testValueCollection(kv);
+  testValueCollectionArrays(kv);
 
   delete kv;
   return 0;

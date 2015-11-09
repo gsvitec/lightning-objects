@@ -377,10 +377,17 @@ public:
  */
 class FlexisPersistence_EXPORT Transaction : public flexis::persistence::kv::WriteTransaction
 {
+public:
+  enum class Mode {read, append, write};
+
+private:
   const ::lmdb::env &env;
 
   ::lmdb::txn m_txn;
   ::lmdb::dbi m_dbi;
+
+  Mode m_mode;
+  bool m_closed = false;
 
 protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
@@ -393,30 +400,27 @@ protected:
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
+  bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex) override;
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
 public:
-  enum class Mode {read, append, write};
-
-  Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env)
+  Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, bool blockWrites=false)
       : flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
+        m_mode(mode),
         env(env),
         m_txn(::lmdb::txn::begin(env, nullptr, mode == Mode::read ? MDB_RDONLY : 0)),
         m_dbi(::lmdb::dbi::open(m_txn, CLASSDATA))
   {
     //important!!
     m_dbi.set_compare(m_txn, key_compare);
+
+    setBlockWrites(blockWrites);
   }
 
-  void commit() override
-  {
-    m_txn.commit();
-  }
+  bool isClosed() {return m_closed;}
 
-  void abort() override
-  {
-    m_txn.abort();
-  }
+  void commit() override;
+  void abort() override;
 };
 
 /**
@@ -428,6 +432,8 @@ class KeyValueStoreImpl : public KeyValueStore
   weak_ptr<Transaction> writeTxn;
   string m_dbpath;
   Options m_options;
+
+  unsigned m_writeBlocks = 0;
 
   static int meta_dup_compare(const MDB_val *a, const MDB_val *b);
 
@@ -446,8 +452,10 @@ public:
   KeyValueStoreImpl(std::string location, std::string name, Options options);
   ~KeyValueStoreImpl();
 
-  ps::TransactionPtr beginRead() override;
+  ps::TransactionPtr beginRead(bool blockWrite) override;
   ps::WriteTransactionPtr beginWrite(bool append) override;
+
+  void transactionCompleted(Transaction::Mode mode, bool blockWrites);
 };
 
 //Start KeyValueStoreImpl implementation
@@ -491,20 +499,48 @@ KeyValueStoreImpl::~KeyValueStoreImpl()
 #endif
 }
 
-ps::TransactionPtr KeyValueStoreImpl::beginRead()
+void KeyValueStoreImpl::transactionCompleted(Transaction::Mode mode, bool blockWrites)
 {
-  return ps::TransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env));
+  if(blockWrites) m_writeBlocks--;
+}
+
+ps::TransactionPtr KeyValueStoreImpl::beginRead(bool blockWrite)
+{
+  if(blockWrite) {
+    shared_ptr<Transaction> wtr = writeTxn.lock();
+    if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
+    m_writeBlocks++;
+  }
+  return ps::TransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, blockWrite));
 }
 
 ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append)
 {
-  if(writeTxn.lock()) throw invalid_argument("a write transaction is already running");
+  if(m_writeBlocks)
+    throw invalid_argument("write operations are blocked by a running transaction");
+
+  shared_ptr<Transaction> wtr = writeTxn.lock();
+  if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
 
   Transaction::Mode mode = append ? Transaction::Mode::append : Transaction::Mode::write;
   auto tptr = shared_ptr<Transaction>(new Transaction(*this, mode, m_env));
   writeTxn = tptr;
 
   return tptr;
+}
+
+void Transaction::commit()
+{
+  m_txn.commit();
+  m_closed = true;
+  ((KeyValueStoreImpl *)&store)->transactionCompleted(m_mode, m_blockWrites);
+}
+
+void Transaction::abort()
+{
+  m_txn.abort();
+  m_closed = true;
+  ((KeyValueStoreImpl *)&store)->transactionCompleted(m_mode, m_blockWrites);
 }
 
 bool Transaction::putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf)
@@ -549,6 +585,28 @@ bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId property
 ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd)
 {
   return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId, atEnd));
+}
+
+bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex)
+{
+  SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0xFFFF);
+  ::lmdb::val key {k, sizeof(k)};
+  ::lmdb::val data;
+
+  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+
+  bool ok;
+  if(cursor.get(key, nullptr, MDB_SET_RANGE))
+    ok = cursor.get(key, data, MDB_PREV);
+  else
+    ok = cursor.get(key, data, MDB_LAST);
+
+  if(ok && SK_CLASSID(key.data()) == COLLECTION_CLSID) {
+    *propertyId = SK_PROPID(key.data()) + PropertyId(1);
+    *startIndex = readChunkStartIndex(data.data());
+    return true;
+  }
+  return false;
 }
 
 PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
