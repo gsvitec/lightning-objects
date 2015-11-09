@@ -389,12 +389,12 @@ void testObjectCollection(KeyValueStore *kv)
     for(int i=0; i<10; i++) {
       stringstream ss;
       ss << "Test_" << i;
-      appender->put(OtherThingPtr(new OtherThingB(ss.str().c_str())));
+      appender->put(OtherThingPtr(new OtherThingB(ss.str())));
     }
     for(int i=10; i<20; i++) {
       stringstream ss;
       ss << "Test_" << i;
-      OtherThingB ob(ss.str().c_str());
+      OtherThingB ob(ss.str());
       appender->put(&ob);
     }
     appender->close();

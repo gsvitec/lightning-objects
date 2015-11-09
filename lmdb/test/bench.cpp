@@ -196,15 +196,15 @@ int main()
 {
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
-  /*kv->registerType<Colored2DPoint>();
+  kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
   testColored2DPointWrite(kv);
   testColored2DPointRead(kv);
-  test_lmdb_write();
-  test_lmdb_read();*/
-
   testValueCollection(kv);
+
+  test_lmdb_write();
+  test_lmdb_read();
 
   delete kv;
   return 0;

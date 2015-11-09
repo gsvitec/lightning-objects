@@ -14,10 +14,22 @@ namespace lmdb {
 class FlexisPersistence_EXPORT KeyValueStore : public flexis::persistence::KeyValueStore
 {
 public:
+  struct Options {
+    const size_t mapSizeMB = 1024;
+    const bool lockFile = false;
+    const bool writeMap = false;
+
+    Options(size_t mapSizeMB = 1024, bool lockFile = false, bool writeMap = false)
+        : mapSizeMB(mapSizeMB), lockFile(lockFile), writeMap(writeMap) {}
+  };
+
   struct FlexisPersistence_EXPORT Factory
   {
     const std::string location, name;
-    Factory(std::string location, std::string name) : location(location), name(name) {}
+    const Options options;
+
+    Factory(std::string location, std::string name, Options options = Options())
+        : location(location), name(name), options(options) {}
     operator flexis::persistence::KeyValueStore *() const;
   };
 };

@@ -384,6 +384,7 @@ class FlexisPersistence_EXPORT Transaction : public flexis::persistence::kv::Wri
 
 protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
+  bool allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, char **data) override;
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
   bool remove(ClassId classId, ObjectId objectId, PropertyId propertyid) override;
 
@@ -426,6 +427,7 @@ class KeyValueStoreImpl : public KeyValueStore
   ::lmdb::env m_env;
   weak_ptr<Transaction> writeTxn;
   string m_dbpath;
+  Options m_options;
 
   static int meta_dup_compare(const MDB_val *a, const MDB_val *b);
 
@@ -441,7 +443,7 @@ protected:
       std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
 
 public:
-  KeyValueStoreImpl(std::string location, std::string name);
+  KeyValueStoreImpl(std::string location, std::string name, Options options);
   ~KeyValueStoreImpl();
 
   ps::TransactionPtr beginRead() override;
@@ -452,17 +454,23 @@ public:
 
 KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 {
-  return new KeyValueStoreImpl(location, name);
+  return new KeyValueStoreImpl(location, name, options);
 }
 
-KeyValueStoreImpl::KeyValueStoreImpl(string location, string name) : m_env(::lmdb::env::create())
+KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
+    : m_env(::lmdb::env::create()), m_options(options)
 {
   m_dbpath = location + "/"+ (name.empty() ? "kvdata" : name);
 
-  size_t sz = size_t(1) * size_t(1024) * size_t(1024) * size_t(1024); //1 GiB
+  size_t sz = size_t(1) * options.mapSizeMB * size_t(1024) * size_t(1024); //1 GiB
   m_env.set_mapsize(sz);
   m_env.set_max_dbs(2);
-  m_env.open(m_dbpath.c_str(), MDB_NOLOCK | MDB_NOSUBDIR, 0664);
+  unsigned flags = MDB_NOSUBDIR;
+  if(!options.lockFile) flags |= MDB_NOLOCK;
+  if(options.writeMap) flags |= MDB_WRITEMAP;
+  m_env.open(m_dbpath.c_str(), flags, 0664);
+
+  m_reuseChunkspace = options.writeMap;
 
   m_maxCollectionId = findMaxObjectId(COLLECTION_CLSID);
 }
@@ -506,6 +514,19 @@ bool Transaction::putData(ClassId classId, ObjectId objectId, PropertyId propert
   ::lmdb::val v{buf.data(), buf.size()};
 
   return ::lmdb::dbi_put(m_txn, m_dbi.handle(), k, v, m_append ? MDB_APPEND : 0);
+}
+
+bool Transaction::allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, char **data)
+{
+  SK_CONSTR(kv, classId, objectId, propertyId);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{nullptr, size};
+
+  if(::lmdb::dbi_put(m_txn, m_dbi.handle(), k, v, MDB_RESERVE)) {
+    *data = v.data();
+    return true;
+  }
+  return false;
 }
 
 void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId)

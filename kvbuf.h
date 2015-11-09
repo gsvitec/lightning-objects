@@ -5,7 +5,7 @@
 #ifndef FLEXIS_KVWRITEBUF_H
 #define FLEXIS_KVWRITEBUF_H
 
-#endif //FLEXIS_KVWRITEBUF_H
+#include <persistence_error.h>
 
 namespace flexis {
 namespace persistence {
@@ -89,6 +89,7 @@ protected:
 public:
   ReadBuf() {}
 
+  char *&data() {return m_data;}
   char *&cur() {return m_readptr;}
 
   void start(char *data, size_t size) {
@@ -158,9 +159,10 @@ public:
   WriteBuf() {}
   WriteBuf(WriteBuf *_prev) : prev(_prev) {}
   WriteBuf(size_t sz) {start(sz);}
+  WriteBuf(char *data, size_t sz) {start(data, sz);}
 
   ~WriteBuf() {
-    if(m_data) free(m_data);
+    if(m_data && m_growsize) free(m_data);
     m_appendptr = m_data = nullptr;
   }
 
@@ -177,6 +179,21 @@ public:
   void deleteChain() {
     if(next) next->deleteChain();
     delete next;
+  }
+
+  void start(char * data, size_t offset, size_t newSize)
+  {
+    if(m_data && m_growsize) free(m_data);
+
+    m_growsize = 0;
+    m_allocsize = newSize;
+    m_data = data;
+    m_appendptr = m_data+offset;
+  }
+
+  void start(char * data, size_t newSize)
+  {
+    start(data, 0, newSize);
   }
 
   void start(size_t newSize, size_t grow)
@@ -197,6 +214,10 @@ public:
   }
 
   void reset() {
+    if(m_growsize == 0) {
+      m_allocsize = 0;
+      m_data = nullptr;
+    }
     m_appendptr = m_data;
   }
 
@@ -205,7 +226,10 @@ public:
     char * ret = m_appendptr;
     m_appendptr += size;
     size_t sz = m_appendptr - m_data;
-    if(sz >= m_allocsize) {
+    if(sz > m_allocsize) {
+      if(m_growsize == 0)
+        throw persistence_error("memory exhausted");
+
       m_allocsize += m_growsize;
       m_data = (char *)realloc(m_data, m_allocsize);
       m_appendptr = m_data + sz;
@@ -248,11 +272,20 @@ public:
     return m_data;
   }
 
+  size_t allocSize() {
+    return m_allocsize;
+  }
   size_t size() {
     return m_appendptr - m_data;
+  }
+
+  size_t avail() {
+    return m_allocsize - (m_appendptr - m_data);
   }
 };
 
 } //kv
 } //persistence
 } //flexis
+
+#endif //FLEXIS_KVWRITEBUF_H

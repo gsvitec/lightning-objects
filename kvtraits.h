@@ -106,8 +106,11 @@ class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
 
+/**
+ * abstract superclass for all Store Access classes
+ */
 struct StoreAccessBase {
-  virtual size_t size(const char *buf) {return 0;};
+  virtual size_t size(const char *buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;};
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
@@ -119,7 +122,112 @@ struct StoreAccessBase {
                     void *obj, const PropertyAccessBase *pa,
                     bool force=false) = 0;
 };
+
+/**
+ * abstract superclass for all Store Access classes that represent property values that are saved
+ * under individual object keys, with the key value saved in the enclosing object's buffer
+ */
+struct StoreAccessEmbeddedKey: public StoreAccessBase
+{
+  size_t size(const char *buf) const override {return StorageKey::byteSize;}
+  size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
+};
+
+/**
+ * abstract superclass for all Store Access classes that represent property values that are saved
+ * under a property key, with nothing saved in the enclosing object's buffer
+ */
+struct StoreAccessPropertyKey: public StoreAccessBase
+{
+  size_t size(const char *buf) const override {return 0;}
+  size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
+};
+
 template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
+
+template <typename T>
+struct ValueTraits {
+  static size_t size(const T &val) {
+    return TypeTraits<T>::pt().byteSize;
+  }
+  static void getBytes(ReadBuf &buf, T &val) {
+    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    const char *data = buf.read(byteSize);
+    val = read_integer<T>(data, byteSize);
+  }
+  static void putBytes(WriteBuf &buf, T val) {
+    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    char *data = buf.allocate(byteSize);
+    write_integer(data, val, byteSize);
+  }
+};
+
+template <>
+struct ValueTraits<bool> {
+  static size_t size(const bool &val) {
+    return TypeTraits<bool>::pt().byteSize;
+  }
+  static void getBytes(ReadBuf &buf, bool &val) {
+    const char *data = buf.read(1);
+    val = *data != 0;
+  }
+  static void putBytes(WriteBuf &buf, bool val) {
+    char *data = buf.allocate(1);
+    *data = char(val ? 1 : 0);
+  }
+};
+
+template <>
+struct ValueTraits<std::string>
+{
+  static size_t size(const std::string &val) {
+    return val.length() + 1;
+  }
+  static void getBytes(ReadBuf &buf, std::string &val) {
+    val = buf.read(0);
+    buf.read(val.length() +1); //move the pointer
+  }
+  static void putBytes(WriteBuf &buf, std::string val) {
+    buf.append(val.c_str(), val.length()+1);
+  }
+};
+
+template <>
+struct ValueTraits<const char *>
+{
+  static size_t size(const char * const &val) {
+    return strlen(val) + 1;
+  }
+  static void getBytes(ReadBuf &buf, const char *&val) {
+    val = buf.readCString();
+  }
+  static void putBytes(WriteBuf &buf, const char *&val) {
+    buf.appendCString(val);
+  }
+};
+
+template <typename T>
+struct ValueTraitsFloat
+{
+  static size_t size(const T &val) {
+    return TypeTraits<T>::pt().byteSize;
+  }
+  static void getBytes(ReadBuf &buf, T &val) {
+    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    const char *data = buf.read(byteSize);
+    val = *reinterpret_cast<const T *>(data);
+  }
+  static void putBytes(WriteBuf &buf, T val) {
+    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    char *data = buf.allocate(byteSize);
+    *reinterpret_cast<T *>(data) = val;
+  }
+};
+
+template <>
+struct ValueTraits<float> : public ValueTraitsFloat<float> {};
+template <>
+struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
 struct PropertyAccessBase
 {
@@ -153,75 +261,6 @@ struct BasePropertyAssign : public PropertyAssign<O, P, p> {
   BasePropertyAssign(const char * name)
       : PropertyAssign<O, P, p>(name, new PropertyStorage<O, P>(), TypeTraits<P>::pt()) {}
 };
-
-template <typename T>
-struct ValueTraits {
-  static void getBytes(ReadBuf &buf, T &val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
-    const char *data = buf.read(byteSize);
-    val = read_integer<T>(data, byteSize);
-  }
-  static void putBytes(WriteBuf &buf, T val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
-    char *data = buf.allocate(byteSize);
-    write_integer(data, val, byteSize);
-  }
-};
-
-template <>
-struct ValueTraits<bool> {
-  static void getBytes(ReadBuf &buf, bool &val) {
-    const char *data = buf.read(1);
-    val = *data != 0;
-  }
-  static void putBytes(WriteBuf &buf, bool val) {
-    char *data = buf.allocate(1);
-    *data = val ? 1 : 0;
-  }
-};
-
-template <>
-struct ValueTraits<std::string>
-{
-  static void getBytes(ReadBuf &buf, std::string &val) {
-    val = buf.read(0);
-    buf.read(val.length() +1); //move the pointer
-  }
-  static void putBytes(WriteBuf &buf, std::string val) {
-    buf.append(val.c_str(), val.length()+1);
-  }
-};
-
-template <>
-struct ValueTraits<const char *>
-{
-  static void getBytes(ReadBuf &buf, const char *&val) {
-    val = buf.readCString();
-  }
-  static void putBytes(WriteBuf &buf, const char *&val) {
-    buf.appendCString(val);
-  }
-};
-
-template <typename T>
-struct ValueTraitsFloat
-{
-  static void getBytes(ReadBuf &buf, T &val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
-    const char *data = buf.read(byteSize);
-    val = *reinterpret_cast<const T *>(data);
-  }
-  static void putBytes(WriteBuf &buf, T val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
-    char *data = buf.allocate(byteSize);
-    *reinterpret_cast<T *>(data) = val;
-  }
-};
-
-template <>
-struct ValueTraits<float> : public ValueTraitsFloat<float> {};
-template <>
-struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
 template <typename T> struct ClassTraits;
 

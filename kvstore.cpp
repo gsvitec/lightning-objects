@@ -55,6 +55,7 @@ CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransactio
 {
   if(!m_chunkCursor->atEnd()) {
     m_chunkCursor->get(m_readBuf);
+    m_readBuf.readInteger<size_t>(4); //forget datasize
     m_elementCount = m_readBuf.readInteger<size_t>(4);
   }
 }
@@ -67,6 +68,7 @@ bool CollectionCursorBase::next()
 {
   if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
     m_chunkCursor->get(m_readBuf);
+    m_readBuf.readInteger<size_t>(4); //forget datasize
     m_elementCount = m_readBuf.readInteger<size_t>(4);
     m_curElement = 0;
   }
@@ -75,49 +77,42 @@ bool CollectionCursorBase::next()
 
 CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn,
                                                ObjectId collectionId, size_t chunkSize)
-    : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId), m_writeBuf(m_wtxn->writeBuf())
+    : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId)
 {
-  m_writeBuf.start(1024 * 1024);
-  m_writeBuf.allocate(4);
-  m_writePending = false;
-
+  bool needAlloc = true;
   if(!m_chunkCursor->atEnd()) {
     ReadBuf rb;
     m_chunkCursor->get(rb);
 
-    if(rb.size() < m_chunkSize) {
+    size_t dataSize = rb.readInteger<size_t>(4);
+    m_chunkId = m_chunkCursor->chunkId();
+
+    if(m_wtxn->reuseChunkspace() && dataSize < rb.size()) {
+      //there's more room. Use that first
+      m_wtxn->writeBuf().start(rb.data(), dataSize, rb.size());
       m_elementCount = rb.readInteger<size_t>(4);
-      m_writeBuf.append(rb.cur(), rb.size()-4);
-      m_chunkId = m_chunkCursor->chunkId();
+      needAlloc = false;
     }
-    else
-      m_chunkId = m_chunkCursor->chunkId()+PropertyId(1);
   }
   else m_chunkId = m_wtxn->getMaxPropertyId(COLLECTION_CLSID, collectionId);
+
+  if(needAlloc) {
+    m_elementCount = 0;
+    m_wtxn->startChunk(m_collectionId, ++m_chunkId, m_chunkSize, 0);
+  }
 }
 
-void CollectionAppenderBase::finalizePut()
+void CollectionAppenderBase::preparePut(size_t size)
 {
-  m_elementCount++;
-
-  if(m_writeBuf.size() >= m_chunkSize) {
-    write_integer(m_writeBuf.data(), m_elementCount, 4);
-    m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
-
-    m_writeBuf.reset();
-    m_writeBuf.allocate(4);
-    m_chunkId++;
+  if(m_wtxn->writeBuf().avail() < size) {
+    m_wtxn->startChunk(m_collectionId, ++m_chunkId, m_chunkSize, m_elementCount);
     m_elementCount = 0;
-    m_writePending = false;
   }
-  else m_writePending = true;
+  m_elementCount++;
 }
 
 void CollectionAppenderBase::close() {
-  if(m_writePending) {
-    write_integer(m_writeBuf.data(), m_elementCount, 4); //chunk header: size
-    m_wtxn->putData(COLLECTION_CLSID, m_collectionId, m_chunkId, m_writeBuf);
-  }
+  if(m_elementCount) m_wtxn->writeChunkHeader(m_elementCount);
   m_chunkCursor->close();
 }
 

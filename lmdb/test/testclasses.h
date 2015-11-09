@@ -11,11 +11,11 @@
 #include <kvstore/kvstore.h>
 
 struct OtherThing {
-  const char *name;
+  std::string name;
   double dvalue = 7.99765;
 
-  OtherThing() : name(nullptr) {}
-  OtherThing(const char *name) : name(name) {}
+  OtherThing() {}
+  OtherThing(std::string name) : name(name) {}
   virtual const char *sayhello() = 0;
   virtual ~OtherThing() {}
 };
@@ -23,14 +23,14 @@ struct OtherThingA : public OtherThing {
   long lvalue = 99999999911111;
 
   OtherThingA() : OtherThing() {}
-  OtherThingA(const char *name) : OtherThing(name) {}
+  OtherThingA(std::string name) : OtherThing(name) {}
   const char *sayhello() override {return "i'm an OtherThingA";}
 };
 struct OtherThingB : public OtherThing {
   unsigned long long llvalue = 7777777272727272727;
 
   OtherThingB() : OtherThing() {}
-  OtherThingB(const char *name) : OtherThing(name) {}
+  OtherThingB(std::string name) : OtherThing(name) {}
   const char *sayhello() override {return "i'm an OtherThingB";}
 };
 
@@ -51,7 +51,7 @@ struct ClassTraits<OtherThing> : public ClassTraitsBase<OtherThing>{
 };
 template<> ClassInfo ClassTraitsBase<OtherThing>::info ("OtherThing", typeid(OtherThing));
 template<> PropertyAccessBase * ClassTraitsBase<OtherThing>::decl_props[] = {
-    new BasePropertyAssign<OtherThing, const char *, &OtherThing::name>("name"),
+    new BasePropertyAssign<OtherThing, std::string, &OtherThing::name>("name"),
     new BasePropertyAssign<OtherThing, double, &OtherThing::dvalue>("dvalue")
 };
 template<> Properties * ClassTraitsBase<OtherThing>::properties(Properties::mk<OtherThing>());
