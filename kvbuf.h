@@ -6,6 +6,7 @@
 #define FLEXIS_KVWRITEBUF_H
 
 #include <persistence_error.h>
+#include <string.h>
 
 namespace flexis {
 namespace persistence {
@@ -52,7 +53,7 @@ static long byte_facts[] = {
  * save an integral value to a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline void write_integer(char *ptr, T val, size_t bytes)
+inline void write_unsigned(char *ptr, T val, size_t bytes)
 {
   ptr += bytes-1;
   for(int i=0; i<bytes; i++) {
@@ -67,11 +68,11 @@ inline void write_integer(char *ptr, T val, size_t bytes)
  * read an integral value from a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline T read_integer(const char *ptr, size_t bytes)
+inline T read_unsigned(const char *ptr, size_t bytes)
 {
   T val = 0;
   for(int i=0; i<bytes; i++, ptr++) {
-    val += (T)*ptr * (T) byte_facts[i];
+    val += (T)*(unsigned char *)ptr * (T) byte_facts[i];
   }
   return val;
 }
@@ -121,7 +122,7 @@ public:
 
   template <typename T>
   T readInteger(unsigned sz) {
-    T ret = read_integer<T>(m_readptr, sz);
+    T ret = read_unsigned<T>(m_readptr, sz);
     m_readptr += sz;
     return ret;
   }
@@ -131,11 +132,11 @@ public:
     if(m_size - (m_readptr - m_data) < 8)
       return false;
 
-    key.classId = read_integer<ClassId>(m_readptr, ClassId_sz);
+    key.classId = read_unsigned<ClassId>(m_readptr, ClassId_sz);
     m_readptr += ClassId_sz;
-    key.objectId = read_integer<ObjectId>(m_readptr, ObjectId_sz);
+    key.objectId = read_unsigned<ObjectId>(m_readptr, ObjectId_sz);
     m_readptr += ObjectId_sz;
-    key.propertyId = read_integer<PropertyId>(m_readptr, PropertyId_sz);
+    key.propertyId = read_unsigned<PropertyId>(m_readptr, PropertyId_sz);
     m_readptr += PropertyId_sz;
 
     return true;
@@ -147,13 +148,13 @@ public:
  */
 class WriteBuf
 {
-  static const size_t min_size = 256;
+  static const size_t min_size = 128;
 
   WriteBuf(const WriteBuf &other) = delete;
 
   char *m_appendptr = nullptr;
   char * m_data = nullptr;
-  size_t m_growsize;
+  size_t m_growsize = 0;
   size_t m_allocsize = 0;
 
   WriteBuf *prev = nullptr, *next = nullptr;
@@ -201,12 +202,17 @@ public:
 
   void start(size_t newSize, size_t grow)
   {
-    m_growsize = newSize;
+    if(!m_growsize) {
+      //prevent realloc of external memory
+      m_allocsize = 0;
+      m_data = nullptr;
+    }
 
     if(newSize > m_allocsize) {
       m_allocsize = newSize;
       m_data = (char *)realloc(m_data, m_allocsize);
     }
+    m_growsize = grow;
     m_appendptr = m_data;
   }
 
@@ -250,7 +256,7 @@ public:
   template<typename T>
   void appendInteger(T num, size_t bytes) {
     char * buf = allocate(bytes);
-    write_integer(buf, num, bytes);
+    write_unsigned(buf, num, bytes);
   }
 
   void appendCString(const char *data) {
@@ -263,11 +269,11 @@ public:
   {
     char * buf = allocate(StorageKey::byteSize);
 
-    write_integer(buf, classId, ClassId_sz);
+    write_unsigned(buf, classId, ClassId_sz);
     buf += ClassId_sz;
-    write_integer(buf, objectId, ObjectId_sz);
+    write_unsigned(buf, objectId, ObjectId_sz);
     buf += ObjectId_sz;
-    write_integer(buf, propertyId, PropertyId_sz);
+    write_unsigned(buf, propertyId, PropertyId_sz);
     buf += PropertyId_sz;
   }
 

@@ -5,7 +5,6 @@
 #include "lmdb_kvstore.h"
 #include "liblmdb/lmdb++.h"
 #include <algorithm>
-#include <cstdio>
 
 namespace flexis {
 namespace persistence {
@@ -375,13 +374,15 @@ public:
 /**
  * LMDB-based Transaction
  */
-class FlexisPersistence_EXPORT Transaction : public flexis::persistence::kv::WriteTransaction
+class FlexisPersistence_EXPORT Transaction
+    : public flexis::persistence::kv::WriteTransaction,
+      public flexis::persistence::kv::ExclusiveReadTransaction
 {
 public:
   enum class Mode {read, append, write};
 
 private:
-  const ::lmdb::env &env;
+  const ::lmdb::env &m_env;
 
   ::lmdb::txn m_txn;
   ::lmdb::dbi m_dbi;
@@ -399,15 +400,24 @@ protected:
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
+  bool _getCollectionData(CollectionInfo &info, size_t startIndex, size_t length,
+                          std::shared_ptr<ValueTraitsBase>, void **data, bool *owned) override;
+
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
   bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex) override;
+  bool firstChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
+  bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
+  bool makeCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex, PropertyId start, PropertyId end,
+                          std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
 public:
   Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, bool blockWrites=false)
-      : flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
+      : flexis::persistence::kv::ReadTransaction(store),
+        flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
+        flexis::persistence::kv::ExclusiveReadTransaction(store),
         m_mode(mode),
-        env(env),
+        m_env(env),
         m_txn(::lmdb::txn::begin(env, nullptr, mode == Mode::read ? MDB_RDONLY : 0)),
         m_dbi(::lmdb::dbi::open(m_txn, CLASSDATA))
   {
@@ -452,7 +462,8 @@ public:
   KeyValueStoreImpl(std::string location, std::string name, Options options);
   ~KeyValueStoreImpl();
 
-  ps::TransactionPtr beginRead(bool blockWrite) override;
+  ps::ReadTransactionPtr beginRead() override;
+  ps::ExclusiveReadTransactionPtr beginExclusiveRead() override;
   ps::WriteTransactionPtr beginWrite(bool append) override;
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
@@ -504,14 +515,18 @@ void KeyValueStoreImpl::transactionCompleted(Transaction::Mode mode, bool blockW
   if(blockWrites) m_writeBlocks--;
 }
 
-ps::TransactionPtr KeyValueStoreImpl::beginRead(bool blockWrite)
+ps::ReadTransactionPtr KeyValueStoreImpl::beginRead()
 {
-  if(blockWrite) {
-    shared_ptr<Transaction> wtr = writeTxn.lock();
-    if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
-    m_writeBlocks++;
-  }
-  return ps::TransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, blockWrite));
+  return ps::ReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, false));
+}
+
+ps::ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
+{
+  shared_ptr<Transaction> wtr = writeTxn.lock();
+  if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
+  m_writeBlocks++;
+
+  return ps::ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, true));
 }
 
 ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append)
@@ -587,11 +602,43 @@ ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectI
   return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId, atEnd));
 }
 
-bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex)
+bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *chunkId, size_t *startIndex)
+{
+  ::lmdb::val data;
+  PropertyId last;
+
+  bool ok = lastChunk(collectionId, last, data);
+
+  if(ok) {
+    *chunkId = last + PropertyId(1); //next higher chunkid
+    size_t start, count;
+    readChunkHeader(data.data(), 0, &start, &count);
+    *startIndex = start + count; //next higher element index
+    return true;
+  }
+  return false;
+}
+
+bool Transaction::firstChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data)
+{
+  SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0);
+  ::lmdb::val key {k, sizeof(k)};
+
+  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+
+  if(cursor.get(key, data, MDB_SET_RANGE)) {
+    if(SK_CLASSID(key.data()) == COLLECTION_CLSID && SK_OBJID(key.data()) == collectionId) {
+      chunkId = SK_PROPID(key.data());
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Transaction::lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data)
 {
   SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0xFFFF);
   ::lmdb::val key {k, sizeof(k)};
-  ::lmdb::val data;
 
   auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
 
@@ -601,10 +648,112 @@ bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId
   else
     ok = cursor.get(key, data, MDB_LAST);
 
-  if(ok && SK_CLASSID(key.data()) == COLLECTION_CLSID) {
-    *propertyId = SK_PROPID(key.data()) + PropertyId(1);
-    *startIndex = readChunkStartIndex(data.data());
+  if(ok && SK_CLASSID(key.data()) == COLLECTION_CLSID && SK_OBJID(key.data()) == collectionId) {
+    chunkId = SK_PROPID(key.data());
     return true;
+  }
+  return false;
+}
+
+bool Transaction::makeCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex, PropertyId start, PropertyId end,
+    std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned)
+{
+  ::lmdb::val dataval;
+  ::lmdb::val keyval;
+
+  SK_CONSTR(k, COLLECTION_CLSID, collectionId, start);
+  ::lmdb::val key {k, sizeof(k)};
+  m_dbi.get(m_txn, key, data);
+
+  char *d_start;
+  if(vt->fixed) d_start = dataval.data() + startIndex * vt->data_size(nullptr);
+  else {
+    d_start = (char *)dataval.data();
+    for(size_t i=0; i<=startIndex; i++) d_start += vt->data_size(d_start);
+  }
+  if(start == end) {
+    //yippee, same chunk. Done, no need to copy
+    *owned = false;
+    *data = d_start;
+  }
+  else {
+    //::lmdb::val data[];
+  }
+  return true;
+}
+
+bool check_chunkinfo(const ChunkInfo &run, const ChunkInfo &ref)
+{
+  return run.startIndex + run.elementCount < ref.startIndex;
+}
+
+bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, size_t length,
+                                     std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned)
+{
+  ChunkInfo chunk(0, startIndex);
+  auto findStart = lower_bound(info.chunkInfos.cbegin(), info.chunkInfos.cend(), chunk, check_chunkinfo);
+  if(findStart != info.chunkInfos.cend()) {
+    chunk.startIndex += length;
+    auto findEnd = lower_bound(info.chunkInfos.cbegin(), info.chunkInfos.cend(), chunk, check_chunkinfo);
+    if(findEnd != info.chunkInfos.cend()) {
+      ::lmdb::val keyval, startval, endval;
+
+      SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, findStart->chunkId);
+      keyval.assign(k, sizeof(k));
+      if(!m_dbi.get(m_txn, keyval, startval)) return false;
+
+      char *datastart = startval.data() + ChunkHeader_sz;
+      size_t offs = startIndex - findStart->startIndex;
+      if(vt->fixed) datastart = datastart + offs * vt->data_size(nullptr);
+      else {
+        for(size_t i=0; i < offs; i++) datastart += vt->data_size(datastart);
+      }
+
+      if(findStart == findEnd) {
+        //all data in same chunk, Cool, we're done
+        *data = datastart;
+        *owned = false;
+      }
+      else {
+        size_t startlen = findStart->dataSize - (datastart - startval.data());
+        size_t datalen = startlen;
+        for(auto fs=findStart+1; fs != findEnd; fs++)
+          datalen += fs->dataSize - ChunkHeader_sz;
+
+        SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, findEnd->chunkId);
+        keyval.assign(k, sizeof(k));
+        if(!m_dbi.get(m_txn, keyval, endval)) return false;
+
+        size_t endlen=0, endcount = startIndex + length - findEnd->startIndex;
+        if(vt->fixed) endlen = endcount * vt->data_size(nullptr);
+        else {
+          char *enddata = endval.data() + ChunkHeader_sz;
+          for(size_t i=0; i <= endcount; i++) {
+            endlen += vt->data_size(enddata+endlen);
+          }
+        }
+        datalen += endlen;
+
+        *data = malloc(datalen);
+        *owned = true;
+
+        char *dta = (char *)*data;
+        memcpy(dta, datastart, startlen);
+        dta += startlen;
+
+        for(auto fs=findStart+1; fs != findEnd; fs++) {
+          SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, fs->chunkId);
+          keyval.assign(k, sizeof(k));
+          ::lmdb::val dataval;
+          if(!m_dbi.get(m_txn, keyval, dataval)) return false;
+
+          memcpy(dta, dataval.data()+ChunkHeader_sz, fs->dataSize-ChunkHeader_sz);
+          dta += fs->dataSize-ChunkHeader_sz;
+        }
+        memcpy(dta, endval.data()+ChunkHeader_sz, endlen);
+      }
+      return true;
+    }
   }
   return false;
 }
@@ -678,8 +827,8 @@ ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)
 
 int KeyValueStoreImpl::meta_dup_compare(const MDB_val *a, const MDB_val *b)
 {
-  PropertyId id1 = read_integer<PropertyId>((char *)a->mv_data, 2);
-  PropertyId id2 = read_integer<PropertyId>((char *)b->mv_data, 2);
+  PropertyId id1 = read_unsigned<PropertyId>((char *)a->mv_data, 2);
+  PropertyId id2 = read_unsigned<PropertyId>((char *)b->mv_data, 2);
 
   return id1 - id2;
 }
@@ -689,15 +838,15 @@ KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_metainfo(MDB_val 
   char *readPtr = (char *)mdbVal->mv_data;
   PropertyMetaInfoPtr mi(new PropertyMetaInfo());
 
-  mi->id = read_integer<PropertyId>(readPtr, 2);
+  mi->id = read_unsigned<PropertyId>(readPtr, 2);
   readPtr += 2;
   mi->name = (const char *)readPtr;
   readPtr += mi->name.length() + 1;
-  mi->typeId = read_integer<unsigned>(readPtr, 2);
+  mi->typeId = read_unsigned<unsigned>(readPtr, 2);
   readPtr += 2;
-  mi->isVector = read_integer<char>(readPtr, 1) != 0;
+  mi->isVector = read_unsigned<char>(readPtr, 1) != 0;
   readPtr += 1;
-  mi->byteSize = read_integer<unsigned>(readPtr, 2);
+  mi->byteSize = read_unsigned<unsigned>(readPtr, 2);
   readPtr += 2;
   if(readPtr - (char *)mdbVal->mv_data < mdbVal->mv_size)
     mi->className = (const char *)readPtr;
@@ -721,15 +870,15 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
 
   char *writePtr = (char *)val.mv_data;
 
-  write_integer<unsigned>(writePtr, id, 2);
+  write_unsigned<unsigned>(writePtr, id, 2);
   writePtr += 2;
   memcpy(writePtr, prop->name, nameLen);
   writePtr += nameLen;
-  write_integer<unsigned>(writePtr, prop->type.id, 2);
+  write_unsigned<unsigned>(writePtr, prop->type.id, 2);
   writePtr += 2;
-  write_integer<char>(writePtr, prop->type.isVector ? 1 : 0, 1);
+  write_unsigned<char>(writePtr, prop->type.isVector ? 1 : 0, 1);
   writePtr += 1;
-  write_integer<unsigned>(writePtr, prop->type.byteSize, 2);
+  write_unsigned<unsigned>(writePtr, prop->type.byteSize, 2);
   writePtr += 2;
   if(classLen > 0)
     memcpy(writePtr, prop->type.className, classLen);
@@ -758,7 +907,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
         //class already known. First record is [propertyId == 0, classId]
-        classInfo.classId = read_integer<ClassId>(val.data()+2, 2);
+        classInfo.classId = read_unsigned<ClassId>(val.data()+2, 2);
         first = false;
       }
       else //rest is properties
@@ -775,7 +924,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     val.assign((char *)0, 0);
     cursor = ::lmdb::cursor::open(txn, dbi);
     while (cursor.get(key, val, MDB_NEXT_NODUP)) {
-      ClassId cid = read_integer<ClassId>(val.data()+2, 2);
+      ClassId cid = read_unsigned<ClassId>(val.data()+2, 2);
       if(cid > classInfo.classId) classInfo.classId = cid;
     }
     cursor.close();
@@ -783,8 +932,8 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     //save the first record [0, classId]
     char buf[4];
-    write_integer<PropertyId>(buf, 0, 2);
-    write_integer<ClassId>(buf+2, classInfo.classId, 2);
+    write_unsigned<PropertyId>(buf, 0, 2);
+    write_unsigned<ClassId>(buf+2, classInfo.classId, 2);
     key.assign(classInfo.name);
     val.assign(buf, 4);
     dbi.put(txn, key, val);

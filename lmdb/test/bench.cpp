@@ -50,7 +50,7 @@ void testValueCollection(KeyValueStore *kv) {
       vect.push_back(1.44 * i);
 
     auto wtxn = kv->beginWrite();
-    collectionId = wtxn->putCollection(vect, 128);
+    collectionId = wtxn->putValueCollection(vect, 128);
     wtxn->commit();
   }
   /*{
@@ -82,7 +82,7 @@ void testValueCollection(KeyValueStore *kv) {
       vect.push_back(5.66 * i);
 
     auto wtxn = kv->beginWrite();
-    wtxn->appendCollection(collectionId, vect, 128);
+    wtxn->appendValueCollection(collectionId, vect, 128);
     wtxn->commit();
   }
   /*{

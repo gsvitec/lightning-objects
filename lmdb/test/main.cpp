@@ -436,15 +436,25 @@ void testValueCollectionArrays(KeyValueStore *kv)
   }
   {
     //load saved collection arrays
-    auto rtxn = kv->beginRead(true);
+    auto rtxn = kv->beginExclusiveRead();
 
-    CollectionData<double>::Ptr cd = rtxn->getValueCollectionData<double>(collectionId, 500, 100);
-    double *data = cd->data();
-    assert(data[0] == 1.44 * 500 && data[99] == 1.44 * 600);
+    CollectionData<double>::Ptr cd1 = rtxn->getValueCollectionData<double>(collectionId, 2, 3);
+    assert(cd1);
+    double *data = cd1->data();
+    double d0 = data[0];
+    double d2 = data[2];
+    assert(d0 == 1.44 * 2 && d2 == 1.44 * 4);
 
-    cd = rtxn->getValueCollectionData<double>(collectionId, 100, 50);
-    data = cd->data();
-    assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 150);
+    CollectionData<double>::Ptr cd2 = rtxn->getValueCollectionData<double>(collectionId, 2, 100);
+    assert(cd2);
+    data = cd2->data();
+    d0 = data[0];
+    double d99 = data[99];
+    assert(d0 == 1.44 * 2 && d99 == 1.44 * 101);
+
+    auto cd3 = rtxn->getValueCollectionData<double>(collectionId, 100, 50);
+    data = cd3->data();
+    assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
 
     rtxn->abort();
   }

@@ -145,25 +145,41 @@ struct StoreAccessPropertyKey: public StoreAccessBase
 
 template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
 
+struct ValueTraitsBase {
+  const bool fixed;
+  ValueTraitsBase(bool fixed) : fixed(fixed) {}
+  virtual size_t data_size(const char *) = 0;
+};
+template <bool Fixed>
+struct ValueTraitsFixed : public ValueTraitsBase
+{
+  ValueTraitsFixed() : ValueTraitsBase(Fixed) {}
+};
+
 template <typename T>
-struct ValueTraits {
+struct ValueTraits : public ValueTraitsFixed<true>
+{
+  size_t data_size(const char *) override {
+    return TypeTraits<T>::pt().byteSize;
+  }
   static size_t size(const T &val) {
     return TypeTraits<T>::pt().byteSize;
   }
   static void getBytes(ReadBuf &buf, T &val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
     const char *data = buf.read(byteSize);
-    val = read_integer<T>(data, byteSize);
+    val = read_unsigned<T>(data, byteSize);
   }
   static void putBytes(WriteBuf &buf, T val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
     char *data = buf.allocate(byteSize);
-    write_integer(data, val, byteSize);
+    write_unsigned(data, val, byteSize);
   }
 };
 
 template <>
-struct ValueTraits<bool> {
+struct ValueTraits<bool> : public ValueTraitsFixed<true>
+{
   static size_t size(const bool &val) {
     return TypeTraits<bool>::pt().byteSize;
   }
@@ -178,8 +194,11 @@ struct ValueTraits<bool> {
 };
 
 template <>
-struct ValueTraits<std::string>
+struct ValueTraits<std::string> : public ValueTraitsFixed<false>
 {
+  size_t data_size(const char *data) override {
+    return strlen(data) + 1;
+  }
   static size_t size(const std::string &val) {
     return val.length() + 1;
   }
@@ -193,8 +212,11 @@ struct ValueTraits<std::string>
 };
 
 template <>
-struct ValueTraits<const char *>
+struct ValueTraits<const char *> : public ValueTraitsFixed<false>
 {
+  size_t data_size(const char *data) override {
+    return strlen(data) + 1;
+  }
   static size_t size(const char * const &val) {
     return strlen(val) + 1;
   }
@@ -207,8 +229,11 @@ struct ValueTraits<const char *>
 };
 
 template <typename T>
-struct ValueTraitsFloat
+struct ValueTraitsFloat : public ValueTraitsFixed<true>
 {
+  size_t data_size(const char *data) override {
+    return TypeTraits<T>::pt().byteSize;
+  }
   static size_t size(const T &val) {
     return TypeTraits<T>::pt().byteSize;
   }
@@ -311,10 +336,11 @@ struct ClassInfo {
 
   const char *name;
   const std::type_info &typeinfo;
-  ClassId classId = MIN_USER_CLSID;
+  ClassId classId;
   ObjectId maxObjectId = 0;
 
-  ClassInfo(const char *name, const std::type_info &typeinfo) : name(name), typeinfo(typeinfo) {}
+  ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
+      : name(name), typeinfo(typeinfo), classId(classId) {}
 };
 template <typename T>
 struct ClassTraitsBase

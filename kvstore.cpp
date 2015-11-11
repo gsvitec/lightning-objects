@@ -10,6 +10,34 @@ namespace persistence {
 
 using namespace std;
 
+namespace kv {
+
+template <>
+struct ClassTraits<ChunkInfo> : public ClassTraitsBase<ChunkInfo>{
+  enum PropertyIds {chunkId=1, startIndex, elementCount};
+};
+template<> ClassInfo ClassTraitsBase<ChunkInfo>::info ("flexis::persistence::ChunkInfo", typeid(ChunkInfo), CHUNKINFO_CLSID);
+template<> PropertyAccessBase * ClassTraitsBase<ChunkInfo>::decl_props[] = {
+    new BasePropertyAssign<ChunkInfo, PropertyId, &ChunkInfo::chunkId>("chunkId"),
+    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::startIndex>("startIndex"),
+    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::elementCount>("elementCount"),
+    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::dataSize>("dataSize")
+};
+template<> Properties * ClassTraitsBase<ChunkInfo>::properties(Properties::mk<ChunkInfo>());
+
+template <>
+struct ClassTraits<CollectionInfo> : public ClassTraitsBase<CollectionInfo>{
+  enum PropertyIds {collectionId=1, chunkInfos};
+};
+template<> ClassInfo ClassTraitsBase<CollectionInfo>::info ("flexis::persistence::CollectionInfo", typeid(CollectionInfo), COLLINFO_CLSID);
+template<> PropertyAccessBase * ClassTraitsBase<CollectionInfo>::decl_props[] = {
+    new BasePropertyAssign<CollectionInfo, ObjectId, &CollectionInfo::collectionId>("collectionId"),
+    new ObjectVectorPropertyAssign<CollectionInfo, ChunkInfo, &CollectionInfo::chunkInfos>("chunkInfos")
+};
+template<> Properties * ClassTraitsBase<CollectionInfo>::properties(Properties::mk<CollectionInfo>());
+
+}
+
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
 
 inline bool streq(string s1, const char *s2) {
@@ -60,8 +88,16 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
   if(size) *size = sz;
 }
 
-size_t readChunkStartIndex(const char *data) {
-  return read_integer<size_t>(data+4, 4);
+void readChunkHeader(const char *data, size_t *dataSize, size_t *startIndex, size_t *elementCount)
+{
+  size_t val = read_unsigned<size_t>(data, 4);
+  if(dataSize) *dataSize = val;
+  data += 4;
+  val = read_unsigned<size_t>(data, 4);
+  if(startIndex) *startIndex = val;
+  data += 4;
+  val = read_unsigned<size_t>(data, 4);
+  if(elementCount) *elementCount = val;
 }
 
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount)
@@ -77,26 +113,67 @@ void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t 
 void WriteTransaction::writeChunkHeader(size_t startIndex, size_t elementCount)
 {
   //write to start of buffer. Space is preallocated in startChunk
-  write_integer(writeBuf().data(), writeBuf().size(), 4);
-  write_integer(writeBuf().data()+4, startIndex, 4);
-  write_integer(writeBuf().data()+8, elementCount, 4);
+  char *data = writeBuf().data();
+  write_unsigned(data, writeBuf().size(), 4);
+  write_unsigned(data+4, startIndex, 4);
+  write_unsigned(data+8, elementCount, 4);
+
+  size_t tsz, tix, tec;
+  tix = read_unsigned<size_t>(data+4, 4);
+  tec = tix;
 }
 
 void WriteTransaction::writeObjectHeader(ClassId classId, ObjectId objectId, size_t size)
 {
   char * hdr = writeBuf().allocate(ObjectHeader_sz);
-  write_integer<ClassId>(hdr, classId, ClassId_sz);
-  write_integer<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
-  write_integer<size_t>(hdr+ClassId_sz+ObjectId_sz, size, 4);
+  write_unsigned<ClassId>(hdr, classId, ClassId_sz);
+  write_unsigned<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
+  write_unsigned<size_t>(hdr+ClassId_sz+ObjectId_sz, size, 4);
 }
 
-bool WriteTransaction::startChunk(ObjectId collectionId, PropertyId chunkId, size_t chunkSize, size_t startIndex, size_t elementCount)
+void WriteTransaction::putCollectionInfo(CollectionInfo &info, size_t startIndex, size_t elementCount)
 {
-  if(elementCount > 0) writeChunkHeader(startIndex, elementCount);
+  ChunkInfo &ci = info.chunkInfos.back();
+  ci.startIndex = startIndex;
+  ci.elementCount = elementCount;
+  ci.dataSize = writeBuf().size();
+
+  size_t sz = calculateBuffer(&info, ClassTraits<CollectionInfo>::properties);
+  writeBuf().start(sz);
+  writeObject(COLLINFO_CLSID, info.collectionId, info, ClassTraits<CollectionInfo>::properties, false);
+  putData(COLLINFO_CLSID, info.collectionId, 0, writeBuf());
+}
+
+bool ReadTransaction::getCollectionInfo(ObjectId collectionId, CollectionInfo &info, bool loadNextInfos)
+{
+  ReadBuf readBuf;
+  getData(readBuf, COLLINFO_CLSID, collectionId, 0);
+  if(!readBuf.empty()) {
+    readObject(readBuf, info, COLLINFO_CLSID, collectionId);
+    if(loadNextInfos) {
+      getNextChunkInfo(collectionId, &info.nextChunkId, &info.nextStartIndex);
+    }
+    return true;
+  }
+  return false;
+}
+
+bool WriteTransaction::startChunk(CollectionInfo &collectionInfo,
+                                  PropertyId chunkId, size_t chunkSize, size_t startIndex, size_t elementCount)
+{
+  if(elementCount > 0) {
+    ChunkInfo &ci = collectionInfo.chunkInfos.back();
+    ci.startIndex = startIndex;
+    ci.elementCount = elementCount;
+    ci.dataSize = writeBuf().size();
+
+    writeChunkHeader(startIndex, elementCount);
+  }
 
   //allocate a new chunk
   char * data;
-  if(allocData(COLLECTION_CLSID, collectionId, chunkId, chunkSize, &data)) {
+  if(allocData(COLLECTION_CLSID, collectionInfo.collectionId, chunkId, chunkSize, &data)) {
+    collectionInfo.chunkInfos.push_back(ChunkInfo(chunkId));
     writeBuf().start(data, chunkSize);
     writeBuf().allocate(ChunkHeader_sz); //reserve for writing later
     return true;
@@ -129,10 +206,11 @@ bool CollectionCursorBase::next()
 
 CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn,
                                                ObjectId collectionId, size_t chunkSize)
-    : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn), m_collectionId(collectionId)
+    : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn)
 {
   bool needAlloc = true;
   if(!m_chunkCursor->atEnd()) {
+    m_wtxn->getCollectionInfo(collectionId, m_collectionInfo, false);
     ReadBuf rb;
     m_chunkCursor->get(rb);
 
@@ -152,7 +230,9 @@ CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, Wri
 
   if(needAlloc) {
     m_elementCount = 0;
-    m_wtxn->startChunk(m_collectionId, ++m_chunkId, m_chunkSize, m_startIndex, 0);
+    m_wtxn->getCollectionInfo(collectionId, m_collectionInfo, true);
+    m_startIndex = m_collectionInfo.nextStartIndex;
+    m_wtxn->startChunk(m_collectionInfo, ++m_chunkId, m_chunkSize, m_startIndex, 0);
   }
 }
 
@@ -160,15 +240,16 @@ void CollectionAppenderBase::preparePut(size_t size)
 {
   if(m_wtxn->writeBuf().avail() < size) {
     m_startIndex += m_elementCount;
-    m_wtxn->startChunk(m_collectionId, ++m_chunkId, m_chunkSize, m_startIndex, m_elementCount);
+    m_wtxn->startChunk(m_collectionInfo, ++m_chunkId, m_chunkSize, m_startIndex, m_elementCount);
     m_elementCount = 0;
   }
   m_elementCount++;
 }
 
 void CollectionAppenderBase::close() {
-  if(m_elementCount) m_wtxn->writeChunkHeader(m_startIndex + m_elementCount, m_elementCount);
+  if(m_elementCount) m_wtxn->writeChunkHeader(m_startIndex, m_elementCount);
   m_chunkCursor->close();
+  m_wtxn->putCollectionInfo(m_collectionInfo, m_startIndex, m_elementCount);
 }
 
 }
