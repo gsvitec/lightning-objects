@@ -117,7 +117,8 @@ void testColored2DPointRead(KeyValueStore *kv)
   auto rtxn = kv->beginRead();
   long count = 0;
   for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); ++(*cursor)) {
-    Colored2DPoint *loaded = cursor->get();
+    ObjectId id;
+    Colored2DPoint *loaded = cursor->get(&id);
 
     if(loaded) {
       count++;

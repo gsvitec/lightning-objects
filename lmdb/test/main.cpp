@@ -72,18 +72,16 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   auto rtxn = kv->beginRead();
 
   for(auto cursor = rtxn->openCursor<ColoredPolygon>(); !cursor->atEnd(); ++(*cursor)) {
-    ColoredPolygon *loaded = cursor->get();
+    auto loaded = cursor->get();
     if(loaded) {
       cout << "loaded ColoredPolygon visible: " << loaded->visible << " pts: " << loaded->pts.size() << endl;
-      delete loaded;
     }
   }
 
   for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); ++(*cursor)) {
-    Colored2DPoint *loaded = cursor->get();
+    auto loaded = cursor->get();
     if(loaded) {
       cout << "loaded Colored2DPoint x: " << loaded->x << " y: " << loaded->y << endl;
-      delete loaded;
     }
   }
 
@@ -169,9 +167,8 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
                                                                          PROPERTY_ID(SomethingWithALazyVector, otherThings));
     for (; !cursor->atEnd(); cursor->next()) {
       count++;
-      OtherThing *ot = cursor->get();
+      auto ot = cursor->get();
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
-      delete ot;
     }
     assert(count == 2);
 
@@ -460,6 +457,24 @@ void testValueCollectionArrays(KeyValueStore *kv)
   }
 }
 
+void  testObjectPtrPropertyStorage(KeyValueStore *kv)
+{
+  flexis::player::SourceDisplayConfig::Ptr sd = flexis::player::SourceDisplayConfig::Ptr(
+      new flexis::player::SourceDisplayConfig(1, 2, 3, 4, 5, 6, 7));
+
+  flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
+
+  auto wtxn = kv->beginWrite();
+  ObjectId id = wtxn->putObjectP(si);
+  wtxn->commit();
+
+  auto rtxn = kv->beginRead();
+  flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(id);
+  rtxn->commit();
+
+  assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
@@ -467,6 +482,7 @@ int main()
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
+  kv->registerType<player::SourceDisplayConfig>();
   kv->registerType<player::SourceInfo>();
   kv->registerType<flexis::RectangularOverlay>();
   kv->registerType<flexis::TimeCodeOverlay>();
@@ -483,6 +499,7 @@ int main()
   testObjectCollection(kv);
   testValueCollection(kv);
   testValueCollectionArrays(kv);
+  testObjectPtrPropertyStorage(kv);
 
   delete kv;
   return 0;

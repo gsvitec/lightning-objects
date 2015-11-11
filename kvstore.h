@@ -472,9 +472,10 @@ public:
   }
 
   /**
+   * @param objId (out) the address to store the ObjectId
    * @return the ready instantiated object at the current cursor position
    */
-  T *get(ObjectId *objId=nullptr)
+  T *get(ObjectId *objId)
   {
     //load the data buffer
     ReadBuf readBuf;
@@ -500,6 +501,17 @@ public:
       p->storage->load(m_tr, readBuf, m_classId, key.objectId, obj, p);
     }
     return obj;
+  }
+
+  /**
+   * @return the ready instantiated object at the current cursor position. The shared_ptr also
+   * contains the ObjectId
+   */
+  std::shared_ptr<T> get()
+  {
+    ObjectId id;
+    T *obj = get(&id);
+    return std::shared_ptr<T>(obj, object_handler<T>(id));
   }
 
   ClassCursor &operator++() {
@@ -1073,7 +1085,9 @@ protected:
   template <typename T>
   ObjectId saveObject(ClassId classId, ObjectId id, T &obj, bool newObject)
   {
-    ClassInfo *classInfo = store.objectClassInfos[classId];
+    ClassInfo *classInfo = store.objectClassInfos.at(classId);
+    if(!classInfo) throw persistence_error("class not registered");
+
     Properties *properties = store.objectProperties[classId];
     ObjectId objectId = newObject ? ++classInfo->maxObjectId : id;
 
@@ -1214,6 +1228,19 @@ public:
 
   /**
    * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
+   * key, which will be unique within the class identifier, will be stored inside the shared_ptr
+   *
+   * @return the object identifier
+   */
+  template <typename T>
+  std::shared_ptr<T> putObject(T *obj)
+  {
+    ObjectId oid = saveObject<T>(0, *obj, true);
+    return std::shared_ptr<T>(obj, object_handler<T>(oid));
+  }
+
+  /**
+   * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
    * object identifier will be unique within the class identifier.
    *
    * @return the object identifier
@@ -1222,6 +1249,18 @@ public:
   ObjectId putObject(T &obj)
   {
     return saveObject<T>(0, obj, true);
+  }
+
+  /**
+   * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
+   * object identifier will be unique within the class identifier.
+   *
+   * @return the object identifier
+   */
+  template <typename T>
+  ObjectId putObjectP(T *obj)
+  {
+    return saveObject<T>(0, *obj, true);
   }
 
   /**
@@ -1657,9 +1696,8 @@ public:
     if(val) {
       //save the pointed-to object
 
-      ClassId childClassId = tr->getClassId(typeid(*val));
+      childClassId = tr->getClassId(typeid(*val));
       tr->pushWriteBuf();
-      ObjectId childId;
       object_handler<V> *ohm = std::get_deleter<object_handler<V>>(val);
       if(ohm) {
         childId = ohm->objectId;
