@@ -20,31 +20,35 @@ namespace ps = flexis::persistence;
 static const unsigned ObjectId_off = ClassId_sz;
 static const unsigned PropertyId_off = ClassId_sz + ObjectId_sz;
 
-#define SK_CONSTR(nm, c, o, p) char nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
-*(PropertyId *)(nm+PropertyId_off) = p
+#define SK_CONSTR(nm, c, o, p) char nm[StorageKey::byteSize]; \
+write_integer(nm, c, ClassId_sz); \
+write_integer(nm+ObjectId_off, o, ObjectId_sz); \
+write_integer(nm+PropertyId_off, p, PropertyId_sz)
 
-#define SK_RET(nm, k) nm.classId = *(ClassId *)k; nm.objectId = *(ObjectId *)(k+ObjectId_off); \
-nm.propertyId = *(PropertyId *)(k+PropertyId_off)
+#define SK_RET(nm, k) \
+nm.classId = read_integer<ClassId>(k, ClassId_sz); \
+nm.objectId = read_integer<ObjectId>(k+ObjectId_off, ObjectId_sz); \
+nm.propertyId = read_integer<PropertyId>(k+PropertyId_off, PropertyId_sz)
 
-#define SK_CLASSID(k) *(ClassId *)k
-#define SK_OBJID(k) *(ObjectId *)(k+ObjectId_off)
-#define SK_PROPID(k) *(PropertyId *)(k+PropertyId_off)
+#define SK_CLASSID(k) read_integer<ClassId>(k, ClassId_sz)
+#define SK_OBJID(k) read_integer<ObjectId>(k+ObjectId_off, ObjectId_sz)
+#define SK_PROPID(k) read_integer<PropertyId>(k+PropertyId_off, PropertyId_sz)
 
 int key_compare(const MDB_val *a, const MDB_val *b)
 {
   char *k1 = (char *)a->mv_data;
   char *k2 = (char *)b->mv_data;
 
-  int c = *(ClassId *)k1 - *(ClassId *)k2;
+  int c = read_integer<ClassId>(k1, ClassId_sz) - read_integer<ClassId>(k2, ClassId_sz);
   if(c == 0) {
     k1 += ClassId_sz;
     k2 += ClassId_sz;
 
-    c = *(ObjectId *)k1 - *(ObjectId *)k2;
+    c = read_integer<ObjectId>(k1, ObjectId_sz) - read_integer<ObjectId>(k2, ObjectId_sz);
     if(c == 0) {
       k1 += ObjectId_sz;
       k2 += ObjectId_sz;
-      c = *(PropertyId *)k1 - *(PropertyId *)k2 ;
+      c = read_integer<PropertyId>(k1, PropertyId_sz) - read_integer<PropertyId>(k2, PropertyId_sz);
     }
   }
   return c;
@@ -309,7 +313,7 @@ protected:
 
   ObjectId key() override
   {
-    return SK_OBJID(m_vectordata + m_index * StorageKey::byteSize);
+    return SK_OBJID(m_vectordata.data() + m_index * StorageKey::byteSize);
   }
 
   bool next() override
@@ -333,6 +337,7 @@ protected:
   {
     if(m_index < m_size) {
       const char *keydata = m_vectordata.data() + m_index * StorageKey::byteSize;
+
       ::lmdb::val keyval;
       keyval.assign(keydata, StorageKey::byteSize);
       ::lmdb::val dataval;
@@ -827,8 +832,8 @@ ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)
 
 int KeyValueStoreImpl::meta_dup_compare(const MDB_val *a, const MDB_val *b)
 {
-  PropertyId id1 = read_unsigned<PropertyId>((char *)a->mv_data, 2);
-  PropertyId id2 = read_unsigned<PropertyId>((char *)b->mv_data, 2);
+  PropertyId id1 = read_integer<PropertyId>((char *)a->mv_data, 2);
+  PropertyId id2 = read_integer<PropertyId>((char *)b->mv_data, 2);
 
   return id1 - id2;
 }
@@ -838,15 +843,15 @@ KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_metainfo(MDB_val 
   char *readPtr = (char *)mdbVal->mv_data;
   PropertyMetaInfoPtr mi(new PropertyMetaInfo());
 
-  mi->id = read_unsigned<PropertyId>(readPtr, 2);
+  mi->id = read_integer<PropertyId>(readPtr, 2);
   readPtr += 2;
   mi->name = (const char *)readPtr;
   readPtr += mi->name.length() + 1;
-  mi->typeId = read_unsigned<unsigned>(readPtr, 2);
+  mi->typeId = read_integer<unsigned>(readPtr, 2);
   readPtr += 2;
-  mi->isVector = read_unsigned<char>(readPtr, 1) != 0;
+  mi->isVector = read_integer<char>(readPtr, 1) != 0;
   readPtr += 1;
-  mi->byteSize = read_unsigned<unsigned>(readPtr, 2);
+  mi->byteSize = read_integer<unsigned>(readPtr, 2);
   readPtr += 2;
   if(readPtr - (char *)mdbVal->mv_data < mdbVal->mv_size)
     mi->className = (const char *)readPtr;
@@ -870,15 +875,15 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
 
   char *writePtr = (char *)val.mv_data;
 
-  write_unsigned<unsigned>(writePtr, id, 2);
+  write_integer<unsigned>(writePtr, id, 2);
   writePtr += 2;
   memcpy(writePtr, prop->name, nameLen);
   writePtr += nameLen;
-  write_unsigned<unsigned>(writePtr, prop->type.id, 2);
+  write_integer<unsigned>(writePtr, prop->type.id, 2);
   writePtr += 2;
-  write_unsigned<char>(writePtr, prop->type.isVector ? 1 : 0, 1);
+  write_integer<char>(writePtr, prop->type.isVector ? 1 : 0, 1);
   writePtr += 1;
-  write_unsigned<unsigned>(writePtr, prop->type.byteSize, 2);
+  write_integer<unsigned>(writePtr, prop->type.byteSize, 2);
   writePtr += 2;
   if(classLen > 0)
     memcpy(writePtr, prop->type.className, classLen);
@@ -907,7 +912,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
         //class already known. First record is [propertyId == 0, classId]
-        classInfo.classId = read_unsigned<ClassId>(val.data()+2, 2);
+        classInfo.classId = read_integer<ClassId>(val.data()+2, 2);
         first = false;
       }
       else //rest is properties
@@ -924,7 +929,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     val.assign((char *)0, 0);
     cursor = ::lmdb::cursor::open(txn, dbi);
     while (cursor.get(key, val, MDB_NEXT_NODUP)) {
-      ClassId cid = read_unsigned<ClassId>(val.data()+2, 2);
+      ClassId cid = read_integer<ClassId>(val.data()+2, 2);
       if(cid > classInfo.classId) classInfo.classId = cid;
     }
     cursor.close();
@@ -932,8 +937,8 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     //save the first record [0, classId]
     char buf[4];
-    write_unsigned<PropertyId>(buf, 0, 2);
-    write_unsigned<ClassId>(buf+2, classInfo.classId, 2);
+    write_integer<PropertyId>(buf, 0, 2);
+    write_integer<ClassId>(buf+2, classInfo.classId, 2);
     key.assign(classInfo.name);
     val.assign(buf, 4);
     dbi.put(txn, key, val);

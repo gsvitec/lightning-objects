@@ -6,6 +6,7 @@
 #include <kvstore/kvstore.h>
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
+#include <limits.h>
 #include "testclasses.h"
 
 using namespace flexis::persistence;
@@ -94,6 +95,11 @@ void testPolymorphism(KeyValueStore *kv)
   IFlexisOverlayPtr ro(new RectangularOverlay());
   IFlexisOverlayPtr to(new TimeCodeOverlay());
 
+  ro->rangeInP->setValue(-1);
+  ro->rangeOutP->setValue(-1);
+  to->rangeInP->setValue(-1);
+  to->rangeOutP->setValue(-1);
+
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
 
@@ -106,7 +112,9 @@ void testPolymorphism(KeyValueStore *kv)
   loaded = rtxn->getObject<player::SourceInfo>(id);
   rtxn->abort();
 
-  assert(loaded && loaded->userOverlays.size() == 2);
+  assert(loaded && loaded->userOverlays.size() == 2
+         && loaded->userOverlays[0]->rangeInP->getValue() == -1
+            && loaded->userOverlays[0]->rangeOutP->getValue() == -1);
   for(auto &ovl : loaded->userOverlays)
     cout << ovl->type() << endl;
   delete loaded;
@@ -473,6 +481,30 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   rtxn->commit();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
+}
+
+int test_integer() {
+  char buf[10];
+  char *p = buf;
+
+  ClassId cid = 22;
+  ObjectId oid = 1;
+  PropertyId pid = 6;
+  write_integer(p, cid, ClassId_sz);
+  p += ClassId_sz;
+  write_integer(p, oid, ObjectId_sz);
+  p += ObjectId_sz;
+  write_integer(p, pid, PropertyId_sz);
+  p += PropertyId_sz;
+
+  p = buf;
+  cid = read_integer<ClassId>(p, ClassId_sz);
+  p += ClassId_sz;
+  oid = read_integer<ObjectId>(p, ObjectId_sz);
+  p += ObjectId_sz;
+  pid = read_integer<PropertyId>(p, PropertyId_sz);
+
+  assert(cid == 22 && oid == 1 && pid == 6);
 }
 
 int main()

@@ -56,10 +56,10 @@ DEF_BASETYPE(short, 1, 2)
 DEF_BASETYPE(ushort, 2, 2)
 DEF_BASETYPE(int, 3, 4)
 DEF_BASETYPE(uint, 4, 4)
-DEF_BASETYPE(long, 5, 4)
-DEF_BASETYPE(ulong, 6, 4)
-DEF_BASETYPE(long_long, 7, 8)
-DEF_BASETYPE(ulong_long, 8, 8)
+DEF_BASETYPE(long, 5, 8)
+DEF_BASETYPE(ulong, 6, 8)
+DEF_BASETYPE(long_long, 7, 16)
+DEF_BASETYPE(ulong_long, 8, 16)
 DEF_BASETYPE(bool, 9, 1)
 DEF_BASETYPE(float, 10, 4)
 DEF_BASETYPE(double, 11, 8)
@@ -150,6 +150,7 @@ struct ValueTraitsBase {
   ValueTraitsBase(bool fixed) : fixed(fixed) {}
   virtual size_t data_size(const char *) = 0;
 };
+
 template <bool Fixed>
 struct ValueTraitsFixed : public ValueTraitsBase
 {
@@ -168,12 +169,12 @@ struct ValueTraits : public ValueTraitsFixed<true>
   static void getBytes(ReadBuf &buf, T &val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
     const char *data = buf.read(byteSize);
-    val = read_unsigned<T>(data, byteSize);
+    val = read_integer<T>(data, byteSize);
   }
   static void putBytes(WriteBuf &buf, T val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
     char *data = buf.allocate(byteSize);
-    write_unsigned(data, val, byteSize);
+    write_integer(data, val, byteSize);
   }
 };
 

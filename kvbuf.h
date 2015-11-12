@@ -37,43 +37,26 @@ struct StorageKey
   StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId) : classId(classId), objectId(objectId), propertyId(propertyId) {}
 };
 
-//faster than pow()
-static long byte_facts[] = {
-    1,
-    256,
-    65536,
-    16777216,
-    4294967296,
-    1099511627776,
-    281474976710656,
-    72057594037927936
-};
-
 /*
  * save an integral value to a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline void write_unsigned(char *ptr, T val, size_t bytes)
+inline void write_integer(char *ptr, T val, size_t bytes)
 {
-  ptr += bytes-1;
-  for(int i=0; i<bytes; i++) {
-    T tval = (T)(val / byte_facts[bytes-1-i]);
-    *ptr = (unsigned char)(tval);
-    val -= tval * byte_facts[bytes-1-i];
-    ptr--;
-  }
+  unsigned char *p = (unsigned char *)ptr;
+  for(size_t i=0, f=bytes-1; i<bytes; i++, f--)
+    p[i] = i<sizeof(T) ? (unsigned char) (val >> (f * 8)) : (unsigned char)0;
 }
 
 /*
  * read an integral value from a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline T read_unsigned(const char *ptr, size_t bytes)
+inline T read_integer(const char *ptr, size_t bytes)
 {
+  unsigned char *p = (unsigned char *)ptr;
   T val = 0;
-  for(int i=0; i<bytes; i++, ptr++) {
-    val += (T)*(unsigned char *)ptr * (T) byte_facts[i];
-  }
+  for(size_t i=0, f=bytes-1; i<bytes; i++, f--) val += ((T)p[i] << (f * 8));
   return val;
 }
 
@@ -122,7 +105,7 @@ public:
 
   template <typename T>
   T readInteger(unsigned sz) {
-    T ret = read_unsigned<T>(m_readptr, sz);
+    T ret = read_integer<T>(m_readptr, sz);
     m_readptr += sz;
     return ret;
   }
@@ -132,11 +115,11 @@ public:
     if(m_size - (m_readptr - m_data) < 8)
       return false;
 
-    key.classId = read_unsigned<ClassId>(m_readptr, ClassId_sz);
+    key.classId = read_integer<ClassId>(m_readptr, ClassId_sz);
     m_readptr += ClassId_sz;
-    key.objectId = read_unsigned<ObjectId>(m_readptr, ObjectId_sz);
+    key.objectId = read_integer<ObjectId>(m_readptr, ObjectId_sz);
     m_readptr += ObjectId_sz;
-    key.propertyId = read_unsigned<PropertyId>(m_readptr, PropertyId_sz);
+    key.propertyId = read_integer<PropertyId>(m_readptr, PropertyId_sz);
     m_readptr += PropertyId_sz;
 
     return true;
@@ -256,7 +239,7 @@ public:
   template<typename T>
   void appendInteger(T num, size_t bytes) {
     char * buf = allocate(bytes);
-    write_unsigned(buf, num, bytes);
+    write_integer(buf, num, bytes);
   }
 
   void appendCString(const char *data) {
@@ -269,11 +252,11 @@ public:
   {
     char * buf = allocate(StorageKey::byteSize);
 
-    write_unsigned(buf, classId, ClassId_sz);
+    write_integer(buf, classId, ClassId_sz);
     buf += ClassId_sz;
-    write_unsigned(buf, objectId, ObjectId_sz);
+    write_integer(buf, objectId, ObjectId_sz);
     buf += ObjectId_sz;
-    write_unsigned(buf, propertyId, PropertyId_sz);
+    write_integer(buf, propertyId, PropertyId_sz);
     buf += PropertyId_sz;
   }
 
