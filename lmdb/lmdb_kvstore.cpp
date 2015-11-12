@@ -492,7 +492,13 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
   unsigned flags = MDB_NOSUBDIR;
   if(!options.lockFile) flags |= MDB_NOLOCK;
   if(options.writeMap) flags |= MDB_WRITEMAP;
-  m_env.open(m_dbpath.c_str(), flags, 0664);
+
+  try {
+    m_env.open(m_dbpath.c_str(), flags, 0664);
+  }
+  catch(::lmdb::runtime_error e) {
+    throw persistence_error(e.what());
+  }
 
   m_reuseChunkspace = options.writeMap;
 

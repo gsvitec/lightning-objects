@@ -508,6 +508,7 @@ int test_integer() {
   pid = read_integer<PropertyId>(p, PropertyId_sz);
 
   assert(cid == 22 && oid == 1 && pid == 6);
+  return 0;
 }
 
 int main()
