@@ -197,13 +197,13 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     if(!cursor->atEnd()) {
       for (; !cursor->atEnd(); cursor->next()) {
         count++;
-        const char *name, *buf=nullptr;
+        const char *name; const byte_t *buf=nullptr;
         double *dval;
 
         //we're passing in buf, so that only the first call will go to the store
-        cursor->get(PROPERTY_ID(OtherThing, name), &name, &buf);
+        cursor->get(PROPERTY_ID(OtherThing, name), (const byte_t **)&name, &buf);
         //buf is set now, so this call will simply return a pointer into buf
-        cursor->get(PROPERTY_ID(OtherThing, dvalue), (const char **)&dval, &buf);
+        cursor->get(PROPERTY_ID(OtherThing, dvalue), (const byte_t **)&dval, &buf);
 
         cout << name << " dvalue: " << *dval << endl;
       }
@@ -481,11 +481,14 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   rtxn->commit();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
+
+  delete si2;
+  delete si;
 }
 
 int test_integer() {
-  char buf[10];
-  char *p = buf;
+  byte_t buf[10];
+  byte_t *p = buf;
 
   ClassId cid = 22;
   ObjectId oid = 1;

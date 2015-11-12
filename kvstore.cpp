@@ -88,7 +88,7 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
   if(size) *size = sz;
 }
 
-void readChunkHeader(const char *data, size_t *dataSize, size_t *startIndex, size_t *elementCount)
+void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount)
 {
   size_t val = read_integer<size_t>(data, 4);
   if(dataSize) *dataSize = val;
@@ -113,7 +113,7 @@ void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t 
 void WriteTransaction::writeChunkHeader(size_t startIndex, size_t elementCount)
 {
   //write to start of buffer. Space is preallocated in startChunk
-  char *data = writeBuf().data();
+  byte_t *data = writeBuf().data();
   write_integer(data, writeBuf().size(), 4);
   write_integer(data+4, startIndex, 4);
   write_integer(data+8, elementCount, 4);
@@ -125,7 +125,7 @@ void WriteTransaction::writeChunkHeader(size_t startIndex, size_t elementCount)
 
 void WriteTransaction::writeObjectHeader(ClassId classId, ObjectId objectId, size_t size)
 {
-  char * hdr = writeBuf().allocate(ObjectHeader_sz);
+  byte_t * hdr = writeBuf().allocate(ObjectHeader_sz);
   write_integer<ClassId>(hdr, classId, ClassId_sz);
   write_integer<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
   write_integer<size_t>(hdr+ClassId_sz+ObjectId_sz, size, 4);
@@ -171,7 +171,7 @@ bool WriteTransaction::startChunk(CollectionInfo &collectionInfo,
   }
 
   //allocate a new chunk
-  char * data;
+  byte_t * data;
   if(allocData(COLLECTION_CLSID, collectionInfo.collectionId, chunkId, chunkSize, &data)) {
     collectionInfo.chunkInfos.push_back(ChunkInfo(chunkId));
     writeBuf().start(data, chunkSize);

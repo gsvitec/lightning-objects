@@ -110,7 +110,7 @@ class PropertyAccessBase;
  * abstract superclass for all Store Access classes
  */
 struct StoreAccessBase {
-  virtual size_t size(const char *buf) const = 0;
+  virtual size_t size(const byte_t *buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;};
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
@@ -129,7 +129,7 @@ struct StoreAccessBase {
  */
 struct StoreAccessEmbeddedKey: public StoreAccessBase
 {
-  size_t size(const char *buf) const override {return StorageKey::byteSize;}
+  size_t size(const byte_t *buf) const override {return StorageKey::byteSize;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
 };
 
@@ -139,7 +139,7 @@ struct StoreAccessEmbeddedKey: public StoreAccessBase
  */
 struct StoreAccessPropertyKey: public StoreAccessBase
 {
-  size_t size(const char *buf) const override {return 0;}
+  size_t size(const byte_t *buf) const override {return 0;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
@@ -148,7 +148,7 @@ template<typename T, typename V> struct PropertyStorage : public StoreAccessBase
 struct ValueTraitsBase {
   const bool fixed;
   ValueTraitsBase(bool fixed) : fixed(fixed) {}
-  virtual size_t data_size(const char *) = 0;
+  virtual size_t data_size(const byte_t *) = 0;
 };
 
 template <bool Fixed>
@@ -160,7 +160,7 @@ struct ValueTraitsFixed : public ValueTraitsBase
 template <typename T>
 struct ValueTraits : public ValueTraitsFixed<true>
 {
-  size_t data_size(const char *) override {
+  size_t data_size(const byte_t *) override {
     return TypeTraits<T>::pt().byteSize;
   }
   static size_t size(const T &val) {
@@ -168,12 +168,12 @@ struct ValueTraits : public ValueTraitsFixed<true>
   }
   static void getBytes(ReadBuf &buf, T &val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
-    const char *data = buf.read(byteSize);
+    const byte_t *data = buf.read(byteSize);
     val = read_integer<T>(data, byteSize);
   }
   static void putBytes(WriteBuf &buf, T val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
-    char *data = buf.allocate(byteSize);
+    byte_t *data = buf.allocate(byteSize);
     write_integer(data, val, byteSize);
   }
 };
@@ -185,11 +185,11 @@ struct ValueTraits<bool> : public ValueTraitsFixed<true>
     return TypeTraits<bool>::pt().byteSize;
   }
   static void getBytes(ReadBuf &buf, bool &val) {
-    const char *data = buf.read(1);
+    const byte_t *data = buf.read(1);
     val = *data != 0;
   }
   static void putBytes(WriteBuf &buf, bool val) {
-    char *data = buf.allocate(1);
+    byte_t *data = buf.allocate(1);
     *data = char(val ? 1 : 0);
   }
 };
@@ -197,14 +197,14 @@ struct ValueTraits<bool> : public ValueTraitsFixed<true>
 template <>
 struct ValueTraits<std::string> : public ValueTraitsFixed<false>
 {
-  size_t data_size(const char *data) override {
-    return strlen(data) + 1;
+  size_t data_size(const byte_t *data) override {
+    return strlen((const char *)data) + 1;
   }
   static size_t size(const std::string &val) {
     return val.length() + 1;
   }
   static void getBytes(ReadBuf &buf, std::string &val) {
-    val = buf.read(0);
+    val = (const char *)buf.read(0);
     buf.read(val.length() +1); //move the pointer
   }
   static void putBytes(WriteBuf &buf, std::string val) {
@@ -215,8 +215,8 @@ struct ValueTraits<std::string> : public ValueTraitsFixed<false>
 template <>
 struct ValueTraits<const char *> : public ValueTraitsFixed<false>
 {
-  size_t data_size(const char *data) override {
-    return strlen(data) + 1;
+  size_t data_size(const byte_t *data) override {
+    return strlen((const char *)data) + 1;
   }
   static size_t size(const char * const &val) {
     return strlen(val) + 1;
@@ -232,7 +232,7 @@ struct ValueTraits<const char *> : public ValueTraitsFixed<false>
 template <typename T>
 struct ValueTraitsFloat : public ValueTraitsFixed<true>
 {
-  size_t data_size(const char *data) override {
+  size_t data_size(const byte_t *data) override {
     return TypeTraits<T>::pt().byteSize;
   }
   static size_t size(const T &val) {
@@ -240,12 +240,12 @@ struct ValueTraitsFloat : public ValueTraitsFixed<true>
   }
   static void getBytes(ReadBuf &buf, T &val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
-    const char *data = buf.read(byteSize);
+    const byte_t *data = buf.read(byteSize);
     val = *reinterpret_cast<const T *>(data);
   }
   static void putBytes(WriteBuf &buf, T val) {
     size_t byteSize = TypeTraits<T>::pt().byteSize;
-    char *data = buf.allocate(byteSize);
+    byte_t *data = buf.allocate(byteSize);
     *reinterpret_cast<T *>(data) = val;
   }
 };

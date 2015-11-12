@@ -165,7 +165,7 @@ public:
 
 namespace kv {
 
-void readChunkHeader(const char *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
+void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size);
 
@@ -226,7 +226,7 @@ protected:
   /**
    * @return the data at the current cursor position
    */
-  virtual const char *getObjectData() = 0;
+  virtual const byte_t *getObjectData() = 0;
 };
 
 //non-polymorphic cursor object factory
@@ -442,7 +442,7 @@ public:
    * @param buf (int/out) pointer to the object data buffer. If this pointer is non-null, the address of the object data buffer
    * will be stored there on the first call and reused on subsequent calls
    */
-  void get(PropertyId propertyId, const char **data, const char **buf=nullptr)
+  void get(PropertyId propertyId, const byte_t **data, const byte_t **buf=nullptr)
   {
     using Traits = ClassTraits<T>;
 
@@ -453,7 +453,7 @@ public:
     }
 
     //load class buffer
-    const char *dta;
+    const byte_t *dta;
     if(buf) {
       if(*buf) dta = *buf;
       else *buf = dta = m_helper->getObjectData();
@@ -1212,7 +1212,7 @@ protected:
   /**
    * save a sub-object data buffer
    */
-  virtual bool allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, char **data) = 0;
+  virtual bool allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, byte_t **data) = 0;
 
   /**
    * remove an object from the KV store
@@ -1505,7 +1505,7 @@ public:
 template<typename T, typename V>
 struct BasePropertyStorage : public StoreAccessBase
 {
-  size_t size(const char *buf) const override {
+  size_t size(const byte_t *buf) const override {
     return TypeTraits<V>::pt().byteSize;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
@@ -1536,7 +1536,7 @@ struct BasePropertyStorage : public StoreAccessBase
 template<typename T>
 struct BasePropertyStorage<T, const char *> : public StoreAccessBase
 {
-  size_t size(const char *buf) const override {
+  size_t size(const byte_t *buf) const override {
     return strlen(buf)+1;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
@@ -1569,8 +1569,8 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
 template<typename T>
 struct BasePropertyStorage<T, std::string> : public StoreAccessBase
 {
-  size_t size(const char *buf) const override {
-    return strlen(buf)+1;
+  size_t size(const byte_t *buf) const override {
+    return strlen((const char *)buf)+1;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
     std::string val;

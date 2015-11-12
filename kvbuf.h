@@ -22,6 +22,8 @@ static const size_t PropertyId_sz = 2; //max. 65535 properies per object
 static const size_t ObjectHeader_sz = ClassId_sz + ObjectId_sz + 4;
 static const size_t ChunkHeader_sz = 4 * 3;
 
+using byte_t = unsigned char;
+
 /**
  * a storage key. This structure must not be changed (lest db files become unreadable)
  */
@@ -41,22 +43,20 @@ struct StorageKey
  * save an integral value to a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline void write_integer(char *ptr, T val, size_t bytes)
+inline void write_integer(byte_t *ptr, T val, size_t bytes)
 {
-  unsigned char *p = (unsigned char *)ptr;
   for(size_t i=0, f=bytes-1; i<bytes; i++, f--)
-    p[i] = i<sizeof(T) ? (unsigned char) (val >> (f * 8)) : (unsigned char)0;
+    ptr[i] = i<sizeof(T) ? (byte_t) (val >> (f * 8)) : (byte_t)0;
 }
 
 /*
  * read an integral value from a fixed size of bytes (max. 8)
  */
 template<typename T>
-inline T read_integer(const char *ptr, size_t bytes)
+inline T read_integer(const byte_t *ptr, size_t bytes)
 {
-  unsigned char *p = (unsigned char *)ptr;
   T val = 0;
-  for(size_t i=0, f=bytes-1; i<bytes; i++, f--) val += ((T)p[i] << (f * 8));
+  for(size_t i=0, f=bytes-1; i<bytes; i++, f--) val += ((T)ptr[i] << (f * 8));
   return val;
 }
 
@@ -69,17 +69,17 @@ class ReadBuf
   ReadBuf(const ReadBuf &other) = delete;
 
 protected:
-  char *m_data = nullptr;
-  char *m_readptr = nullptr;
+  byte_t *m_data = nullptr;
+  byte_t *m_readptr = nullptr;
   size_t m_size = 0;
 
 public:
   ReadBuf() {}
 
-  char *&data() {return m_data;}
-  char *&cur() {return m_readptr;}
+  byte_t *&data() {return m_data;}
+  byte_t *&cur() {return m_readptr;}
 
-  void start(char *data, size_t size) {
+  void start(byte_t *data, size_t size) {
     m_size = size;
     m_readptr = m_data = data;
   }
@@ -90,14 +90,14 @@ public:
   /**
    * @return a read-only pointer into the store-owned memory
    */
-  const char *read(size_t sz) {
-    char *ret = m_readptr;
+  const byte_t *read(size_t sz) {
+    byte_t *ret = m_readptr;
     m_readptr += sz;
     return ret;
   }
 
   const char *readCString() {
-    const char *cstr = m_readptr;
+    const char *cstr = (const char *)m_readptr;
     while(*m_readptr) m_readptr++;
     m_readptr++;
     return cstr;
@@ -135,8 +135,8 @@ class WriteBuf
 
   WriteBuf(const WriteBuf &other) = delete;
 
-  char *m_appendptr = nullptr;
-  char * m_data = nullptr;
+  byte_t *m_appendptr = nullptr;
+  byte_t * m_data = nullptr;
   size_t m_growsize = 0;
   size_t m_allocsize = 0;
 
@@ -146,7 +146,7 @@ public:
   WriteBuf() {}
   WriteBuf(WriteBuf *_prev) : prev(_prev) {}
   WriteBuf(size_t sz) {start(sz);}
-  WriteBuf(char *data, size_t sz) {start(data, sz);}
+  WriteBuf(byte_t *data, size_t sz) {start(data, sz);}
 
   ~WriteBuf() {
     if(m_data && m_growsize) free(m_data);
@@ -168,7 +168,7 @@ public:
     delete next;
   }
 
-  void start(char * data, size_t offset, size_t newSize)
+  void start(byte_t * data, size_t offset, size_t newSize)
   {
     if(m_data && m_growsize) free(m_data);
 
@@ -178,7 +178,7 @@ public:
     m_appendptr = m_data+offset;
   }
 
-  void start(char * data, size_t newSize)
+  void start(byte_t * data, size_t newSize)
   {
     start(data, 0, newSize);
   }
@@ -193,7 +193,7 @@ public:
 
     if(newSize > m_allocsize) {
       m_allocsize = newSize;
-      m_data = (char *)realloc(m_data, m_allocsize);
+      m_data = (byte_t *)realloc(m_data, m_allocsize);
     }
     m_growsize = grow;
     m_appendptr = m_data;
@@ -213,9 +213,9 @@ public:
     m_appendptr = m_data;
   }
 
-  char *allocate(size_t size)
+  byte_t *allocate(size_t size)
   {
-    char * ret = m_appendptr;
+    byte_t * ret = m_appendptr;
     m_appendptr += size;
     size_t sz = m_appendptr - m_data;
     if(sz > m_allocsize) {
@@ -223,7 +223,7 @@ public:
         throw persistence_error("memory exhausted");
 
       m_allocsize += m_growsize;
-      m_data = (char *)realloc(m_data, m_allocsize);
+      m_data = (byte_t *)realloc(m_data, m_allocsize);
       m_appendptr = m_data + sz;
       ret = m_appendptr - size;
     }
@@ -232,25 +232,25 @@ public:
 
   void append(const char *data, size_t size)
   {
-    char * buf = allocate(size);
+    byte_t * buf = allocate(size);
     memcpy(buf, data, size);
   }
 
   template<typename T>
   void appendInteger(T num, size_t bytes) {
-    char * buf = allocate(bytes);
+    byte_t * buf = allocate(bytes);
     write_integer(buf, num, bytes);
   }
 
   void appendCString(const char *data) {
     size_t len = strlen(data) + 1;
-    char * buf = allocate(len);
+    byte_t * buf = allocate(len);
     memcpy(buf, data, len);
   }
 
   void append(ClassId classId, ObjectId objectId, PropertyId propertyId)
   {
-    char * buf = allocate(StorageKey::byteSize);
+    byte_t * buf = allocate(StorageKey::byteSize);
 
     write_integer(buf, classId, ClassId_sz);
     buf += ClassId_sz;
@@ -260,7 +260,7 @@ public:
     buf += PropertyId_sz;
   }
 
-  char * data() {
+  byte_t * data() {
     return m_data;
   }
 
