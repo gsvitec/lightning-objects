@@ -483,7 +483,7 @@ void testValueCollectionArrays(KeyValueStore *kv)
 void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 {
   flexis::player::SourceDisplayConfig::Ptr sd = flexis::player::SourceDisplayConfig::Ptr(
-      new flexis::player::SourceDisplayConfig(1, 2, 3, 4, 5, 6, 7));
+      new flexis::player::SourceDisplayConfig(1, 2, false, 4, 5, 6, 7));
 
   flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
 

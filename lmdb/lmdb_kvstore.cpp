@@ -487,7 +487,7 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
 {
   m_dbpath = location + "/"+ (name.empty() ? "kvdata" : name);
 
-  size_t sz = size_t(1) * options.mapSizeMB * size_t(1024) * size_t(1024); //1 GiB
+  size_t sz = size_t(1) * options.mapSizeMB * size_t(1024) * size_t(1024);
   m_env.set_mapsize(sz);
   m_env.set_max_dbs(2);
   m_flags = MDB_NOSUBDIR;
@@ -518,9 +518,10 @@ KeyValueStoreImpl::~KeyValueStoreImpl()
   m_env.close();
 
   try {
-    m_env.open(m_dbpath.c_str(), m_flags, 0664);
-    m_env.set_mapsize(datasize);
-    m_env.close();
+    ::lmdb::env env(::lmdb::env::create());
+    env.open(m_dbpath.c_str(), m_flags, 0664);
+    env.set_mapsize(datasize);
+    env.close();
   }
   catch(::lmdb::runtime_error e) {
     throw persistence_error(e.what());
