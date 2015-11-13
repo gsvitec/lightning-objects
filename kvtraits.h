@@ -50,36 +50,42 @@ struct PropertyType
 template <typename T> struct TypeTraits;
 #define TYPETRAITS template <> struct TypeTraits
 #define TYPETRAITSV template <> struct TypeTraits<std::vector
+
+#if _MSC_VER < 1900
+#define TYPEDEF(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=false;
+#define TYPEDEFV(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=true;
+#else
 #define TYPEDEF(_id, _sz) constexpr static unsigned id=_id; constexpr static unsigned byteSize=_sz; constexpr static bool isVect=false;
 #define TYPEDEFV(_id, _sz) constexpr static unsigned id=_id; constexpr static unsigned byteSize=_sz; constexpr static bool isVect=true;
+#endif
 
-TYPETRAITS<short>             {TYPEDEF(1, 2);  static const PropertyType pt;};
-TYPETRAITS<unsigned short>    {TYPEDEF(2, 2);  static const PropertyType pt;};
-TYPETRAITS<int>               {TYPEDEF(3, 4);  static const PropertyType pt;};
-TYPETRAITS<unsigned int>      {TYPEDEF(4, 4);  static const PropertyType pt;};
-TYPETRAITS<long>              {TYPEDEF(5, 8);  static const PropertyType pt;};
-TYPETRAITS<unsigned long>     {TYPEDEF(6, 8);  static const PropertyType pt;};
-TYPETRAITS<long long>         {TYPEDEF(7, 8);  static const PropertyType pt;};
-TYPETRAITS<unsigned long long>{TYPEDEF(8, 8);  static const PropertyType pt;};
-TYPETRAITS<bool>              {TYPEDEF(9, 1);  static const PropertyType pt;};
-TYPETRAITS<float>             {TYPEDEF(10, 4); static const PropertyType pt;};
-TYPETRAITS<double>            {TYPEDEF(11, 8); static const PropertyType pt;};
-TYPETRAITS<const char *>      {TYPEDEF(12, 0); static const PropertyType pt;};
-TYPETRAITS<std::string>       {TYPEDEF(13, 0); static const PropertyType pt;};
+TYPETRAITS<short>             {TYPEDEF(1, 2);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<unsigned short>    {TYPEDEF(2, 2);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<int>               {TYPEDEF(3, 4);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<unsigned int>      {TYPEDEF(4, 4);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<long>              {TYPEDEF(5, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<unsigned long>     {TYPEDEF(6, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<long long>         {TYPEDEF(7, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<unsigned long long>{TYPEDEF(8, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<bool>              {TYPEDEF(9, 1);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<float>             {TYPEDEF(10, 4); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<double>            {TYPEDEF(11, 8); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<const char *>      {TYPEDEF(12, 0); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITS<std::string>       {TYPEDEF(13, 0); static const FlexisPersistence_EXPORT PropertyType pt;};
 
-TYPETRAITSV<short>>             {TYPEDEF(1, 2);  static const PropertyType pt;};
-TYPETRAITSV<unsigned short>>    {TYPEDEF(2, 2);  static const PropertyType pt;};
-TYPETRAITSV<int>>               {TYPEDEF(3, 4);  static const PropertyType pt;};
-TYPETRAITSV<unsigned int>>      {TYPEDEF(4, 4);  static const PropertyType pt;};
-TYPETRAITSV<long>>              {TYPEDEF(5, 8);  static const PropertyType pt;};
-TYPETRAITSV<unsigned long>>     {TYPEDEF(6, 8);  static const PropertyType pt;};
-TYPETRAITSV<long long>>         {TYPEDEF(7, 8);  static const PropertyType pt;};
-TYPETRAITSV<unsigned long long>>{TYPEDEF(8, 8);  static const PropertyType pt;};
-TYPETRAITSV<bool>>              {TYPEDEF(9, 1);  static const PropertyType pt;};
-TYPETRAITSV<float>>             {TYPEDEF(10, 4); static const PropertyType pt;};
-TYPETRAITSV<double>>            {TYPEDEF(11, 8); static const PropertyType pt;};
-TYPETRAITSV<const char *>>      {TYPEDEF(12, 0); static const PropertyType pt;};
-TYPETRAITSV<std::string>>       {TYPEDEF(13, 0); static const PropertyType pt;};
+TYPETRAITSV<short>>             {TYPEDEF(1, 2);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<unsigned short>>    {TYPEDEF(2, 2);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<int>>               {TYPEDEF(3, 4);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<unsigned int>>      {TYPEDEF(4, 4);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<long>>              {TYPEDEF(5, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<unsigned long>>     {TYPEDEF(6, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<long long>>         {TYPEDEF(7, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<unsigned long long>>{TYPEDEF(8, 8);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<bool>>              {TYPEDEF(9, 1);  static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<float>>             {TYPEDEF(10, 4); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<double>>            {TYPEDEF(11, 8); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<const char *>>      {TYPEDEF(12, 0); static const FlexisPersistence_EXPORT PropertyType pt;};
+TYPETRAITSV<std::string>>       {TYPEDEF(13, 0); static const FlexisPersistence_EXPORT PropertyType pt;};
 
 class ReadTransaction;
 class WriteTransaction;
