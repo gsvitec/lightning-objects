@@ -47,60 +47,39 @@ struct PropertyType
   }
 };
 
-namespace basetypes {
-
-#define DEF_BASETYPE(TNAME, NUM, SZ) static const PropertyType TNAME ## _t = {NUM, SZ}; \
-static const PropertyType TNAME ## _array_t = {NUM, SZ, true};
-
-DEF_BASETYPE(short, 1, 2)
-DEF_BASETYPE(ushort, 2, 2)
-DEF_BASETYPE(int, 3, 4)
-DEF_BASETYPE(uint, 4, 4)
-DEF_BASETYPE(long, 5, 8)
-DEF_BASETYPE(ulong, 6, 8)
-DEF_BASETYPE(long_long, 7, 16)
-DEF_BASETYPE(ulong_long, 8, 16)
-DEF_BASETYPE(bool, 9, 1)
-DEF_BASETYPE(float, 10, 4)
-DEF_BASETYPE(double, 11, 8)
-
-//variable size types
-DEF_BASETYPE(string, 12, 0)
-DEF_BASETYPE(cstring, 13, 0)
-
-} //basetypes
-
 template <typename T> struct TypeTraits;
 #define TYPETRAITS template <> struct TypeTraits
 #define TYPETRAITSV template <> struct TypeTraits<std::vector
+#define TYPEDEF(_id, _sz) constexpr static unsigned id=_id; constexpr static unsigned byteSize=_sz; constexpr static bool isVect=false;
+#define TYPEDEFV(_id, _sz) constexpr static unsigned id=_id; constexpr static unsigned byteSize=_sz; constexpr static bool isVect=true;
 
-TYPETRAITS<short>             {static const PropertyType &pt(){return basetypes::short_t;}};
-TYPETRAITS<unsigned short>    {static const PropertyType &pt(){return basetypes::ushort_t;}};
-TYPETRAITS<int>               {static const PropertyType &pt(){return basetypes::int_t;}};
-TYPETRAITS<unsigned int>      {static const PropertyType &pt(){return basetypes::uint_t;}};
-TYPETRAITS<long>              {static const PropertyType &pt(){return basetypes::long_t;}};
-TYPETRAITS<unsigned long>     {static const PropertyType &pt(){return basetypes::ulong_t;}};
-TYPETRAITS<long long>         {static const PropertyType &pt(){return basetypes::long_long_t;}};
-TYPETRAITS<unsigned long long>{static const PropertyType &pt(){return basetypes::ulong_long_t;}};
-TYPETRAITS<float>             {static const PropertyType &pt(){return basetypes::float_t;}};
-TYPETRAITS<double>            {static const PropertyType &pt(){return basetypes::double_t;}};
-TYPETRAITS<bool>              {static const PropertyType &pt(){return basetypes::bool_t;}};
-TYPETRAITS<const char *>      {static const PropertyType &pt(){return basetypes::cstring_t;}};
-TYPETRAITS<std::string>       {static const PropertyType &pt(){return basetypes::string_t;}};
+TYPETRAITS<short>             {TYPEDEF(1, 2);  static const PropertyType pt;};
+TYPETRAITS<unsigned short>    {TYPEDEF(2, 2);  static const PropertyType pt;};
+TYPETRAITS<int>               {TYPEDEF(3, 4);  static const PropertyType pt;};
+TYPETRAITS<unsigned int>      {TYPEDEF(4, 4);  static const PropertyType pt;};
+TYPETRAITS<long>              {TYPEDEF(5, 8);  static const PropertyType pt;};
+TYPETRAITS<unsigned long>     {TYPEDEF(6, 8);  static const PropertyType pt;};
+TYPETRAITS<long long>         {TYPEDEF(7, 8);  static const PropertyType pt;};
+TYPETRAITS<unsigned long long>{TYPEDEF(8, 8);  static const PropertyType pt;};
+TYPETRAITS<bool>              {TYPEDEF(9, 1);  static const PropertyType pt;};
+TYPETRAITS<float>             {TYPEDEF(10, 4); static const PropertyType pt;};
+TYPETRAITS<double>            {TYPEDEF(11, 8); static const PropertyType pt;};
+TYPETRAITS<const char *>      {TYPEDEF(12, 0); static const PropertyType pt;};
+TYPETRAITS<std::string>       {TYPEDEF(13, 0); static const PropertyType pt;};
 
-TYPETRAITSV<short>>             {static const PropertyType &pt(){return basetypes::short_array_t;}};
-TYPETRAITSV<unsigned short>>    {static const PropertyType &pt(){return basetypes::ushort_array_t;}};
-TYPETRAITSV<int>>               {static const PropertyType &pt(){return basetypes::int_array_t;}};
-TYPETRAITSV<unsigned int>>      {static const PropertyType &pt(){return basetypes::uint_array_t;}};
-TYPETRAITSV<long>>              {static const PropertyType &pt(){return basetypes::long_array_t;}};
-TYPETRAITSV<unsigned long>>     {static const PropertyType &pt(){return basetypes::ulong_array_t;}};
-TYPETRAITSV<long long>>         {static const PropertyType &pt(){return basetypes::long_long_array_t;}};
-TYPETRAITSV<unsigned long long>>{static const PropertyType &pt(){return basetypes::ulong_long_array_t;}};
-TYPETRAITSV<float>>             {static const PropertyType &pt(){return basetypes::float_array_t;}};
-TYPETRAITSV<double>>            {static const PropertyType &pt(){return basetypes::double_array_t;}};
-TYPETRAITSV<bool>>              {static const PropertyType &pt(){return basetypes::bool_array_t;}};
-TYPETRAITSV<const char *>>       {static const PropertyType &pt(){return basetypes::cstring_array_t;}};
-TYPETRAITSV<std::string>>       {static const PropertyType &pt(){return basetypes::string_array_t;}};
+TYPETRAITSV<short>>             {TYPEDEF(1, 2);  static const PropertyType pt;};
+TYPETRAITSV<unsigned short>>    {TYPEDEF(2, 2);  static const PropertyType pt;};
+TYPETRAITSV<int>>               {TYPEDEF(3, 4);  static const PropertyType pt;};
+TYPETRAITSV<unsigned int>>      {TYPEDEF(4, 4);  static const PropertyType pt;};
+TYPETRAITSV<long>>              {TYPEDEF(5, 8);  static const PropertyType pt;};
+TYPETRAITSV<unsigned long>>     {TYPEDEF(6, 8);  static const PropertyType pt;};
+TYPETRAITSV<long long>>         {TYPEDEF(7, 8);  static const PropertyType pt;};
+TYPETRAITSV<unsigned long long>>{TYPEDEF(8, 8);  static const PropertyType pt;};
+TYPETRAITSV<bool>>              {TYPEDEF(9, 1);  static const PropertyType pt;};
+TYPETRAITSV<float>>             {TYPEDEF(10, 4); static const PropertyType pt;};
+TYPETRAITSV<double>>            {TYPEDEF(11, 8); static const PropertyType pt;};
+TYPETRAITSV<const char *>>      {TYPEDEF(12, 0); static const PropertyType pt;};
+TYPETRAITSV<std::string>>       {TYPEDEF(13, 0); static const PropertyType pt;};
 
 class ReadTransaction;
 class WriteTransaction;
@@ -161,18 +140,18 @@ template <typename T>
 struct ValueTraits : public ValueTraitsFixed<true>
 {
   size_t data_size(const byte_t *) override {
-    return TypeTraits<T>::pt().byteSize;
+    return TypeTraits<T>::pt.byteSize;
   }
   static size_t size(const T &val) {
-    return TypeTraits<T>::pt().byteSize;
+    return TypeTraits<T>::pt.byteSize;
   }
   static void getBytes(ReadBuf &buf, T &val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    size_t byteSize = TypeTraits<T>::pt.byteSize;
     const byte_t *data = buf.read(byteSize);
     val = read_integer<T>(data, byteSize);
   }
   static void putBytes(WriteBuf &buf, T val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    size_t byteSize = TypeTraits<T>::pt.byteSize;
     byte_t *data = buf.allocate(byteSize);
     write_integer(data, val, byteSize);
   }
@@ -182,7 +161,7 @@ template <>
 struct ValueTraits<bool> : public ValueTraitsFixed<true>
 {
   static size_t size(const bool &val) {
-    return TypeTraits<bool>::pt().byteSize;
+    return TypeTraits<bool>::pt.byteSize;
   }
   static void getBytes(ReadBuf &buf, bool &val) {
     const byte_t *data = buf.read(1);
@@ -233,18 +212,18 @@ template <typename T>
 struct ValueTraitsFloat : public ValueTraitsFixed<true>
 {
   size_t data_size(const byte_t *data) override {
-    return TypeTraits<T>::pt().byteSize;
+    return TypeTraits<T>::pt.byteSize;
   }
   static size_t size(const T &val) {
-    return TypeTraits<T>::pt().byteSize;
+    return TypeTraits<T>::pt.byteSize;
   }
   static void getBytes(ReadBuf &buf, T &val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    size_t byteSize = TypeTraits<T>::pt.byteSize;
     const byte_t *data = buf.read(byteSize);
     val = *reinterpret_cast<const T *>(data);
   }
   static void putBytes(WriteBuf &buf, T val) {
-    size_t byteSize = TypeTraits<T>::pt().byteSize;
+    size_t byteSize = TypeTraits<T>::pt.byteSize;
     byte_t *data = buf.allocate(byteSize);
     *reinterpret_cast<T *>(data) = val;
   }
@@ -285,7 +264,7 @@ template <typename O, typename P, P O::*p> struct PropertyAssign : public Proper
 template <typename O, typename P, P O::*p>
 struct BasePropertyAssign : public PropertyAssign<O, P, p> {
   BasePropertyAssign(const char * name)
-      : PropertyAssign<O, P, p>(name, new PropertyStorage<O, P>(), TypeTraits<P>::pt()) {}
+      : PropertyAssign<O, P, p>(name, new PropertyStorage<O, P>(), TypeTraits<P>::pt) {}
 };
 
 template <typename T> struct ClassTraits;

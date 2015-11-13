@@ -12,6 +12,34 @@ using namespace std;
 
 namespace kv {
 
+const PropertyType TypeTraits<short>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<unsigned short>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<int>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<unsigned int>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<long>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<unsigned long>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<long long>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<unsigned long long>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<float>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<double>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<bool>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<const char *>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::string>::pt(PropertyType(id, byteSize, isVect));
+
+const PropertyType TypeTraits<std::vector<short>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<unsigned short>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<int>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<unsigned int>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<long>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<unsigned long>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<long long>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<unsigned long long>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<float>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<double>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<bool>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<const char *>>::pt(PropertyType(id, byteSize, isVect));
+const PropertyType TypeTraits<std::vector<std::string>>::pt(PropertyType(id, byteSize, isVect));
+
 template <>
 struct ClassTraits<ChunkInfo> : public ClassTraitsBase<ChunkInfo>{
   enum PropertyIds {chunkId=1, startIndex, elementCount};

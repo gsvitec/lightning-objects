@@ -424,28 +424,18 @@ void testValueCollection(KeyValueStore *kv)
 //test persistent collection of scalar (primitve) values sub-array API
 void testValueCollectionArrays(KeyValueStore *kv)
 {
-  ObjectId collectionId, collectionId2;
+  ObjectId collectionId;
 
   {
     //save test data
-    vector<double> vect;
+    double vect[1000];
 
-    for(unsigned i=0; i<1000; i++)
-      vect.push_back(1.44 * i);
+    for (unsigned i = 0; i < 1000; i++)
+      vect[i] = 1.44 * i;
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putValueCollection(vect, 128);
-
-    wtxn->commit();
-
-    //raw array API:
-    long darray[100];
-    for(int i=0;i<100; i++) darray[i] = -99999 * i;
-
-    wtxn = kv->beginWrite();
-
-    collectionId2 = wtxn->putValueCollection(darray, 128);
+    collectionId = wtxn->putValueCollectionData(vect, 1000, 128);
 
     wtxn->commit();
   }
@@ -472,9 +462,32 @@ void testValueCollectionArrays(KeyValueStore *kv)
     data = cd3->data();
     assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
 
+    rtxn->abort();
+  }
+}
+//test persistent collection of scalar (primitve) values sub-array API
+void testValueCollectionArrays2(KeyValueStore *kv)
+{
+  const PropertyType &pt = TypeTraits<short>::pt;
+
+  ObjectId collectionId2;
+  {
+    //raw array API:
+    long darray[100];
+    for(int i=0;i<100; i++) darray[i] = -99999 * i;
+
+    auto wtxn = kv->beginWrite();
+
+    collectionId2 = wtxn->putValueCollectionData(darray, 100, 128);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginExclusiveRead();
+
     auto cd4 = rtxn->getValueCollectionData<long>(collectionId2, 10, 50);
     long *data2 = cd4->data();
-    assert(data2[0] == -99999 * 10 && data[49] == -99999 * 149);
+    assert(data2[0] == -99999 * 10 && data2[49] == -99999 * 59);
 
     rtxn->abort();
   }
@@ -526,6 +539,11 @@ int test_integer() {
   return 0;
 }
 
+void testPresistenceRef()
+{
+
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
@@ -551,6 +569,7 @@ int main()
   testValueCollection(kv);
   testValueCollectionArrays(kv);
   testObjectPtrPropertyStorage(kv);
+  testValueCollectionArrays2(kv);
 
   delete kv;
   return 0;

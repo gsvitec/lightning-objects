@@ -518,7 +518,7 @@ KeyValueStoreImpl::~KeyValueStoreImpl()
   m_env.close();
 
   try {
-    ::lmdb::env env(::lmdb::env::create());
+    ::lmdb::env env {::lmdb::env::create()};
     env.open(m_dbpath.c_str(), m_flags, 0664);
     env.set_mapsize(datasize);
     env.close();
@@ -722,7 +722,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
 
       byte_t *datastart = startval.data<byte_t>() + ChunkHeader_sz;
       size_t offs = startIndex - findStart->startIndex;
-      if(vt->fixed) datastart = datastart + offs * vt->data_size(nullptr);
+      if(vt->fixed) datastart += offs * vt->data_size(nullptr);
       else {
         for(size_t i=0; i < offs; i++) datastart += vt->data_size(datastart);
       }

@@ -1216,18 +1216,28 @@ protected:
   void saveChunks(const T *array, size_t arraySize,
                   CollectionInfo ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
   {
+    static_assert(TypeTraits<T>::byteSize == sizeof(T),
+                  "data arrays only supported for primitive, fixed-size types with native size equal byteSize");
+
     if(arraySize) startChunk(ci, chunkId, chunkSize, 0, 0);
 
-    size_t elementCount = 0;
-    for(size_t i=0, arrSize = arraySize; i<arraySize; i++, elementCount++) {
-      if(writeBuf().avail() < ValueTraits<T>::size(array[i])) {
-        if(elementCount == 0) throw persistence_error("chunk size too small");
-        startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
-        startIndex += elementCount;
-        elementCount = 0;
-      }
-      ValueTraits<T>::putBytes(writeBuf(), array[i]);
+    size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::pt.byteSize);
+    size_t elementCount = chunkEls < arraySize ? chunkEls : arraySize;
+    byte_t *data = (byte_t *)array;
+
+    while(elementCount) {
+      writeBuf().append(data, elementCount * TypeTraits<T>::pt.byteSize);
+
+      arraySize -= elementCount;
+      if(arraySize == 0) break;
+
+      elementCount = arraySize >= chunkEls ? chunkEls : arraySize;
+      startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
+
+      startIndex += elementCount;
+      data += elementCount * TypeTraits<T>::pt.byteSize;
     }
+
     if(elementCount) writeChunkHeader(startIndex, elementCount);
     putCollectionInfo(ci, startIndex, elementCount);
   }
@@ -1382,7 +1392,7 @@ public:
    * @param chunkSize size of chunk
    */
   template <typename T>
-  ObjectId putValueCollection(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
+  ObjectId putValueCollectionData(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
   {
     CollectionInfo ci(++store.m_maxCollectionId);
 
@@ -1504,10 +1514,10 @@ public:
 
     void put(T val)
     {
-      size_t sz = TypeTraits<T>::pt().byteSize;
+      size_t sz = TypeTraits<T>::pt.byteSize;
       if(sz == 0) sz = ValueTraits<T>::size(val);
 
-      preparePut(TypeTraits<T>::pt().byteSize);
+      preparePut(TypeTraits<T>::pt.byteSize);
       ValueTraits<T>::putBytes(m_wtxn->writeBuf(), val);
     }
   };
@@ -1550,10 +1560,10 @@ template<typename T, typename V>
 struct BasePropertyStorage : public StoreAccessBase
 {
   size_t size(const byte_t *buf) const override {
-    return TypeTraits<V>::pt().byteSize;
+    return TypeTraits<V>::pt.byteSize;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
-    return TypeTraits<V>::pt().byteSize;
+    return TypeTraits<V>::pt.byteSize;
   }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
@@ -1653,7 +1663,7 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>(*tp).put(pa, val);
 
-    size_t psz = TypeTraits<V>::pt().byteSize * val.size();
+    size_t psz = TypeTraits<V>::pt.byteSize * val.size();
     WriteBuf propBuf(psz);
 
     using ElementTraits = ValueTraits<V>;

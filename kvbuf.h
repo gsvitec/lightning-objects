@@ -236,6 +236,12 @@ public:
     memcpy(buf, data, size);
   }
 
+  void append(byte_t *data, size_t size)
+  {
+    byte_t * buf = allocate(size);
+    memcpy(buf, data, size);
+  }
+
   template<typename T>
   void appendInteger(T num, size_t bytes) {
     byte_t * buf = allocate(bytes);
