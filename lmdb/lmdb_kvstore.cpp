@@ -444,6 +444,7 @@ public:
 class KeyValueStoreImpl : public KeyValueStore
 {
   ::lmdb::env m_env;
+  unsigned m_flags;
   weak_ptr<Transaction> writeTxn;
   string m_dbpath;
   Options m_options;
@@ -489,12 +490,12 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
   size_t sz = size_t(1) * options.mapSizeMB * size_t(1024) * size_t(1024); //1 GiB
   m_env.set_mapsize(sz);
   m_env.set_max_dbs(2);
-  unsigned flags = MDB_NOSUBDIR;
-  if(!options.lockFile) flags |= MDB_NOLOCK;
-  if(options.writeMap) flags |= MDB_WRITEMAP;
+  m_flags = MDB_NOSUBDIR;
+  if(!options.lockFile) m_flags |= MDB_NOLOCK;
+  if(options.writeMap) m_flags |= MDB_WRITEMAP;
 
   try {
-    m_env.open(m_dbpath.c_str(), flags, 0664);
+    m_env.open(m_dbpath.c_str(), m_flags, 0664);
   }
   catch(::lmdb::runtime_error e) {
     throw persistence_error(e.what());
@@ -507,18 +508,23 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
 
 KeyValueStoreImpl::~KeyValueStoreImpl()
 {
-#ifdef _WIN32
-  std::replace(m_dbpath.begin(), m_dbpath.end(), '/', '\\');
-  string tmp = m_dbpath + "_tmp";
-  mdb_env_copy2(m_env.handle(), tmp.c_str(), MDB_CP_COMPACT);
-#endif
+  MDB_envinfo envinfo;
+  mdb_env_info(m_env, &envinfo);
 
+  MDB_stat envstat;
+  mdb_env_stat(m_env, &envstat);
+
+  size_t datasize = envstat.ms_psize * (envinfo.me_last_pgno + 2);
   m_env.close();
 
-#ifdef _WIN32
-  std::remove(m_dbpath.c_str());
-  std::rename(tmp.c_str(), m_dbpath.c_str());
-#endif
+  try {
+    m_env.open(m_dbpath.c_str(), m_flags, 0664);
+    m_env.set_mapsize(datasize);
+    m_env.close();
+  }
+  catch(::lmdb::runtime_error e) {
+    throw persistence_error(e.what());
+  }
 }
 
 void KeyValueStoreImpl::transactionCompleted(Transaction::Mode mode, bool blockWrites)

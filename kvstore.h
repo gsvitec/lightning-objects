@@ -1205,6 +1205,34 @@ protected:
   }
 
   /**
+   * save value collection chunks
+   *
+   * @param vect the collection
+   * @param collectionId the id of the collection
+   * @param chunkId the chunk index
+   * @param chunkSize the chunk size in bytes
+   */
+  template <typename T>
+  void saveChunks(const T *array, size_t arraySize,
+                  CollectionInfo ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
+  {
+    if(arraySize) startChunk(ci, chunkId, chunkSize, 0, 0);
+
+    size_t elementCount = 0;
+    for(size_t i=0, arrSize = arraySize; i<arraySize; i++, elementCount++) {
+      if(writeBuf().avail() < ValueTraits<T>::size(array[i])) {
+        if(elementCount == 0) throw persistence_error("chunk size too small");
+        startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
+        startIndex += elementCount;
+        elementCount = 0;
+      }
+      ValueTraits<T>::putBytes(writeBuf(), array[i]);
+    }
+    if(elementCount) writeChunkHeader(startIndex, elementCount);
+    putCollectionInfo(ci, startIndex, elementCount);
+  }
+
+  /**
    * save a sub-object data buffer
    */
   virtual bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) = 0;
@@ -1343,6 +1371,22 @@ public:
     CollectionInfo ci(++store.m_maxCollectionId);
 
     saveChunks(vect, ci, 1, chunkSize, 0);
+
+    return ci.collectionId;
+  }
+
+  /**
+   * save a top-level (chunked) value collection.
+   *
+   * @param vect the collection contents
+   * @param chunkSize size of chunk
+   */
+  template <typename T>
+  ObjectId putValueCollection(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
+  {
+    CollectionInfo ci(++store.m_maxCollectionId);
+
+    saveChunks(array, arraySize, ci, 1, chunkSize, 0);
 
     return ci.collectionId;
   }

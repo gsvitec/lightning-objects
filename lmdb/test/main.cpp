@@ -424,7 +424,7 @@ void testValueCollection(KeyValueStore *kv)
 //test persistent collection of scalar (primitve) values sub-array API
 void testValueCollectionArrays(KeyValueStore *kv)
 {
-  ObjectId collectionId;
+  ObjectId collectionId, collectionId2;
 
   {
     //save test data
@@ -438,6 +438,16 @@ void testValueCollectionArrays(KeyValueStore *kv)
     collectionId = wtxn->putValueCollection(vect, 128);
 
     wtxn->commit();
+
+    //raw array API:
+    long darray[100];
+    for(int i=0;i<100; i++) darray[i] = -99999 * i;
+
+    wtxn = kv->beginWrite();
+
+    collectionId2 = wtxn->putValueCollection(darray, 128);
+
+    wtxn->commit();
   }
   {
     //load saved collection arrays
@@ -446,6 +456,7 @@ void testValueCollectionArrays(KeyValueStore *kv)
     CollectionData<double>::Ptr cd1 = rtxn->getValueCollectionData<double>(collectionId, 2, 3);
     assert(cd1);
     double *data = cd1->data();
+
     double d0 = data[0];
     double d2 = data[2];
     assert(d0 == 1.44 * 2 && d2 == 1.44 * 4);
@@ -460,6 +471,10 @@ void testValueCollectionArrays(KeyValueStore *kv)
     auto cd3 = rtxn->getValueCollectionData<double>(collectionId, 100, 50);
     data = cd3->data();
     assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
+
+    auto cd4 = rtxn->getValueCollectionData<long>(collectionId2, 10, 50);
+    long *data2 = cd4->data();
+    assert(data2[0] == -99999 * 10 && data[49] == -99999 * 149);
 
     rtxn->abort();
   }
