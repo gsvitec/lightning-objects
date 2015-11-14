@@ -3,6 +3,7 @@
 //
 #include <vector>
 #include <set>
+#include <sstream>
 #include "kvstore.h"
 
 namespace flexis {
@@ -11,34 +12,6 @@ namespace persistence {
 using namespace std;
 
 namespace kv {
-
-const PropertyType TypeTraits<short>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<unsigned short>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<int>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<unsigned int>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<long>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<unsigned long>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<long long>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<unsigned long long>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<float>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<double>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<bool>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<const char *>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::string>::pt(PropertyType(id, byteSize, isVect));
-
-const PropertyType TypeTraits<std::vector<short>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<unsigned short>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<int>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<unsigned int>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<long>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<unsigned long>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<long long>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<unsigned long long>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<float>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<double>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<bool>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<const char *>>::pt(PropertyType(id, byteSize, isVect));
-const PropertyType TypeTraits<std::vector<std::string>>::pt(PropertyType(id, byteSize, isVect));
 
 template <>
 struct ClassTraits<ChunkInfo> : public ClassTraitsBase<ChunkInfo>{
@@ -89,8 +62,9 @@ void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBa
           if(pa->type.id != pi->typeId
              || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
              || pi->isVector != pa->type.isVector) {
-            string msg = string("data type for property [") + pi->name + "] has changed";
-            throw incompatible_schema_error(msg.c_str());
+            stringstream ss;
+            ss << "class " << classInfo.name << ": data type for property '" << pi->name << "' has changed";
+            throw incompatible_schema_error(ss.str());
           }
         }
       }
@@ -280,7 +254,7 @@ void CollectionAppenderBase::close() {
   m_wtxn->putCollectionInfo(m_collectionInfo, m_startIndex, m_elementCount);
 }
 
-}
+} //kv
 
 } //persistence
 } //flexis

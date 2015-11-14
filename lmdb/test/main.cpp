@@ -468,8 +468,6 @@ void testValueCollectionArrays(KeyValueStore *kv)
 //test persistent collection of scalar (primitve) values sub-array API
 void testValueCollectionArrays2(KeyValueStore *kv)
 {
-  const PropertyType &pt = TypeTraits<short>::pt;
-
   ObjectId collectionId2;
   {
     //raw array API:

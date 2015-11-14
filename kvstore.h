@@ -1221,12 +1221,12 @@ protected:
 
     if(arraySize) startChunk(ci, chunkId, chunkSize, 0, 0);
 
-    size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::pt.byteSize);
+    size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::byteSize);
     size_t elementCount = chunkEls < arraySize ? chunkEls : arraySize;
     byte_t *data = (byte_t *)array;
 
     while(elementCount) {
-      writeBuf().append(data, elementCount * TypeTraits<T>::pt.byteSize);
+      writeBuf().append(data, elementCount * TypeTraits<T>::byteSize);
 
       arraySize -= elementCount;
       if(arraySize == 0) break;
@@ -1235,7 +1235,7 @@ protected:
       startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
 
       startIndex += elementCount;
-      data += elementCount * TypeTraits<T>::pt.byteSize;
+      data += elementCount * TypeTraits<T>::byteSize;
     }
 
     if(elementCount) writeChunkHeader(startIndex, elementCount);
@@ -1362,7 +1362,7 @@ public:
   ObjectId putCollection(const std::vector<Ptr<T>> &vect, size_t chunkSize = CHUNKSIZE,
                          bool poly = true)
   {
-    CollectionInfo ci(store.m_maxCollectionId);
+    CollectionInfo ci(++store.m_maxCollectionId);
 
     saveChunks(vect, ci, 1, chunkSize, 0, poly);
 
@@ -1514,10 +1514,10 @@ public:
 
     void put(T val)
     {
-      size_t sz = TypeTraits<T>::pt.byteSize;
+      size_t sz = TypeTraits<T>::byteSize;
       if(sz == 0) sz = ValueTraits<T>::size(val);
 
-      preparePut(TypeTraits<T>::pt.byteSize);
+      preparePut(TypeTraits<T>::byteSize);
       ValueTraits<T>::putBytes(m_wtxn->writeBuf(), val);
     }
   };
@@ -1560,10 +1560,10 @@ template<typename T, typename V>
 struct BasePropertyStorage : public StoreAccessBase
 {
   size_t size(const byte_t *buf) const override {
-    return TypeTraits<V>::pt.byteSize;
+    return TypeTraits<V>::byteSize;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
-    return TypeTraits<V>::pt.byteSize;
+    return TypeTraits<V>::byteSize;
   }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
@@ -1663,7 +1663,7 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>(*tp).put(pa, val);
 
-    size_t psz = TypeTraits<V>::pt.byteSize * val.size();
+    size_t psz = TypeTraits<V>::byteSize * val.size();
     WriteBuf propBuf(psz);
 
     using ElementTraits = ValueTraits<V>;
