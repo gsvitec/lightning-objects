@@ -449,7 +449,7 @@ void testValueCollection(KeyValueStore *kv)
 }
 
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionArrays(KeyValueStore *kv)
+void testValueCollectionData(KeyValueStore *kv)
 {
   ObjectId collectionId;
 
@@ -493,12 +493,12 @@ void testValueCollectionArrays(KeyValueStore *kv)
   }
 }
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionArrays2(KeyValueStore *kv)
+void testValueCollectionData2(KeyValueStore *kv)
 {
   ObjectId collectionId2;
   {
     //raw array API:
-    long darray[100];
+    long long darray[100];
     for(int i=0;i<100; i++) darray[i] = -99999 * i;
 
     auto wtxn = kv->beginWrite();
@@ -510,9 +510,29 @@ void testValueCollectionArrays2(KeyValueStore *kv)
   {
     auto rtxn = kv->beginExclusiveRead();
 
-    auto cd4 = rtxn->getValueCollectionData<long>(collectionId2, 10, 50);
-    long *data2 = cd4->data();
+    auto cd4 = rtxn->getValueCollectionData<long long>(collectionId2, 10, 50);
+    long long *data2 = cd4->data();
     assert(data2[0] == -99999 * 10 && data2[49] == -99999 * 59);
+
+    rtxn->abort();
+  }
+  {
+    //raw array API:
+    long long darray[100];
+    for(int i=0;i<100; i++) darray[i] = 555 * i;
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->appendValueCollectionData(collectionId2, darray, 100, 128);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginExclusiveRead();
+
+    auto cd = rtxn->getValueCollectionData<long long>(collectionId2, 190, 10);
+    long long *data = cd->data();
+    assert(data[0] == 555 * 90 && data[9] == 555 * 99);
 
     rtxn->abort();
   }
@@ -592,9 +612,9 @@ int main()
   testLazyPolymorphicCursor(kv);
   testObjectCollection(kv);
   testValueCollection(kv);
-  testValueCollectionArrays(kv);
+  testValueCollectionData(kv);
   testObjectPtrPropertyStorage(kv);
-  testValueCollectionArrays2(kv);
+  testValueCollectionData2(kv);
   testValueVectorProperty(kv);
 
   delete kv;

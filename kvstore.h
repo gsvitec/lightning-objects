@@ -895,6 +895,9 @@ public:
   virtual void abort() = 0;
 };
 
+#define DATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
+"collection data access only supported for fixed-size types with native size equal byteSize");
+
 /**
  * Transaction for exclusive read and operations. Opening write transactions while an exclusive read is open
  * will fail with an exception. Likewise creating an exclusive read transcation while a write is ongoing
@@ -908,17 +911,18 @@ protected:
   ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
 
 public:
-  template <typename V> typename
-  CollectionData<V>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex)
+  template <typename T> typename
+  CollectionData<T>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex)
   {
+    DATA_API_ASSERT
     void *data;
     bool owned;
     CollectionInfo ci;
     if(!getCollectionInfo(collectionId, ci, false)) return nullptr;
 
-    std::shared_ptr<ValueTraitsBase> vt = std::make_shared<ValueTraits<V>>();
+    std::shared_ptr<ValueTraitsBase> vt = std::make_shared<ValueTraits<T>>();
     if(_getCollectionData(ci, startIndex, endIndex, vt, &data, &owned)) {
-      return typename CollectionData<V>::Ptr(new CollectionData<V>(data, owned));
+      return typename CollectionData<T>::Ptr(new CollectionData<T>(data, owned));
     }
     return nullptr;
   }
@@ -1214,11 +1218,8 @@ protected:
    */
   template <typename T>
   void saveChunks(const T *array, size_t arraySize,
-                  CollectionInfo ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
+                  CollectionInfo &ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
   {
-    static_assert(TypeTraits<T>::byteSize == sizeof(T),
-                  "data arrays only supported for primitive, fixed-size types with native size equal byteSize");
-
     if(arraySize) startChunk(ci, chunkId, chunkSize, 0, 0);
 
     size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::byteSize);
@@ -1231,13 +1232,12 @@ protected:
       arraySize -= elementCount;
       if(arraySize == 0) break;
 
-      elementCount = arraySize >= chunkEls ? chunkEls : arraySize;
       startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
 
       startIndex += elementCount;
       data += elementCount * TypeTraits<T>::byteSize;
+      elementCount = arraySize >= chunkEls ? chunkEls : arraySize;
     }
-
     if(elementCount) writeChunkHeader(startIndex, elementCount);
     putCollectionInfo(ci, startIndex, elementCount);
   }
@@ -1394,6 +1394,7 @@ public:
   template <typename T>
   ObjectId putValueCollectionData(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
   {
+    DATA_API_ASSERT
     CollectionInfo ci(++store.m_maxCollectionId);
 
     saveChunks(array, arraySize, ci, 1, chunkSize, 0);
@@ -1432,6 +1433,22 @@ public:
     if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
 
     saveChunks(vect, collectionId, ci.nextChunkId, chunkSize, ci.nextStartIndex);
+  }
+
+  /**
+   * append to a top-level (chunked) value collection.
+   *
+   * @param vect the collection contents
+   * @param chunkSize size of keys chunk
+   */
+  template <typename T>
+  void appendValueCollectionData(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
+  {
+    DATA_API_ASSERT
+    CollectionInfo ci;
+    if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
+
+    saveChunks(data, dataSize, ci, ci.nextChunkId, chunkSize, ci.nextStartIndex);
   }
 
   template <typename T>
