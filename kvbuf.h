@@ -110,6 +110,10 @@ public:
     return ret;
   }
 
+  bool atEnd() {
+    return m_readptr == m_data + m_size;
+  }
+
   bool read(StorageKey &key)
   {
     if(m_size - (m_readptr - m_data) < 8)

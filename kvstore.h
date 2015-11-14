@@ -1661,13 +1661,13 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
   {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>(*tp).put(pa, val);
+    ClassTraits<T>::put(*tp, pa, val);
 
-    size_t psz = TypeTraits<V>::byteSize * val.size();
+    size_t psz;
+    for(auto &v : val) psz += ValueTraits<V>::size(v);
     WriteBuf propBuf(psz);
 
-    using ElementTraits = ValueTraits<V>;
-    for(auto v : val) ElementTraits::putBytes(propBuf, v);
+    for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
 
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
@@ -1680,13 +1680,13 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
     ReadBuf readBuf;
     tr->getData(readBuf, classId, objectId, pa->id);
 
-    if(!readBuf.empty()) {
+    while(!readBuf.atEnd()) {
       V v;
       ValueTraits<V>::getBytes(readBuf, v);
       val.push_back(v);
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>(*tp).get(pa, val);
+    ClassTraits<T>::get(*tp, pa, val);
   }
 };
 

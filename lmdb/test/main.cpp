@@ -89,6 +89,33 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+void testValueVectorProperty(KeyValueStore *kv)
+{
+  ObjectId oid;
+  {
+    OtherThingA hans("Hans");
+    hans.testnames.push_back("Eva");
+    hans.testnames.push_back("Rudi");
+
+    auto wtxn = kv->beginWrite();
+
+    oid = wtxn->putObject(hans);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    OtherThingA *hans = rtxn->getObject<OtherThingA>(oid);
+    assert(hans && hans->testnames.size() == 2);
+    assert(hans->testnames[0] == "Eva");
+    assert(hans->testnames[1] == "Rudi");
+
+    rtxn->abort();
+    delete hans;
+  }
+}
+
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
@@ -568,6 +595,7 @@ int main()
   testValueCollectionArrays(kv);
   testObjectPtrPropertyStorage(kv);
   testValueCollectionArrays2(kv);
+  testValueVectorProperty(kv);
 
   delete kv;
   return 0;

@@ -21,6 +21,7 @@ struct OtherThing {
 };
 struct OtherThingA : public OtherThing {
   long lvalue = 99999999911111;
+  std::vector<std::string> testnames;
 
   OtherThingA() : OtherThing() {}
   OtherThingA(std::string name) : OtherThing(name) {}
@@ -63,7 +64,8 @@ struct ClassTraits<OtherThingA> : public ClassTraitsBase<OtherThingA>{
 };
 template<> ClassInfo ClassTraitsBase<OtherThingA>::info ("OtherThingA", typeid(OtherThingA));
 template<> PropertyAccessBase * ClassTraitsBase<OtherThingA>::decl_props[] = {
-    new BasePropertyAssign<OtherThingA, long, &OtherThingA::lvalue>("lvalue")
+    new BasePropertyAssign<OtherThingA, long, &OtherThingA::lvalue>("lvalue"),
+    new BasePropertyAssign<OtherThingA, std::vector<std::string>, &OtherThingA::testnames>("testnames")
 };
 template<> Properties * ClassTraitsBase<OtherThingA>::properties(Properties::mk<OtherThingA, OtherThing>());
 
