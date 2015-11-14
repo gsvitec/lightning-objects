@@ -405,8 +405,8 @@ protected:
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
-  bool _getCollectionData(CollectionInfo &info, size_t startIndex, size_t length,
-                          std::shared_ptr<ValueTraitsBase>, void **data, bool *owned) override;
+  bool _getCollectionData(CollectionInfo &info, size_t startIndex, size_t length, size_t elementSize,
+                          void **data, bool *owned) override;
 
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
   bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex) override;
@@ -706,7 +706,7 @@ bool check_chunkinfo(const ChunkInfo &run, const ChunkInfo &ref)
 }
 
 bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, size_t length,
-                                     std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned)
+                                     size_t elementSize, void **data, bool *owned)
 {
   ChunkInfo chunk(0, startIndex);
   auto findStart = lower_bound(info.chunkInfos.cbegin(), info.chunkInfos.cend(), chunk, check_chunkinfo);
@@ -722,10 +722,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
 
       byte_t *datastart = startval.data<byte_t>() + ChunkHeader_sz;
       size_t offs = startIndex - findStart->startIndex;
-      if(vt->fixed) datastart += offs * vt->data_size(nullptr);
-      else {
-        for(size_t i=0; i < offs; i++) datastart += vt->data_size(datastart);
-      }
+      datastart += offs * elementSize;
 
       if(findStart == findEnd) {
         //all data in same chunk, Cool, we're done
@@ -743,13 +740,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
         if(!m_dbi.get(m_txn, keyval, endval)) return false;
 
         size_t endlen=0, endcount = startIndex + length - findEnd->startIndex;
-        if(vt->fixed) endlen = endcount * vt->data_size(nullptr);
-        else {
-          byte_t *enddata = endval.data<byte_t>() + ChunkHeader_sz;
-          for(size_t i=0; i <= endcount; i++) {
-            endlen += vt->data_size(enddata+endlen);
-          }
-        }
+        endlen = endcount * elementSize;
         datalen += endlen;
 
         *data = malloc(datalen);

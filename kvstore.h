@@ -905,7 +905,7 @@ public:
 class FlexisPersistence_EXPORT ExclusiveReadTransaction : public virtual ReadTransaction
 {
   virtual bool _getCollectionData(
-      CollectionInfo &info, size_t startIndex, size_t length, std::shared_ptr<ValueTraitsBase>, void **data, bool *owned) = 0;
+      CollectionInfo &info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
 
 protected:
   ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
@@ -920,8 +920,7 @@ public:
     CollectionInfo ci;
     if(!getCollectionInfo(collectionId, ci, false)) return nullptr;
 
-    std::shared_ptr<ValueTraitsBase> vt = std::make_shared<ValueTraits<T>>();
-    if(_getCollectionData(ci, startIndex, endIndex, vt, &data, &owned)) {
+    if(_getCollectionData(ci, startIndex, endIndex, TypeTraits<T>::byteSize, &data, &owned)) {
       return typename CollectionData<T>::Ptr(new CollectionData<T>(data, owned));
     }
     return nullptr;
