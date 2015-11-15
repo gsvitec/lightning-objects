@@ -895,7 +895,7 @@ public:
   virtual void abort() = 0;
 };
 
-#define DATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
+#define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
 "collection data access only supported for fixed-size types with native size equal byteSize");
 
 /**
@@ -911,16 +911,23 @@ protected:
   ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
 
 public:
+  /**
+   * Note that the raw data API is only usable for floating point (float, double) and for integral data types that
+   * conform to the LP64 data model. This precludes the long data type on Windows platforms
+   *
+   * @return a pointer to a memory chunk containing the raw collection data. The memory chunk may be
+   * database-owned or copied, depending on whether start and end lie within the same chunk.
+   */
   template <typename T> typename
-  CollectionData<T>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex)
+  CollectionData<T>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t length)
   {
-    DATA_API_ASSERT
+    RAWDATA_API_ASSERT
     void *data;
     bool owned;
     CollectionInfo ci;
     if(!getCollectionInfo(collectionId, ci, false)) return nullptr;
 
-    if(_getCollectionData(ci, startIndex, endIndex, TypeTraits<T>::byteSize, &data, &owned)) {
+    if(_getCollectionData(ci, startIndex, length, TypeTraits<T>::byteSize, &data, &owned)) {
       return typename CollectionData<T>::Ptr(new CollectionData<T>(data, owned));
     }
     return nullptr;
@@ -1208,7 +1215,7 @@ protected:
   }
 
   /**
-   * save value collection chunks
+   * save raw data collection chunks
    *
    * @param vect the collection
    * @param collectionId the id of the collection
@@ -1385,15 +1392,18 @@ public:
   }
 
   /**
-   * save a top-level (chunked) value collection.
+   * save a top-level (chunked) raw data collection. Note that the rwaw data API is only usable for
+   * floating point (float, double) and for integral data types that conform to the LP64 data model.
+   * This precludes the long data type on Windows platforms
    *
-   * @param vect the collection contents
+   * @param array the collection contents
+   * @param arraySize length of the contents
    * @param chunkSize size of chunk
    */
   template <typename T>
   ObjectId putValueCollectionData(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
   {
-    DATA_API_ASSERT
+    RAWDATA_API_ASSERT
     CollectionInfo ci(++store.m_maxCollectionId);
 
     saveChunks(array, arraySize, ci, 1, chunkSize, 0);
@@ -1435,7 +1445,9 @@ public:
   }
 
   /**
-   * append to a top-level (chunked) value collection.
+   * append to a top-level (chunked) raw data collection. Note that the raw data API is only usable for floating-point
+   * (float, double) and for integral data types that conform to the LP64 data model. This precludes the long data
+   * type on Windows platforms
    *
    * @param vect the collection contents
    * @param chunkSize size of keys chunk
@@ -1443,7 +1455,7 @@ public:
   template <typename T>
   void appendValueCollectionData(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
   {
-    DATA_API_ASSERT
+    RAWDATA_API_ASSERT
     CollectionInfo ci;
     if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
 

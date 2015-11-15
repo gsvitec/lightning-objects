@@ -730,6 +730,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
         *owned = false;
       }
       else {
+        //data crosses chunks. Too bad, need to copy
         size_t startlen = findStart->dataSize - (datastart - startval.data<byte_t>());
         size_t datalen = startlen;
         for(auto fs=findStart+1; fs != findEnd; fs++)
