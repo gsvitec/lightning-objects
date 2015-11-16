@@ -33,10 +33,13 @@ struct StorageKey
 
   ClassId classId;
   ObjectId objectId;
-  PropertyId propertyId; //will be 0 is this is an object key
+  PropertyId propertyId; //will be 0 if this is an object key
 
-  StorageKey() : classId(0), objectId(0), propertyId(0) {}
-  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId) : classId(classId), objectId(objectId), propertyId(propertyId) {}
+  bool dirty; //used by objects that carry a StorageKey property
+
+  StorageKey(bool dirty=false) : classId(0), objectId(0), propertyId(0), dirty(dirty) {}
+  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId, bool dirty=false)
+      : classId(classId), objectId(objectId), propertyId(propertyId), dirty(dirty) {}
 };
 
 /*
@@ -119,11 +122,11 @@ public:
     if(m_size - (m_readptr - m_data) < 8)
       return false;
 
-    key.classId = read_integer<ClassId>(m_readptr, ClassId_sz);
+    key.classId = *(ClassId *)m_readptr;
     m_readptr += ClassId_sz;
-    key.objectId = read_integer<ObjectId>(m_readptr, ObjectId_sz);
+    key.objectId = *(ObjectId *)m_readptr;
     m_readptr += ObjectId_sz;
-    key.propertyId = read_integer<PropertyId>(m_readptr, PropertyId_sz);
+    key.propertyId = *(PropertyId *)m_readptr;
     m_readptr += PropertyId_sz;
 
     return true;
@@ -262,11 +265,11 @@ public:
   {
     byte_t * buf = allocate(StorageKey::byteSize);
 
-    write_integer(buf, classId, ClassId_sz);
+    *(ClassId *)buf = classId;
     buf += ClassId_sz;
-    write_integer(buf, objectId, ObjectId_sz);
+    *(ObjectId *)buf = objectId;
     buf += ObjectId_sz;
-    write_integer(buf, propertyId, PropertyId_sz);
+    *(PropertyId *)buf = propertyId;
     buf += PropertyId_sz;
   }
 

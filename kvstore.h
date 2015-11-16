@@ -24,7 +24,7 @@ using namespace kv;
 static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
 static const ClassId CHUNKINFO_CLSID = 3;
-static const size_t CHUNKSIZE = 1024 * 512; //default chunksize
+static const size_t CHUNKSIZE = 4068; //default chunksize
 
 class incompatible_schema_error : public persistence_error
 {
@@ -113,7 +113,7 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
 
 protected:
   ObjectId m_maxCollectionId;
-  bool m_reuseChunkspace = true;
+  bool m_reuseChunkspace = false;
 
 public:
   /**
@@ -156,11 +156,13 @@ public:
    * as array elements), which is why these objects are not allowed.
    * Writing in append mode can be much more efficient than standard write
    *
+   * @param needsKBs database space required by this transaction. If not set, the default will be used.
+   *
    * @return a transaction object that allows reading + writing the database.
    * @throws InvalidArgumentException if in append mode the above prerequisites are not met
    * @throws persistence_error if write operations are currently blocked (beginRead(true))
    */
-  virtual WriteTransactionPtr beginWrite(bool append=false) = 0;
+  virtual WriteTransactionPtr beginWrite(bool append=false, unsigned needsKBs=0) = 0;
 };
 
 namespace kv {
@@ -258,6 +260,7 @@ public:
 };
 
 struct ChunkInfo {
+  StorageKey sk;
   PropertyId chunkId = 0;
   size_t startIndex = 0;
   size_t elementCount = 0;
@@ -891,7 +894,6 @@ public:
     return store.typeInfos[&ti];
   }
 
-  virtual void commit() = 0;
   virtual void abort() = 0;
 };
 
@@ -1036,7 +1038,7 @@ protected:
    * serialize the object to the write buffer
    */
   template <typename T>
-  ObjectId writeObject(ClassId classId, ObjectId objectId, T &obj, Properties *properties, bool shallow)
+  void writeObject(ClassId classId, ObjectId objectId, T &obj, Properties *properties, bool shallow)
   {
     //put data into buffer
     PropertyId propertyId = 0;
@@ -1049,7 +1051,6 @@ protected:
 
       p->storage->save(this, classId, objectId, &obj, p);
     }
-    return objectId;
   }
 
 
@@ -1269,6 +1270,8 @@ public:
     //assume all was popped
     curBuf->deleteChain();
   }
+
+  virtual void commit() = 0;
 
   /**
    * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
@@ -1678,6 +1681,35 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
   }
 };
 
+template<typename T>
+struct StorageKeyStorage : public StoreAccessBase
+{
+  size_t size(const byte_t *buf) const override {
+    return StorageKey::byteSize;
+  }
+  size_t size(void *obj, const PropertyAccessBase *pa) override {
+    return StorageKey::byteSize;
+  }
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  {
+    //not saved, only loaded
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  {
+    StorageKey sk(classId, objectId, 0);
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, sk);
+  }
+  bool getStorageKey(void *obj, const PropertyAccessBase *pa, StorageKey &key) override {
+    const PropertyAccess<T, StorageKey> *acc = (const PropertyAccess<T, StorageKey> *)pa;
+    T *tp = reinterpret_cast<T *>(obj);
+    key = acc->get(*tp);
+    return true;
+  }
+};
+
 /**
  * storage trait for value vector
  */
@@ -1839,9 +1871,18 @@ public:
 
     tr->pushWriteBuf();
     ClassId childClassId = ClassTraits<V>::info.classId;
-    for(V &v : val) {
-      ObjectId childId = tr->putObject<V>(v);
+    auto ska = ClassTraits<V>::properties->storageKeyAccess();
 
+    for(V &v : val) {
+      ObjectId childId = 0;
+
+      if(ska) {
+        StorageKey sk;
+        if(ska->storage->getStorageKey(&v, ska, sk)) childId = sk.objectId;
+        if(childId && sk.dirty) tr->updateObject<V>(childId, v);
+      }
+
+      if(!childId) childId = tr->putObject<V>(v);
       propBuf.append(childClassId, childId, 0);
     }
     tr->popWriteBuf();
@@ -1968,6 +2009,12 @@ template<typename T> struct PropertyStorage<T, std::vector<double>> : public Vec
 template<typename T> struct PropertyStorage<T, std::vector<bool>> : public VectorPropertyStorage<T, bool>{};
 template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public VectorPropertyStorage<T, const char *>{};
 template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public VectorPropertyStorage<T, std::string>{};
+
+template <typename O, StorageKey O::*p>
+struct StorageKeyAssign : public PropertyAssign<O, StorageKey, p> {
+  StorageKeyAssign()
+      : PropertyAssign<O, StorageKey, p>("sk", new StorageKeyStorage<O>(), PropertyType(0, 0, false)) {}
+};
 
 template <typename O, typename P, std::shared_ptr<P> O::*p>
 struct ObjectPropertyAssign : public PropertyAccess<O, P> {

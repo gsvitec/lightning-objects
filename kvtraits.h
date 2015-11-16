@@ -82,6 +82,11 @@ TYPETRAITSV<double>>            {TYPEDEFV(11, 8);};
 TYPETRAITSV<const char *>>      {TYPEDEFV(12, 0);};
 TYPETRAITSV<std::string>>       {TYPEDEFV(13, 0);};
 
+//these assertions allow us to write object key elements natively
+static_assert(sizeof(ClassId) == TypeTraits<ClassId>::byteSize, "ClassId must match native type");
+static_assert(sizeof(ObjectId) == TypeTraits<ObjectId>::byteSize, "ObjectId must match native type");
+static_assert(sizeof(PropertyId) == TypeTraits<PropertyId>::byteSize, "PropertyId must match native type");
+
 class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
@@ -101,6 +106,7 @@ struct StoreAccessBase {
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
                     bool force=false) = 0;
+  virtual bool getStorageKey(void *obj, const PropertyAccessBase *pa, StorageKey &key) {return false;}
 };
 
 /**
@@ -278,28 +284,42 @@ struct EmptyClass
 
 class Properties
 {
+  const unsigned keyStorageId;
   const unsigned numProps;
   PropertyAccessBase ** const properties;
   Properties * const superIter;
   const unsigned startPos;
 
-  Properties(PropertyAccessBase * properties[], unsigned numProps, Properties *superIter)
-      : numProps(numProps), properties(properties), superIter(superIter), startPos(superIter ? superIter->full_size() : 0)
+  Properties(PropertyAccessBase * properties[], unsigned numProps, Properties *superIter, unsigned keyStorageId)
+      : properties(properties),
+        numProps(numProps),
+        superIter(superIter),
+        startPos(superIter ? superIter->full_size() : 0),
+        keyStorageId(keyStorageId)
   {}
 
   Properties(const Properties& mit) = delete;
 public:
   template <typename T, typename S=EmptyClass>
-  static Properties *mk() {
+  static Properties *mk(unsigned keyStorageId=0) {
     Properties *p = new Properties(
         ClassTraits<T>::decl_props,
         ARRAY_SZ(ClassTraits<T>::decl_props),
-        ClassTraits<S>::properties);
+        ClassTraits<S>::properties,
+        keyStorageId);
 
     for(unsigned i=0; i<p->full_size(); i++)
       p->get(i)->id = i+1;
 
     return p;
+  }
+
+  PropertyAccessBase *storageKeyAccess()
+  {
+    if(keyStorageId)
+      return properties[keyStorageId-1];
+    else
+      return superIter ? superIter->storageKeyAccess() : nullptr;
   }
 
   inline unsigned full_size() {

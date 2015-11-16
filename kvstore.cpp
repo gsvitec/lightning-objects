@@ -19,12 +19,13 @@ struct ClassTraits<ChunkInfo> : public ClassTraitsBase<ChunkInfo>{
 };
 template<> ClassInfo ClassTraitsBase<ChunkInfo>::info ("flexis::persistence::ChunkInfo", typeid(ChunkInfo), CHUNKINFO_CLSID);
 template<> PropertyAccessBase * ClassTraitsBase<ChunkInfo>::decl_props[] = {
+    new StorageKeyAssign<ChunkInfo, &ChunkInfo::sk>(),
     new BasePropertyAssign<ChunkInfo, PropertyId, &ChunkInfo::chunkId>("chunkId"),
     new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::startIndex>("startIndex"),
     new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::elementCount>("elementCount"),
     new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::dataSize>("dataSize")
 };
-template<> Properties * ClassTraitsBase<ChunkInfo>::properties(Properties::mk<ChunkInfo>());
+template<> Properties * ClassTraitsBase<ChunkInfo>::properties(Properties::mk<ChunkInfo>(1));
 
 template <>
 struct ClassTraits<CollectionInfo> : public ClassTraitsBase<CollectionInfo>{

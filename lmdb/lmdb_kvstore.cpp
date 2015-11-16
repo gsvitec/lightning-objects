@@ -5,6 +5,7 @@
 #include "lmdb_kvstore.h"
 #include "liblmdb/lmdb++.h"
 #include <algorithm>
+#include <sys/stat.h>
 
 namespace flexis {
 namespace persistence {
@@ -20,35 +21,31 @@ namespace ps = flexis::persistence;
 static const unsigned ObjectId_off = ClassId_sz;
 static const unsigned PropertyId_off = ClassId_sz + ObjectId_sz;
 
-#define SK_CONSTR(nm, c, o, p) byte_t nm[StorageKey::byteSize]; \
-write_integer(nm, c, ClassId_sz); \
-write_integer(nm+ObjectId_off, o, ObjectId_sz); \
-write_integer(nm+PropertyId_off, p, PropertyId_sz)
+#define SK_CONSTR(nm, c, o, p) byte_t nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
+*(PropertyId *)(nm+PropertyId_off) = p
 
-#define SK_RET(nm, k) \
-nm.classId = read_integer<ClassId>(k, ClassId_sz); \
-nm.objectId = read_integer<ObjectId>(k+ObjectId_off, ObjectId_sz); \
-nm.propertyId = read_integer<PropertyId>(k+PropertyId_off, PropertyId_sz)
+#define SK_RET(nm, k) nm.classId = *(ClassId *)k; nm.objectId = *(ObjectId *)(k+ObjectId_off); \
+nm.propertyId = *(PropertyId *)(k+PropertyId_off)
 
-#define SK_CLASSID(k) read_integer<ClassId>(k, ClassId_sz)
-#define SK_OBJID(k) read_integer<ObjectId>(k+ObjectId_off, ObjectId_sz)
-#define SK_PROPID(k) read_integer<PropertyId>(k+PropertyId_off, PropertyId_sz)
+#define SK_CLASSID(k) *(ClassId *)k
+#define SK_OBJID(k) *(ObjectId *)(k+ObjectId_off)
+#define SK_PROPID(k) *(PropertyId *)(k+PropertyId_off)
 
 int key_compare(const MDB_val *a, const MDB_val *b)
 {
   byte_t *k1 = (byte_t *)a->mv_data;
   byte_t *k2 = (byte_t *)b->mv_data;
 
-  int c = read_integer<ClassId>(k1, ClassId_sz) - read_integer<ClassId>(k2, ClassId_sz);
+  int c = *(ClassId *)k1 - *(ClassId *)k2;
   if(c == 0) {
     k1 += ClassId_sz;
     k2 += ClassId_sz;
 
-    c = read_integer<ObjectId>(k1, ObjectId_sz) - read_integer<ObjectId>(k2, ObjectId_sz);
+    c = *(ObjectId *)k1 - *(ObjectId *)k2;
     if(c == 0) {
       k1 += ObjectId_sz;
       k2 += ObjectId_sz;
-      c = read_integer<PropertyId>(k1, PropertyId_sz) - read_integer<PropertyId>(k2, PropertyId_sz);
+      c = *(PropertyId *)k1 - *(PropertyId *)k2 ;
     }
   }
   return c;
@@ -410,10 +407,7 @@ protected:
 
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
   bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex) override;
-  bool firstChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
   bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
-  bool makeCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex, PropertyId start, PropertyId end,
-                          std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
 public:
@@ -449,6 +443,8 @@ class KeyValueStoreImpl : public KeyValueStore
   string m_dbpath;
   Options m_options;
 
+  size_t m_curMapSize;
+  unsigned m_pageSize;
   unsigned m_writeBlocks = 0;
 
   static int meta_dup_compare(const MDB_val *a, const MDB_val *b);
@@ -464,13 +460,15 @@ protected:
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
 
+  void checkAvailableSpace(unsigned needsKBs);
+
 public:
   KeyValueStoreImpl(std::string location, std::string name, Options options);
   ~KeyValueStoreImpl();
 
   ps::ReadTransactionPtr beginRead() override;
   ps::ExclusiveReadTransactionPtr beginExclusiveRead() override;
-  ps::WriteTransactionPtr beginWrite(bool append) override;
+  ps::WriteTransactionPtr beginWrite(bool append, unsigned needsKBs) override;
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
 };
@@ -483,16 +481,19 @@ KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 }
 
 KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
-    : m_env(::lmdb::env::create()), m_options(options)
+    : m_env(::lmdb::env::create()), m_options(options), m_curMapSize(options.initialMapSizeMB * size_t(1024) * size_t(1024))
 {
   m_dbpath = location + "/"+ (name.empty() ? "kvdata" : name);
 
-  size_t sz = size_t(1) * options.mapSizeMB * size_t(1024) * size_t(1024);
-  m_env.set_mapsize(sz);
+  //don't need to worry for existing files. LMDB will increase to committed size if neeed
+  m_env.set_mapsize(m_curMapSize);
+
+  //classmeta + classdata db
   m_env.set_max_dbs(2);
   m_flags = MDB_NOSUBDIR;
-  if(!options.lockFile) m_flags |= MDB_NOLOCK;
-  if(options.writeMap) m_flags |= MDB_WRITEMAP;
+
+  if(!m_options.lockFile) m_flags |= MDB_NOLOCK;
+  if(m_options.writeMap) m_flags |= MDB_WRITEMAP;
 
   try {
     m_env.open(m_dbpath.c_str(), m_flags, 0664);
@@ -500,6 +501,13 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
   catch(::lmdb::runtime_error e) {
     throw persistence_error(e.what());
   }
+
+  MDB_stat envstat;
+  mdb_env_stat(m_env, &envstat);
+  m_pageSize = envstat.ms_psize;
+
+  //make sure we've got room to grow
+  checkAvailableSpace(0);
 
   m_reuseChunkspace = options.writeMap;
 
@@ -511,20 +519,25 @@ KeyValueStoreImpl::~KeyValueStoreImpl()
   MDB_envinfo envinfo;
   mdb_env_info(m_env, &envinfo);
 
-  MDB_stat envstat;
-  mdb_env_stat(m_env, &envstat);
+  //truncate the file
+  size_t datasize = m_pageSize * (envinfo.me_last_pgno + 1);
+  m_env.set_mapsize(datasize);
 
-  size_t datasize = envstat.ms_psize * (envinfo.me_last_pgno + 2);
   m_env.close();
+}
 
-  try {
-    ::lmdb::env env {::lmdb::env::create()};
-    env.open(m_dbpath.c_str(), m_flags, 0664);
-    env.set_mapsize(datasize);
-    env.close();
-  }
-  catch(::lmdb::runtime_error e) {
-    throw persistence_error(e.what());
+//check available space and increase map if needed. Only callable when no transactions are active
+void KeyValueStoreImpl::checkAvailableSpace(unsigned needsKBs)
+{
+  MDB_envinfo envinfo;
+  mdb_env_info(m_env, &envinfo);
+
+  if(!needsKBs || needsKBs < m_options.minTransactionSpaceKB) needsKBs = m_options.minTransactionSpaceKB;
+
+  size_t cursize = m_pageSize * (envinfo.me_last_pgno + 1);
+  if(cursize + needsKBs * 1024 > m_curMapSize) {
+    m_curMapSize += m_options.increaseMapSizeKB * 1024;
+    m_env.set_mapsize(m_curMapSize);
   }
 }
 
@@ -547,7 +560,7 @@ ps::ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
   return ps::ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, true));
 }
 
-ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append)
+ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs)
 {
   if(m_writeBlocks)
     throw invalid_argument("write operations are blocked by a running transaction");
@@ -555,6 +568,7 @@ ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append)
   shared_ptr<Transaction> wtr = writeTxn.lock();
   if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
 
+  checkAvailableSpace(needsKBs);
   Transaction::Mode mode = append ? Transaction::Mode::append : Transaction::Mode::write;
   auto tptr = shared_ptr<Transaction>(new Transaction(*this, mode, m_env));
   writeTxn = tptr;
@@ -637,22 +651,6 @@ bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *chunkId, s
   return false;
 }
 
-bool Transaction::firstChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data)
-{
-  SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0);
-  ::lmdb::val key {k, sizeof(k)};
-
-  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
-
-  if(cursor.get(key, data, MDB_SET_RANGE)) {
-    if(SK_CLASSID(key.data<byte_t>()) == COLLECTION_CLSID && SK_OBJID(key.data<byte_t>()) == collectionId) {
-      chunkId = SK_PROPID(key.data<byte_t>());
-      return true;
-    }
-  }
-  return false;
-}
-
 bool Transaction::lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data)
 {
   SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0xFFFF);
@@ -671,33 +669,6 @@ bool Transaction::lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::
     return true;
   }
   return false;
-}
-
-bool Transaction::makeCollectionData(ObjectId collectionId, size_t startIndex, size_t endIndex, PropertyId start, PropertyId end,
-    std::shared_ptr<ValueTraitsBase> vt, void **data, bool *owned)
-{
-  ::lmdb::val dataval;
-  ::lmdb::val keyval;
-
-  SK_CONSTR(k, COLLECTION_CLSID, collectionId, start);
-  ::lmdb::val key {k, sizeof(k)};
-  m_dbi.get(m_txn, key, data);
-
-  byte_t *d_start;
-  if(vt->fixed) d_start = dataval.data<byte_t>() + startIndex * vt->data_size(nullptr);
-  else {
-    d_start = (byte_t *)dataval.data<byte_t>();
-    for(size_t i=0; i<=startIndex; i++) d_start += vt->data_size(d_start);
-  }
-  if(start == end) {
-    //yippee, same chunk. Done, no need to copy
-    *owned = false;
-    *data = d_start;
-  }
-  else {
-    //::lmdb::val data[];
-  }
-  return true;
 }
 
 bool check_chunkinfo(const ChunkInfo &run, const ChunkInfo &ref)

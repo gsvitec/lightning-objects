@@ -15,12 +15,14 @@ class FlexisPersistence_EXPORT KeyValueStore : public flexis::persistence::KeyVa
 {
 public:
   struct Options {
-    const size_t mapSizeMB = 1024;
+    const unsigned initialMapSizeMB = 1;
+    const unsigned minTransactionSpaceKB = 512;
+    const unsigned increaseMapSizeKB = 512;
     const bool lockFile = false;
     const bool writeMap = false;
 
-    Options(size_t mapSizeMB = 1024, bool lockFile = false, bool writeMap = false)
-        : mapSizeMB(mapSizeMB), lockFile(lockFile), writeMap(writeMap) {}
+    Options(unsigned mapSizeMB = 1024, bool lockFile = false, bool writeMap = false)
+        : initialMapSizeMB(mapSizeMB), lockFile(lockFile), writeMap(writeMap) {}
   };
 
   struct FlexisPersistence_EXPORT Factory

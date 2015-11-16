@@ -551,7 +551,7 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 
   auto rtxn = kv->beginRead();
   flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(id);
-  rtxn->commit();
+  rtxn->abort();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
 
@@ -559,40 +559,62 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   delete si;
 }
 
-int test_integer() {
-  byte_t buf[10];
-  byte_t *p = buf;
-
-  ClassId cid = 22;
-  ObjectId oid = 1;
-  PropertyId pid = 6;
-  write_integer(p, cid, ClassId_sz);
-  p += ClassId_sz;
-  write_integer(p, oid, ObjectId_sz);
-  p += ObjectId_sz;
-  write_integer(p, pid, PropertyId_sz);
-  p += PropertyId_sz;
-
-  p = buf;
-  cid = read_integer<ClassId>(p, ClassId_sz);
-  p += ClassId_sz;
-  oid = read_integer<ObjectId>(p, ObjectId_sz);
-  p += ObjectId_sz;
-  pid = read_integer<PropertyId>(p, PropertyId_sz);
-
-  assert(cid == 22 && oid == 1 && pid == 6);
-  return 0;
-}
-
-void testPresistenceRef()
+void testGrowDatabase(KeyValueStore *kv)
 {
+  ObjectId collectionId;
+  {
+    auto wtxn = kv->beginWrite();
 
+    unsigned data [1000];
+    for(unsigned i=0; i<1000; i++) data[i] = i;
+    collectionId = wtxn->putValueCollectionData(data, 1000);
+
+    //wtxn->commit();
+
+    for(unsigned i=0; i<1000; i++) {
+      //auto wtxn = kv->beginWrite();
+
+      for(unsigned j=0; j<1000; j++) data[j] = (i+1) * 1000 + j;
+      wtxn->appendValueCollectionData(collectionId, data, 1000);
+
+      //wtxn->commit();
+    }
+    wtxn->commit();
+  }
+#if 1
+  {
+    auto rtxn = kv->beginExclusiveRead();
+
+    auto coll = rtxn->getValueCollectionData<unsigned>(collectionId, 2000, 10);
+    unsigned * data = coll->data();
+
+    assert(data[0] == 2000 && data[9] == 2009);
+
+    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 900000, 11);
+    data = coll->data();
+
+    assert(data[0] == 900000 && data[10] == 900010);
+
+    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 1000000-10, 10);
+    data = coll->data();
+
+    assert(data[0] == 999990 && data[9] == 999999);
+
+    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 1001000-10, 10);
+    data = coll->data();
+
+    assert(data[0] == 1000990 && data[9] == 1000999);
+
+    rtxn->abort();
+  }
+#endif
 }
 
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
+#if 1
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
@@ -616,6 +638,8 @@ int main()
   testObjectPtrPropertyStorage(kv);
   testValueCollectionData2(kv);
   testValueVectorProperty(kv);
+#endif
+  testGrowDatabase(kv);
 
   delete kv;
   return 0;
