@@ -402,7 +402,7 @@ protected:
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
-  bool _getCollectionData(CollectionInfo &info, size_t startIndex, size_t length, size_t elementSize,
+  bool _getCollectionData(CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize,
                           void **data, bool *owned) override;
 
   PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
@@ -428,8 +428,8 @@ public:
 
   bool isClosed() {return m_closed;}
 
-  void commit() override;
-  void abort() override;
+  void doCommit() override;
+  void doAbort() override;
 };
 
 /**
@@ -576,14 +576,14 @@ ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned need
   return tptr;
 }
 
-void Transaction::commit()
+void Transaction::doCommit()
 {
   m_txn.commit();
   m_closed = true;
   ((KeyValueStoreImpl *)&store)->transactionCompleted(m_mode, m_blockWrites);
 }
 
-void Transaction::abort()
+void Transaction::doAbort()
 {
   m_txn.abort();
   m_closed = true;
@@ -676,18 +676,18 @@ bool check_chunkinfo(const ChunkInfo &run, const ChunkInfo &ref)
   return run.startIndex + run.elementCount < ref.startIndex;
 }
 
-bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, size_t length,
+bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, size_t length,
                                      size_t elementSize, void **data, bool *owned)
 {
   ChunkInfo chunk(0, startIndex);
-  auto findStart = lower_bound(info.chunkInfos.cbegin(), info.chunkInfos.cend(), chunk, check_chunkinfo);
-  if(findStart != info.chunkInfos.cend()) {
+  auto findStart = lower_bound(info->chunkInfos.cbegin(), info->chunkInfos.cend(), chunk, check_chunkinfo);
+  if(findStart != info->chunkInfos.cend()) {
     chunk.startIndex += length;
-    auto findEnd = lower_bound(info.chunkInfos.cbegin(), info.chunkInfos.cend(), chunk, check_chunkinfo);
-    if(findEnd != info.chunkInfos.cend()) {
+    auto findEnd = lower_bound(info->chunkInfos.cbegin(), info->chunkInfos.cend(), chunk, check_chunkinfo);
+    if(findEnd != info->chunkInfos.cend()) {
       ::lmdb::val keyval, startval, endval;
 
-      SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, findStart->chunkId);
+      SK_CONSTR(k, COLLECTION_CLSID, info->collectionId, findStart->chunkId);
       keyval.assign(k, sizeof(k));
       if(!m_dbi.get(m_txn, keyval, startval)) return false;
 
@@ -707,7 +707,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
         for(auto fs=findStart+1; fs != findEnd; fs++)
           datalen += fs->dataSize - ChunkHeader_sz;
 
-        SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, findEnd->chunkId);
+        SK_CONSTR(k, COLLECTION_CLSID, info->collectionId, findEnd->chunkId);
         keyval.assign(k, sizeof(k));
         if(!m_dbi.get(m_txn, keyval, endval)) return false;
 
@@ -723,7 +723,7 @@ bool Transaction::_getCollectionData(CollectionInfo &info, size_t startIndex, si
         dta += startlen;
 
         for(auto fs=findStart+1; fs != findEnd; fs++) {
-          SK_CONSTR(k, COLLECTION_CLSID, info.collectionId, fs->chunkId);
+          SK_CONSTR(k, COLLECTION_CLSID, info->collectionId, fs->chunkId);
           keyval.assign(k, sizeof(k));
           ::lmdb::val dataval;
           if(!m_dbi.get(m_txn, keyval, dataval)) return false;

@@ -24,7 +24,7 @@ using namespace kv;
 static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
 static const ClassId CHUNKINFO_CLSID = 3;
-static const size_t CHUNKSIZE = 4068; //default chunksize
+static const size_t CHUNKSIZE = 4060; //default chunksize
 
 class incompatible_schema_error : public persistence_error
 {
@@ -280,11 +280,20 @@ struct CollectionInfo {
   ObjectId collectionId = 0;
   std::vector <ChunkInfo> chunkInfos;
 
-  PropertyId nextChunkId = 0;
+  PropertyId nextChunkId = 1;
   size_t nextStartIndex = 0;
 
   CollectionInfo() {}
   CollectionInfo(ObjectId collectionId) : collectionId(collectionId) {}
+
+  void init() {
+    for(auto &ci : chunkInfos) {
+      if(ci.chunkId >= nextChunkId)
+        nextChunkId = ci.chunkId + PropertyId(1);
+      if(ci.startIndex + ci.elementCount > nextStartIndex)
+        nextStartIndex = ci.startIndex + ci.elementCount;
+    }
+  }
 };
 
 class ChunkCursor
@@ -568,7 +577,7 @@ public:
   ~CollectionData() {
     if(m_owned) free(m_data);
   }
-  V *data() {return m_data;};
+  V *data() {return m_data;}
 };
 
 /**
@@ -587,6 +596,7 @@ class FlexisPersistence_EXPORT ReadTransaction
 protected:
   KeyValueStore &store;
   bool m_blockWrites;
+  std::unordered_map<ObjectId, CollectionInfo *> m_collectionInfos;
 
   ReadTransaction(KeyValueStore &store) : store(store) {}
 
@@ -707,6 +717,7 @@ protected:
   virtual CursorHelper * _openCursor(ClassId classId) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId collectionId) = 0;
+  virtual void doAbort() = 0;
 
   /**
    * @return the highes currently stored property ID for the given values
@@ -719,10 +730,9 @@ protected:
    * retrieve info about a collection
    *
    * @param collectionId
-   * @param loadNextInfo also get info for appending chunks
    * @return the collection info or nullptr
    */
-  bool getCollectionInfo(ObjectId collectionId, CollectionInfo &collectionInfo, bool loadNextInfo);
+  CollectionInfo *getCollectionInfo(ObjectId collectionId);
 
   /**
    * @return a cursor ofer a chunked object (e.g., collection)
@@ -894,7 +904,7 @@ public:
     return store.typeInfos[&ti];
   }
 
-  virtual void abort() = 0;
+  void abort();
 };
 
 #define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
@@ -907,7 +917,7 @@ public:
 class FlexisPersistence_EXPORT ExclusiveReadTransaction : public virtual ReadTransaction
 {
   virtual bool _getCollectionData(
-      CollectionInfo &info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
+      CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
 
 protected:
   ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
@@ -926,8 +936,8 @@ public:
     RAWDATA_API_ASSERT
     void *data;
     bool owned;
-    CollectionInfo ci;
-    if(!getCollectionInfo(collectionId, ci, false)) return nullptr;
+    CollectionInfo *ci = getCollectionInfo(collectionId);
+    if(!ci) return nullptr;
 
     if(_getCollectionData(ci, startIndex, length, TypeTraits<T>::byteSize, &data, &owned)) {
       return typename CollectionData<T>::Ptr(new CollectionData<T>(data, owned));
@@ -940,12 +950,11 @@ class CollectionAppenderBase
 {
 protected:
   ChunkCursor::Ptr m_chunkCursor;
-  CollectionInfo m_collectionInfo;
+  CollectionInfo *m_collectionInfo;
   const size_t m_chunkSize;
   WriteTransaction * const m_wtxn;
 
-  size_t m_elementCount, m_startIndex;
-  PropertyId m_chunkId;
+  size_t m_elementCount;
 
   CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize);
   void preparePut(size_t size);
@@ -998,11 +1007,10 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
    * current chunk, if any
    *
    * @param ci
-   * @param chunkId
    * @param chunkSize
    * @param elementCount the number of elements written to the current chunk. Used to write the header. If
    */
-  bool startChunk(CollectionInfo &collectionInfo, PropertyId chunkId, size_t chunkSize, size_t startIndex, size_t elementCount);
+  bool startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount);
 
 protected:
   const bool m_append;
@@ -1128,7 +1136,7 @@ protected:
     curBuf = curBuf->pop();
   }
 
-  void putCollectionInfo(CollectionInfo &info, size_t startIndex, size_t elementCount);
+  void putCollectionInfo(CollectionInfo *info, size_t elementCount);
 
   /**
    * save object collection chunks
@@ -1141,9 +1149,9 @@ protected:
    */
   template <typename T, template <typename T> class Ptr>
   void saveChunks(const std::vector<Ptr<T>> &vect,
-                  CollectionInfo collectionInfo, PropertyId chunkId, size_t chunkSize, size_t startIndex, bool poly)
+                  CollectionInfo *collectionInfo, size_t chunkSize, bool poly)
   {
-    if(!vect.empty()) startChunk(collectionInfo, chunkId, chunkSize, 0, 0);
+    if(!vect.empty()) startChunk(collectionInfo, chunkSize, 0);
 
     size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
@@ -1156,8 +1164,8 @@ protected:
         size_t size = calculateBuffer(&(*vect[i]), properties) + ObjectHeader_sz;
         if(writeBuf().avail() < size) {
           if(elementCount == 0) throw persistence_error("chunk size too small");
-          startChunk(collectionInfo, ++chunkId, chunkSize, startIndex, elementCount);
-          startIndex += elementCount;
+          startChunk(collectionInfo, chunkSize, elementCount);
+          collectionInfo->nextStartIndex += elementCount;
           elementCount = 0;
         }
 
@@ -1174,8 +1182,8 @@ protected:
         size_t size = calculateBuffer(&(*vect[i]), Traits::properties) + ObjectHeader_sz;
         if(writeBuf().avail() < size) {
           if(elementCount == 0) throw persistence_error("chunk size too small");
-          startChunk(collectionInfo, ++chunkId, chunkSize, startIndex, elementCount);
-          startIndex += elementCount;
+          startChunk(collectionInfo, chunkSize, elementCount);
+          collectionInfo->nextStartIndex += elementCount;
           elementCount = 0;
         }
 
@@ -1183,8 +1191,8 @@ protected:
         writeObject(classId, objectId, *vect[i], Traits::properties, true);
       }
     }
-    if(elementCount) writeChunkHeader(startIndex, elementCount);
-    putCollectionInfo(collectionInfo, startIndex, elementCount);
+    if(elementCount) writeChunkHeader(collectionInfo->nextStartIndex, elementCount);
+    putCollectionInfo(collectionInfo, elementCount);
   }
 
   /**
@@ -1196,23 +1204,22 @@ protected:
    * @param chunkSize the chunk size in bytes
    */
   template <typename T>
-  void saveChunks(const std::vector<T> &vect,
-                  CollectionInfo ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
+  void saveChunks(const std::vector<T> &vect, CollectionInfo *ci, size_t chunkSize)
   {
-    if(!vect.empty()) startChunk(ci, chunkId, chunkSize, 0, 0);
+    if(!vect.empty()) startChunk(ci, chunkSize, 0);
 
     size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(writeBuf().avail() < ValueTraits<T>::size(vect[i])) {
         if(elementCount == 0) throw persistence_error("chunk size too small");
-        startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
-        startIndex += elementCount;
+        startChunk(ci, chunkSize, elementCount);
+        ci->nextStartIndex += elementCount;
         elementCount = 0;
       }
       ValueTraits<T>::putBytes(writeBuf(), vect[i]);
     }
-    if(elementCount) writeChunkHeader(startIndex, elementCount);
-    putCollectionInfo(ci, startIndex, elementCount);
+    if(elementCount) writeChunkHeader(ci->nextStartIndex, elementCount);
+    putCollectionInfo(ci, elementCount);
   }
 
   /**
@@ -1224,10 +1231,9 @@ protected:
    * @param chunkSize the chunk size in bytes
    */
   template <typename T>
-  void saveChunks(const T *array, size_t arraySize,
-                  CollectionInfo &ci, PropertyId chunkId, size_t chunkSize, size_t startIndex)
+  void saveChunks(const T *array, size_t arraySize, CollectionInfo *ci, size_t chunkSize)
   {
-    if(arraySize) startChunk(ci, chunkId, chunkSize, 0, 0);
+    if(arraySize) startChunk(ci, chunkSize, 0);
 
     size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::byteSize);
     size_t elementCount = chunkEls < arraySize ? chunkEls : arraySize;
@@ -1239,14 +1245,14 @@ protected:
       arraySize -= elementCount;
       if(arraySize == 0) break;
 
-      startChunk(ci, ++chunkId, chunkSize, startIndex, elementCount);
+      startChunk(ci, chunkSize, elementCount);
 
-      startIndex += elementCount;
+      ci->nextStartIndex += elementCount;
       data += elementCount * TypeTraits<T>::byteSize;
       elementCount = arraySize >= chunkEls ? chunkEls : arraySize;
     }
-    if(elementCount) writeChunkHeader(startIndex, elementCount);
-    putCollectionInfo(ci, startIndex, elementCount);
+    if(elementCount) writeChunkHeader(ci->nextStartIndex, elementCount);
+    putCollectionInfo(ci, elementCount);
   }
 
   /**
@@ -1264,6 +1270,8 @@ protected:
    */
   virtual bool remove(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
 
+  virtual void doCommit() = 0;
+
 public:
   virtual ~WriteTransaction()
   {
@@ -1271,7 +1279,7 @@ public:
     curBuf->deleteChain();
   }
 
-  virtual void commit() = 0;
+  void commit();
 
   /**
    * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
@@ -1371,11 +1379,12 @@ public:
   ObjectId putCollection(const std::vector<Ptr<T>> &vect, size_t chunkSize = CHUNKSIZE,
                          bool poly = true)
   {
-    CollectionInfo ci(++store.m_maxCollectionId);
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
 
-    saveChunks(vect, ci, 1, chunkSize, 0, poly);
+    saveChunks(vect, ci, chunkSize, poly);
 
-    return ci.collectionId;
+    return ci->collectionId;
   }
 
   /**
@@ -1387,11 +1396,12 @@ public:
   template <typename T>
   ObjectId putValueCollection(const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
   {
-    CollectionInfo ci(++store.m_maxCollectionId);
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
 
-    saveChunks(vect, ci, 1, chunkSize, 0);
+    saveChunks(vect, ci, chunkSize);
 
-    return ci.collectionId;
+    return ci->collectionId;
   }
 
   /**
@@ -1407,11 +1417,12 @@ public:
   ObjectId putValueCollectionData(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
-    CollectionInfo ci(++store.m_maxCollectionId);
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
 
-    saveChunks(array, arraySize, ci, 1, chunkSize, 0);
+    saveChunks(array, arraySize, ci, chunkSize);
 
-    return ci.collectionId;
+    return ci->collectionId;
   }
 
   /**
@@ -1426,10 +1437,10 @@ public:
                         const std::vector<Ptr<T>> &vect, size_t chunkSize = CHUNKSIZE,
                         bool poly = true)
   {
-    CollectionInfo ci;
-    if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
+    CollectionInfo *ci = getCollectionInfo(collectionId);
+    if(!ci) throw persistence_error("collection not found");
 
-    saveChunks(vect, collectionId, ci.nextChunkId, chunkSize, ci.nextStartIndex, poly);
+    saveChunks(vect, ci, chunkSize, poly);
   }
 
   /**
@@ -1441,10 +1452,10 @@ public:
   template <typename T>
   void appendValueCollection(ObjectId collectionId, const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
   {
-    CollectionInfo ci;
-    if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
+    CollectionInfo *ci= getCollectionInfo(collectionId);
+    if(!ci) throw persistence_error("collection not found");
 
-    saveChunks(vect, collectionId, ci.nextChunkId, chunkSize, ci.nextStartIndex);
+    saveChunks(vect, ci, chunkSize);
   }
 
   /**
@@ -1459,10 +1470,10 @@ public:
   void appendValueCollectionData(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
-    CollectionInfo ci;
-    if(!getCollectionInfo(collectionId, ci, true)) throw persistence_error("collection not found");
+    CollectionInfo *ci = getCollectionInfo(collectionId);
+    if(!ci) throw persistence_error("collection not found");
 
-    saveChunks(data, dataSize, ci, ci.nextChunkId, chunkSize, ci.nextStartIndex);
+    saveChunks(data, dataSize, ci, chunkSize);
   }
 
   template <typename T>
@@ -1723,7 +1734,7 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
-    size_t psz;
+    size_t psz = 0;
     for(auto &v : val) psz += ValueTraits<V>::size(v);
     WriteBuf propBuf(psz);
 

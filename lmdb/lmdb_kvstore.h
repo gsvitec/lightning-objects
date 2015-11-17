@@ -19,7 +19,7 @@ public:
     const unsigned minTransactionSpaceKB = 512;
     const unsigned increaseMapSizeKB = 512;
     const bool lockFile = false;
-    const bool writeMap = false;
+    const bool writeMap = true;
 
     Options(unsigned mapSizeMB = 1024, bool lockFile = false, bool writeMap = false)
         : initialMapSizeMB(mapSizeMB), lockFile(lockFile), writeMap(writeMap) {}

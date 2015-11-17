@@ -220,10 +220,11 @@ public:
     m_appendptr = m_data;
   }
 
-  byte_t *allocate(size_t size)
+  inline byte_t *allocate(size_t size)
   {
     byte_t * ret = m_appendptr;
     m_appendptr += size;
+#if DEBUG
     size_t sz = m_appendptr - m_data;
     if(sz > m_allocsize) {
       if(m_growsize == 0)
@@ -234,6 +235,7 @@ public:
       m_appendptr = m_data + sz;
       ret = m_appendptr - size;
     }
+#endif
     return ret;
   }
 
