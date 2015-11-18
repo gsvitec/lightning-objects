@@ -113,6 +113,14 @@ public:
     return ret;
   }
 
+  //static_assert(TypeTraits<T>::byteSize == sizeof(T), "raw API only usable for types where sizeof matches TypeTraits<T>::byteSize");
+  template<typename T>
+  T readRaw() {
+    T val = *(T *)m_readptr;
+    m_readptr += sizeof(T);
+    return val;
+  }
+
   bool atEnd() {
     return m_readptr == m_data + m_size;
   }
@@ -249,6 +257,13 @@ public:
   {
     byte_t * buf = allocate(size);
     memcpy(buf, data, size);
+  }
+
+  //static_assert(TypeTraits<T>::byteSize == sizeof(T), "raw API only usable for types where sizeof matches TypeTraits<T>::byteSize");
+  template<typename T>
+  void appendRaw(T num) {
+    *(T *)m_appendptr = num;
+    m_appendptr += sizeof(T);
   }
 
   template<typename T>

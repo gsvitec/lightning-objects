@@ -11,35 +11,6 @@ namespace persistence {
 
 using namespace std;
 
-namespace kv {
-
-template <>
-struct ClassTraits<ChunkInfo> : public ClassTraitsBase<ChunkInfo>{
-  enum PropertyIds {chunkId=1, startIndex, elementCount};
-};
-template<> ClassInfo ClassTraitsBase<ChunkInfo>::info ("flexis::persistence::ChunkInfo", typeid(ChunkInfo), CHUNKINFO_CLSID);
-template<> PropertyAccessBase * ClassTraitsBase<ChunkInfo>::decl_props[] = {
-    new StorageKeyAssign<ChunkInfo, &ChunkInfo::sk>(),
-    new BasePropertyAssign<ChunkInfo, PropertyId, &ChunkInfo::chunkId>("chunkId"),
-    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::startIndex>("startIndex"),
-    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::elementCount>("elementCount"),
-    new BasePropertyAssign<ChunkInfo, size_t, &ChunkInfo::dataSize>("dataSize")
-};
-template<> Properties * ClassTraitsBase<ChunkInfo>::properties(Properties::mk<ChunkInfo>(1));
-
-template <>
-struct ClassTraits<CollectionInfo> : public ClassTraitsBase<CollectionInfo>{
-  enum PropertyIds {collectionId=1, chunkInfos};
-};
-template<> ClassInfo ClassTraitsBase<CollectionInfo>::info ("flexis::persistence::CollectionInfo", typeid(CollectionInfo), COLLINFO_CLSID);
-template<> PropertyAccessBase * ClassTraitsBase<CollectionInfo>::decl_props[] = {
-    new BasePropertyAssign<CollectionInfo, ObjectId, &CollectionInfo::collectionId>("collectionId"),
-    new ObjectVectorPropertyEmbeddedAssign<CollectionInfo, ChunkInfo, &CollectionInfo::chunkInfos>("chunkInfos", 26)
-};
-template<> Properties * ClassTraitsBase<CollectionInfo>::properties(Properties::mk<CollectionInfo>());
-
-}
-
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
 
 inline bool streq(string s1, const char *s2) {
@@ -148,9 +119,15 @@ void WriteTransaction::commit()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
-    size_t sz = calculateBuffer(ci, ClassTraits<CollectionInfo>::properties);
+    size_t sz = sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
     writeBuf().start(sz);
-    writeObject(COLLINFO_CLSID, ci->collectionId, *ci, ClassTraits<CollectionInfo>::properties, false);
+    writeBuf().appendRaw(ci->chunkInfos.size());
+    for(auto &ch : ci->chunkInfos) {
+      writeBuf().appendRaw(ch.chunkId);
+      writeBuf().appendRaw(ch.startIndex);
+      writeBuf().appendRaw(ch.elementCount);
+      writeBuf().appendRaw(ch.dataSize);
+    }
     putData(COLLINFO_CLSID, ci->collectionId, 0, writeBuf());
 
     delete ci;
@@ -175,7 +152,14 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
     getData(readBuf, COLLINFO_CLSID, collectionId, 0);
     if(!readBuf.empty()) {
       info = new CollectionInfo(collectionId);
-      readObject(readBuf, *info, COLLINFO_CLSID, collectionId);
+      size_t sz = readBuf.readRaw<size_t>();
+      for(size_t i=0; i<sz; i++) {
+        PropertyId chunkId = readBuf.readRaw<PropertyId>();
+        size_t startIndex = readBuf.readRaw<size_t>();
+        size_t elementCount = readBuf.readRaw<size_t>();
+        size_t dataSize = readBuf.readRaw<size_t>();
+        info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
+      }
       m_collectionInfos[collectionId] = info;
 
       info->init();

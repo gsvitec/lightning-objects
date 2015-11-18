@@ -6,12 +6,7 @@
 #include <kvstore/kvstore.h>
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
-#include <chrono>
 #include "testclasses.h"
-
-#define BEG() auto begin = std::chrono::high_resolution_clock::now();
-#define DUR() std::chrono::high_resolution_clock::duration dur = std::chrono::high_resolution_clock::now() - begin; \
-std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(dur); cout << ms.count() << endl;
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
@@ -595,7 +590,6 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
 
 void testGrowDatabase(KeyValueStore *kv)
 {
-  BEG()
   ObjectId collectionId;
   {
     auto wtxn = kv->beginWrite();
@@ -616,7 +610,6 @@ void testGrowDatabase(KeyValueStore *kv)
     }
     wtxn->commit();
   }
-#if 1
   {
     auto rtxn = kv->beginExclusiveRead();
 
@@ -642,8 +635,6 @@ void testGrowDatabase(KeyValueStore *kv)
 
     rtxn->abort();
   }
-#endif
-  DUR()
 }
 
 int main()
@@ -652,7 +643,7 @@ int main()
   kv->registerType<FixedSizeObject>();
   kv->registerType<SomethingWithAnEmbbededObjectVector>();
 
-#if 0
+#if 1
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 

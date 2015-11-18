@@ -260,15 +260,14 @@ public:
 };
 
 struct ChunkInfo {
-  StorageKey sk;
   PropertyId chunkId = 0;
   size_t startIndex = 0;
   size_t elementCount = 0;
   size_t dataSize = 0;
 
   ChunkInfo() {}
-  ChunkInfo(PropertyId chunkId, size_t startIndex=0, size_t elementCount=0)
-      : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount) {}
+  ChunkInfo(PropertyId chunkId, size_t startIndex=0, size_t elementCount=0, size_t dataSize=0)
+      : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount), dataSize(dataSize) {}
   bool operator == (const ChunkInfo &other) {
     return chunkId == other.chunkId;
   }
