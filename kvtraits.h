@@ -110,17 +110,17 @@ struct StoreAccessBase {
 };
 
 /**
- * abstract superclass for all Store Access classes that represent property values that are saved
- * under individual object keys, with the key value saved in the enclosing object's buffer
+ * abstract superclass for all Store Access classes that represent mapped-object valued properties where
+ * the referred-to object is saved individually and key value saved in the enclosing object's buffer
  */
-struct StoreAccessEmbeddedKey: public StoreAccessBase
+struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
   size_t size(const byte_t *buf) const override {return StorageKey::byteSize;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
 };
 
 /**
- * abstract superclass for all Store Access classes that represent property values that are saved
+ * abstract superclass for all Store Access classes that represent mapped-object valued properties that are saved
  * under a property key, with nothing saved in the enclosing object's buffer
  */
 struct StoreAccessPropertyKey: public StoreAccessBase

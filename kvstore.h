@@ -588,6 +588,7 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
   friend class CollectionCursorBase;
@@ -974,6 +975,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
   friend class CollectionAppenderBase;
@@ -1928,6 +1930,65 @@ public:
 };
 
 /**
+ * storage trait for vectors of mapped objects where the objects are directly serialized into the enclosing object's buffer.
+ * Value-based, therefore not polymorphic
+ */
+template<typename T, typename V> class ObjectVectorPropertyStorageEmbedded : public StoreAccessBase
+{
+  const unsigned m_objectSize;
+
+public:
+  ObjectVectorPropertyStorageEmbedded(unsigned objectSize) : m_objectSize(objectSize) {}
+
+  size_t size(const byte_t *buf) const override {
+    unsigned vectSize = read_integer<unsigned>(buf, 4);
+    unsigned objSize = read_integer<unsigned>(buf, 4);
+    return vectSize * (objSize + 4) + 4;
+  }
+  size_t size(void *obj, const PropertyAccessBase *pa) override {
+    std::vector<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+    return val.size() * (m_objectSize + 4) + 4;
+  }
+
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  {
+    std::vector<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    tr->writeBuf().appendInteger((unsigned)val.size(), 4);
+    ClassId childClassId = ClassTraits<V>::info.classId;
+    PropertyId childObjectId = 0;
+    for(V &v : val) {
+      tr->writeBuf().appendInteger(m_objectSize, 4);
+      tr->writeObject(childClassId, ++childObjectId, v, ClassTraits<V>::properties, false);
+    }
+  }
+
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+  {
+    std::vector<V> val;
+
+    ClassId childClassId = ClassTraits<V>::info.classId;
+    PropertyId childObjectId = 0;
+
+    unsigned sz = buf.readInteger<unsigned>(4);
+    for(size_t i=0; i< sz; i++) {
+      V v;
+      buf.readInteger<unsigned>(4);
+      tr->readObject(buf, v, childClassId, ++childObjectId);
+      val.push_back(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, val);
+  }
+};
+
+/**
  * storage trait for mapped object pointer vectors. Polymorphic
  */
 template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
@@ -2046,6 +2107,11 @@ template <typename O, typename P, std::vector<P> O::*p>
 struct ObjectVectorPropertyAssign : public PropertyAssign<O, std::vector<P>, p> {
   ObjectVectorPropertyAssign(const char * name, bool lazy=false)
       : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
+};
+template <typename O, typename P, std::vector<P> O::*p>
+struct ObjectVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<P>, p> {
+  ObjectVectorPropertyEmbeddedAssign(const char * name, unsigned objectSize)
+      : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorageEmbedded<O, P>(objectSize), object_vector_t<P>()) {}
 };
 template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
 struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {

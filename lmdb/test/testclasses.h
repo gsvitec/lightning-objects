@@ -41,6 +41,17 @@ struct SomethingWithALazyVector
   std::vector<std::shared_ptr<OtherThing>> otherThings;  
 };
 
+struct FixedSizeObject {
+  unsigned number1, number2;
+  FixedSizeObject() {}
+  FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
+};
+struct SomethingWithAnEmbbededObjectVector
+{
+  std::string name;
+  std::vector<FixedSizeObject> objects;
+};
+
 namespace flexis {
 namespace persistence {
 namespace kv {
@@ -91,6 +102,28 @@ template<> PropertyAccessBase * ClassTraitsBase<SomethingWithALazyVector>::decl_
     new ObjectPtrVectorPropertyAssign<SomethingWithALazyVector, OtherThing, &SomethingWithALazyVector::otherThings>("otherThings", true)
 };
 template<> Properties * ClassTraitsBase<SomethingWithALazyVector>::properties(Properties::mk<SomethingWithALazyVector>());
+
+template <>
+struct ClassTraits<FixedSizeObject> : public ClassTraitsBase<FixedSizeObject>{
+  enum PropertyIds {name=1, dvalue};
+};
+template<> ClassInfo ClassTraitsBase<FixedSizeObject>::info ("FixedSizeObject", typeid(FixedSizeObject));
+template<> PropertyAccessBase * ClassTraitsBase<FixedSizeObject>::decl_props[] = {
+    new BasePropertyAssign<FixedSizeObject, unsigned, &FixedSizeObject::number1>("number1"),
+    new BasePropertyAssign<FixedSizeObject, unsigned, &FixedSizeObject::number2>("number2")
+};
+template<> Properties * ClassTraitsBase<FixedSizeObject>::properties(Properties::mk<FixedSizeObject>());
+
+template <>
+struct ClassTraits<SomethingWithAnEmbbededObjectVector> : public ClassTraitsBase<SomethingWithAnEmbbededObjectVector> {
+  enum PropertyIds {name=1, objects};
+};
+template<> ClassInfo ClassTraitsBase<SomethingWithAnEmbbededObjectVector>::info ("SomethingWithAnEmbbededObjectVector", typeid(SomethingWithAnEmbbededObjectVector));
+template<> PropertyAccessBase * ClassTraitsBase<SomethingWithAnEmbbededObjectVector>::decl_props[] = {
+    new BasePropertyAssign<SomethingWithAnEmbbededObjectVector, std::string, &SomethingWithAnEmbbededObjectVector::name>("name"),
+    new ObjectVectorPropertyEmbeddedAssign<SomethingWithAnEmbbededObjectVector, FixedSizeObject, &SomethingWithAnEmbbededObjectVector::objects>("objects", 8)
+};
+template<> Properties * ClassTraitsBase<SomethingWithAnEmbbededObjectVector>::properties(Properties::mk<SomethingWithAnEmbbededObjectVector>());
 
 }
 }

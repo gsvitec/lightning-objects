@@ -4,7 +4,7 @@ add_definitions(-DFlexisPersistence_EXPORTS)
 
 set(DEP_SRC ../../kvstore.cpp ../../../flexis_persistence.cpp)
 
-add_executable(LmdbTest main.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
+add_executable(LmdbTest test.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
 add_dependencies(LmdbTest LmdbStore FlexisOverlays)
 
 add_executable(LmdbBench bench.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)

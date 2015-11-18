@@ -34,7 +34,7 @@ struct ClassTraits<CollectionInfo> : public ClassTraitsBase<CollectionInfo>{
 template<> ClassInfo ClassTraitsBase<CollectionInfo>::info ("flexis::persistence::CollectionInfo", typeid(CollectionInfo), COLLINFO_CLSID);
 template<> PropertyAccessBase * ClassTraitsBase<CollectionInfo>::decl_props[] = {
     new BasePropertyAssign<CollectionInfo, ObjectId, &CollectionInfo::collectionId>("collectionId"),
-    new ObjectVectorPropertyAssign<CollectionInfo, ChunkInfo, &CollectionInfo::chunkInfos>("chunkInfos")
+    new ObjectVectorPropertyEmbeddedAssign<CollectionInfo, ChunkInfo, &CollectionInfo::chunkInfos>("chunkInfos", 26)
 };
 template<> Properties * ClassTraitsBase<CollectionInfo>::properties(Properties::mk<CollectionInfo>());
 

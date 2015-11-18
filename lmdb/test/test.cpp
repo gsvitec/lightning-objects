@@ -6,8 +6,12 @@
 #include <kvstore/kvstore.h>
 #include <kv/kvlibtraits.h>
 #include <lmdb_kvstore.h>
-#include <limits.h>
+#include <chrono>
 #include "testclasses.h"
+
+#define BEG() auto begin = std::chrono::high_resolution_clock::now();
+#define DUR() std::chrono::high_resolution_clock::duration dur = std::chrono::high_resolution_clock::now() - begin; \
+std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(dur); cout << ms.count() << endl;
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
@@ -559,8 +563,39 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   delete si;
 }
 
+void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
+{
+  ObjectId objectId;
+  {
+    SomethingWithAnEmbbededObjectVector sweov;
+    sweov.name = "sweov";
+
+    sweov.objects.push_back(FixedSizeObject(1, 2));
+    sweov.objects.push_back(FixedSizeObject(3, 4));
+    sweov.objects.push_back(FixedSizeObject(5, 6));
+    sweov.objects.push_back(FixedSizeObject(7, 8));
+
+    auto wtxn = kv->beginWrite();
+    objectId = wtxn->putObject(sweov);
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    SomethingWithAnEmbbededObjectVector *loaded = rtxn->getObject<SomethingWithAnEmbbededObjectVector>(objectId);
+
+    assert(loaded && loaded->name == "sweov" && loaded->objects.size() == 4 \
+           && loaded->objects[0].number1 == 1 \
+           && loaded->objects[0].number2 == 2 \
+           && loaded->objects[1].number1 == 3 \
+           && loaded->objects[3].number1 == 7 \
+           && loaded->objects[3].number2 == 8);
+  }
+}
+
 void testGrowDatabase(KeyValueStore *kv)
 {
+  BEG()
   ObjectId collectionId;
   {
     auto wtxn = kv->beginWrite();
@@ -608,13 +643,16 @@ void testGrowDatabase(KeyValueStore *kv)
     rtxn->abort();
   }
 #endif
+  DUR()
 }
 
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
+  kv->registerType<FixedSizeObject>();
+  kv->registerType<SomethingWithAnEmbbededObjectVector>();
 
-#if 1
+#if 0
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
@@ -634,10 +672,11 @@ int main()
   testLazyPolymorphicCursor(kv);
   testObjectCollection(kv);
   testValueCollection(kv);
-  testValueCollectionData(kv);
   testObjectPtrPropertyStorage(kv);
-  testValueCollectionData2(kv);
   testValueVectorProperty(kv);
+  testObjectVectorPropertyStorageEmbedded(kv);
+  testValueCollectionData(kv);
+  testValueCollectionData2(kv);
 #endif
   testGrowDatabase(kv);
 
