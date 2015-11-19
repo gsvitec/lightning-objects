@@ -82,11 +82,11 @@ TYPETRAITSV<double>>            {TYPEDEFV(11, 8);};
 TYPETRAITSV<const char *>>      {TYPEDEFV(12, 0);};
 TYPETRAITSV<std::string>>       {TYPEDEFV(13, 0);};
 
-//these assertions allow us to write object key elements natively
-static_assert(sizeof(ClassId) == TypeTraits<ClassId>::byteSize, "ClassId: byteSize must match native type");
-static_assert(sizeof(ObjectId) == TypeTraits<ObjectId>::byteSize, "ObjectId: byteSize must match native type");
-static_assert(sizeof(PropertyId) == TypeTraits<PropertyId>::byteSize, "PropertyId: byteSize must match native type");
-static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize must match native type");
+//these assertions must hold because certain elmements are written/read natively
+static_assert(sizeof(ClassId) == TypeTraits<ClassId>::byteSize, "ClassId: byteSize must match native size");
+static_assert(sizeof(ObjectId) == TypeTraits<ObjectId>::byteSize, "ObjectId: byteSize must match native size");
+static_assert(sizeof(PropertyId) == TypeTraits<PropertyId>::byteSize, "PropertyId: byteSize must match native size");
+static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize must match native size");
 
 class ReadTransaction;
 class WriteTransaction;
