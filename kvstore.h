@@ -260,7 +260,7 @@ public:
 };
 
 struct ChunkInfo {
-  StorageKey sk;
+  ObjectId objectId = 0;
   PropertyId chunkId = 0;
   size_t startIndex = 0;
   size_t elementCount = 0;
@@ -909,6 +909,8 @@ public:
 
 #define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
 "collection data access only supported for fixed-size types with native size equal byteSize");
+#define VALUEOBJECT_API_ASSERT static_assert(ClassTraits<V>::keyPropertyId, \
+"mapped object type must define ObjectIdAssign and keyPropertyId");
 
 /**
  * Transaction for exclusive read and operations. Opening write transactions while an exclusive read is open
@@ -1090,6 +1092,10 @@ protected:
 
     writeBuf().reset();
 
+    if(newObject) {
+      auto ida = Traits::objectIdAccess();
+      if(ida) ida->set(obj, objectId);
+    }
     return objectId;
   }
 
@@ -1121,6 +1127,10 @@ protected:
 
     writeBuf().reset();
 
+    if(newObject) {
+      auto ida = properties->objectIdAccess<T>();
+      if(ida) ida->set(obj, objectId);
+    }
     return objectId;
   }
 
@@ -1693,13 +1703,13 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
 };
 
 template<typename T>
-struct StorageKeyStorage : public StoreAccessBase
+struct ObjectIdStorage : public StoreAccessBase
 {
   size_t size(const byte_t *buf) const override {
-    return StorageKey::byteSize;
+    return 0;
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
-    return StorageKey::byteSize;
+    return 0;
   }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
@@ -1709,15 +1719,8 @@ struct StorageKeyStorage : public StoreAccessBase
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
-    StorageKey sk(classId, objectId, 0);
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, sk);
-  }
-  bool getStorageKey(void *obj, const PropertyAccessBase *pa, StorageKey &key) override {
-    const PropertyAccess<T, StorageKey> *acc = (const PropertyAccess<T, StorageKey> *)pa;
-    T *tp = reinterpret_cast<T *>(obj);
-    key = acc->get(*tp);
-    return true;
+    ClassTraits<T>::get(*tp, pa, objectId);
   }
 };
 
@@ -1766,6 +1769,8 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
 {
+  VALUEOBJECT_API_ASSERT
+
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
   {
@@ -1774,9 +1779,15 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     ClassTraits<T>::put(*tp, pa, val);
 
     //save the value object
-    ClassId childClassId = ClassTraits<T>::info.classId;
     tr->pushWriteBuf();
-    ObjectId childId = tr->putObject<V>(val);
+
+    ClassId childClassId = ClassTraits<V>::info.classId;
+    auto ida = ClassTraits<V>::objectIdAccess();
+
+    ObjectId childId = ida->get(val);
+    if(childId) tr->updateObject(childId, val);
+    else childId = tr->putObject<V>(val);
+
     tr->popWriteBuf();
 
     //save the key in this objects write buffer
@@ -1864,6 +1875,8 @@ public:
  */
 template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessPropertyKey
 {
+  VALUEOBJECT_API_ASSERT
+
   bool m_lazy;
 public:
   ObjectVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
@@ -1882,18 +1895,15 @@ public:
 
     tr->pushWriteBuf();
     ClassId childClassId = ClassTraits<V>::info.classId;
-    auto ska = ClassTraits<V>::properties->storageKeyAccess();
+    auto ida = ClassTraits<V>::objectIdAccess();
 
     for(V &v : val) {
       ObjectId childId = 0;
 
-      if(ska) {
-        StorageKey sk;
-        if(ska->storage->getStorageKey(&v, ska, sk)) childId = sk.objectId;
-        if(childId && sk.dirty) tr->updateObject<V>(childId, v);
-      }
+      childId = ida->get(v);
+      if(childId) tr->updateObject<V>(childId, v);
+      else childId = tr->putObject<V>(v);
 
-      if(!childId) childId = tr->putObject<V>(v);
       propBuf.append(childClassId, childId, 0);
     }
     tr->popWriteBuf();
@@ -2021,10 +2031,10 @@ template<typename T> struct PropertyStorage<T, std::vector<bool>> : public Vecto
 template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public VectorPropertyStorage<T, const char *>{};
 template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public VectorPropertyStorage<T, std::string>{};
 
-template <typename O, StorageKey O::*p>
-struct StorageKeyAssign : public PropertyAssign<O, StorageKey, p> {
-  StorageKeyAssign()
-      : PropertyAssign<O, StorageKey, p>("sk", new StorageKeyStorage<O>(), PropertyType(0, 0, false)) {}
+template <typename O, ObjectId O::*p>
+struct ObjectIdAssign : public PropertyAssign<O, ObjectId, p> {
+  ObjectIdAssign()
+      : PropertyAssign<O, ObjectId, p>("objectId", new ObjectIdStorage<O>(), PropertyType(0, 0, false)) {}
 };
 
 template <typename O, typename P, std::shared_ptr<P> O::*p>
