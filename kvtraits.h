@@ -145,6 +145,22 @@ struct ValueTraitsFixed : public ValueTraitsBase
 };
 
 template <typename T>
+struct ValueTraitsByte : public ValueTraitsFixed<true>
+{
+  static size_t size(const T &val) {
+    return 1;
+  }
+  static void getBytes(ReadBuf &buf, T &val) {
+    const byte_t *data = buf.read(1);
+    val = (T)*data;
+  }
+  static void putBytes(WriteBuf &buf, T val) {
+    byte_t *data = buf.allocate(1);
+    *data = (byte_t)val;
+  }
+};
+
+template <typename T>
 struct ValueTraits : public ValueTraitsFixed<true>
 {
   size_t data_size(const byte_t *) override {
@@ -253,6 +269,7 @@ struct PropertyAccessBase
   const PropertyType type;
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : name(name), storage(storage), type(type) {}
+  virtual bool same(void *obj, ClassId cid, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 };
 
@@ -269,6 +286,13 @@ template <typename O, typename P, P O::*p> struct PropertyAssign : public Proper
       : PropertyAccess<O, P>(name, storage, type) {}
   void set(O &o, P val) const override { o.*p = val;}
   P get(O &o) const override { return o.*p;}
+};
+
+template <typename O, typename P, typename V, P O::*p> struct PropertyAssign2 : public PropertyAccess<O, V> {
+  PropertyAssign2(const char * name, StoreAccessBase *storage, const PropertyType &type)
+      : PropertyAccess<O, V>(name, storage, type) {}
+  void set(O &o, V val) const override { o.*p = val;}
+  V get(O &o) const override { return o.*p;}
 };
 
 template <typename O, typename P, P O::*p>
@@ -392,6 +416,20 @@ static PropertyType object_t() {
 } //kv
 } //persistence
 } //flexis
+
+//some helper macros for manually defining mappings
+#define START_MAPPING_BEGIN(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
+#define START_MAPPING_END(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
+template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
+
+#define START_MAPPING(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{}; \
+template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
+template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
+#define END_MAPPING(cls) }; template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
+#define END_MAPPING_SUP(cls1, cls2) }; template<> Properties * ClassTraitsBase<cls1>::properties(Properties::mk<cls1, cls2>());
+#define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname)
+#define MAPPED_PROP_L(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname, true)
+#define MAPPED_PROP2(cls, propkind, proptype, prop, name) new propkind<cls, proptype, &cls::prop>(#name)
 
 
 #endif //FLEXIS_FLEXIS_KVTRAITS_H

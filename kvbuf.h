@@ -58,7 +58,7 @@ inline void write_integer(byte_t *ptr, T val, size_t bytes)
 template<typename T>
 inline T read_integer(const byte_t *ptr, size_t bytes)
 {
-  T val = 0;
+  T val = (T)0;
   for(size_t i=0, f=bytes-1; i<bytes; i++, f--) val += ((T)ptr[i] << (f * 8));
   return val;
 }

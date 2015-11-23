@@ -10,6 +10,62 @@
 #include <memory>
 #include <kvstore/kvstore.h>
 
+namespace flexis {
+namespace player {
+
+/**
+ * describes a display configuration for a flexis source.
+ */
+struct SourceDisplayConfig
+{
+  using Ptr = std::shared_ptr<SourceDisplayConfig>;
+
+  unsigned sourceIndex;
+  unsigned attachedIndex;
+  bool attached;
+  unsigned window_x, window_y, window_width, window_height;
+
+  SourceDisplayConfig()
+      : sourceIndex(0), attachedIndex(0), attached(false), window_x(0), window_y(0), window_width(0), window_height(0)
+  {}
+
+  /**
+   * create a display configuration from the given values.
+   */
+  SourceDisplayConfig(
+      unsigned sourceIndex, unsigned attachedIndex, bool attached,
+      unsigned window_x, unsigned window_y, unsigned window_width, unsigned window_height)
+      : sourceIndex(sourceIndex), attachedIndex(attachedIndex), attached(attached),
+        window_x(window_x), window_y(window_y), window_width(window_width), window_height(window_height)
+  { }
+
+  /**
+   * create a default display configuration with attachedIndex set to the same value as sourceIndex
+   */
+  SourceDisplayConfig(unsigned sourceIndex)
+      : sourceIndex(sourceIndex), attachedIndex(sourceIndex), attached(true), window_x(0), window_y(0), window_width(800),
+        window_height(600)
+  { }
+};
+
+/**
+ * holds data about one flexis source
+ */
+struct SourceInfo {
+  using Ptr = std::shared_ptr<SourceInfo>;
+
+  unsigned sourceIndex;
+  SourceDisplayConfig::Ptr displayConfig;
+  std::vector<IFlexisOverlayPtr> userOverlays;
+
+  SourceInfo(unsigned sourceIndex = 0) : sourceIndex(sourceIndex) {}
+  SourceInfo(SourceDisplayConfig::Ptr displayConfig)
+      : sourceIndex(displayConfig->sourceIndex), displayConfig(displayConfig) {}
+};
+
+} //player
+} //flexis
+
 struct OtherThing {
   std::string name;
   double dvalue = 7.99765;
@@ -124,6 +180,34 @@ template<> PropertyAccessBase * ClassTraitsBase<SomethingWithAnEmbbededObjectVec
     new ObjectVectorPropertyEmbeddedAssign<SomethingWithAnEmbbededObjectVector, FixedSizeObject, &SomethingWithAnEmbbededObjectVector::objects>("objects", 8)
 };
 template<> Properties * ClassTraitsBase<SomethingWithAnEmbbededObjectVector>::properties(Properties::mk<SomethingWithAnEmbbededObjectVector>());
+
+template <>
+struct ClassTraits<flexis::player::SourceDisplayConfig> : public ClassTraitsBase<flexis::player::SourceDisplayConfig>{
+  enum PropertyIds {sourceIndex=1, attachedIndex, attached, window_x, window_y, window_width, window_height};
+};
+template<> ClassInfo ClassTraitsBase<flexis::player::SourceDisplayConfig>::info ("flexis::player::SourceDisplayConfig", typeid(flexis::player::SourceDisplayConfig));
+template<> PropertyAccessBase * ClassTraitsBase<flexis::player::SourceDisplayConfig>::decl_props[] = {
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::sourceIndex>("sourceIndex"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::attachedIndex>("attachedIndex"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, bool, &flexis::player::SourceDisplayConfig::attached>("attached"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::window_x>("window_x"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::window_y>("window_y"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::window_width>("window_width"),
+    new BasePropertyAssign<flexis::player::SourceDisplayConfig, unsigned, &flexis::player::SourceDisplayConfig::window_height>("window_height")
+};
+template<> Properties * ClassTraitsBase<flexis::player::SourceDisplayConfig>::properties(Properties::mk<flexis::player::SourceDisplayConfig>());
+
+template <>
+struct ClassTraits<flexis::player::SourceInfo> : public ClassTraitsBase<flexis::player::SourceInfo>{
+  enum PropertyIds {sourceIndex=1, displayConfig, userOverlays};
+};
+template<> ClassInfo ClassTraitsBase<flexis::player::SourceInfo>::info ("flexis::player::SourceInfo", typeid(flexis::player::SourceInfo));
+template<> PropertyAccessBase * ClassTraitsBase<flexis::player::SourceInfo>::decl_props[] = {
+    new BasePropertyAssign<flexis::player::SourceInfo, unsigned, &flexis::player::SourceInfo::sourceIndex>("sourceIndex"),
+    new ObjectPtrPropertyAssign<flexis::player::SourceInfo, flexis::player::SourceDisplayConfig, &flexis::player::SourceInfo::displayConfig>("displayConfig"),
+    new ObjectPtrVectorPropertyAssign<flexis::player::SourceInfo, flexis::IFlexisOverlay, &flexis::player::SourceInfo::userOverlays>("userOverlays")
+};
+template<> Properties * ClassTraitsBase<flexis::player::SourceInfo>::properties(Properties::mk<flexis::player::SourceInfo>());
 
 }
 }

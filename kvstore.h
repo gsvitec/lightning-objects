@@ -260,6 +260,7 @@ public:
 };
 
 struct ChunkInfo {
+  StorageKey sk;
   PropertyId chunkId = 0;
   size_t startIndex = 0;
   size_t elementCount = 0;
@@ -580,6 +581,17 @@ public:
 };
 
 /**
+ * @return the ObjectId which was (hopefully) stored with a custom deleter
+ * @throws persistence_error if no ObjectId
+ */
+template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
+{
+  object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
+  if(!ohm) throw persistence_error("no objectId. Was shared_ptr read from the KV store?");
+  return ohm->objectId;
+}
+
+/**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
 class FlexisPersistence_EXPORT ReadTransaction
@@ -602,17 +614,6 @@ protected:
 
   void setBlockWrites(bool blockWrites) {
     m_blockWrites = blockWrites;
-  }
-
-  /**
-   * @return the ObjectId which was (hopefully) stored with a custom deleter
-   * @throws persistence_error if no ObjectId
-   */
-  template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
-  {
-    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-    if(!ohm) throw persistence_error("no objectId. Was shared_ptr read from the KV store?");
-    return ohm->objectId;
   }
 
   template<typename T> T *readObject(ReadBuf &buf, ClassId classId, ObjectId objectId)
@@ -1329,6 +1330,20 @@ public:
   void updateObject(ObjectId objectId, T &obj)
   {
     saveObject<T>(objectId, obj, false);
+  }
+
+  /**
+   * save object in the KV store. If the object is already persistent, an update will be executed. Otherwise,
+   * the object will be inserted under a new key
+   *
+   * @param obj the object to save
+   */
+  template <typename T>
+  void saveObject(std::shared_ptr<T> obj)
+  {
+    ObjectId id = get_objectid(obj);
+    if(id) saveObject<T>(id, *obj, false);
+    else saveObject<T>(0, *obj, true);
   }
 
   /**
@@ -2083,8 +2098,8 @@ template<typename T> struct PropertyStorage<T, std::vector<std::string>> : publi
 
 template <typename O, StorageKey O::*p>
 struct StorageKeyAssign : public PropertyAssign<O, StorageKey, p> {
-  StorageKeyAssign()
-      : PropertyAssign<O, StorageKey, p>("sk", new StorageKeyStorage<O>(), PropertyType(0, 0, false)) {}
+  StorageKeyAssign() :
+      PropertyAssign<O, StorageKey, p>("sk", new StorageKeyStorage<O>(), PropertyType(0, 0, false)) {}
 };
 
 template <typename O, typename P, std::shared_ptr<P> O::*p>
@@ -2100,6 +2115,11 @@ struct ObjectPtrPropertyAssign : public PropertyAccess<O, std::shared_ptr<P>> {
       : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorage<O, P>(lazy), object_t<P>()) {}
   void set(O &o, std::shared_ptr<P> val) const override { o.*p = val;}
   std::shared_ptr<P> get(O &o) const override { return o.*p;}
+
+  bool same(void *obj, ClassId cid, ObjectId oid) override {
+    StorageKey sk;
+    return PropertyAccessBase::storage->getStorageKey(obj, this, sk) && sk.classId == cid && sk.objectId == oid;
+  }
 };
 
 template <typename O, typename P, std::vector<P> O::*p>
@@ -2119,6 +2139,15 @@ struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std:
 };
 
 } //kv
+
+template <typename T, typename V>
+bool same(T &obj, unsigned propertyId, std::shared_ptr<V> val)
+{
+  auto pa = ClassTraits<T>::properties->get(propertyId-1);
+  ObjectId oid = kv::get_objectid(val);
+  ClassId cid = ClassTraits<V>::info.classId;
+  return pa->same(obj, cid, oid);
+}
 
 } //persistence
 } //flexis
