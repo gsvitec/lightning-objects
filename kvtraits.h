@@ -423,19 +423,61 @@ static PropertyType object_t() {
 } //persistence
 } //flexis
 
-//some helper macros for manually defining mappings
+//convenience macros for manually defining mappings
+
+/**
+ * start the mapping header. Should be followed by PropertyIds and keyPropertyId, if applicable
+ * @param cls the fully qualified class name
+ */
 #define START_MAPPING_BEGIN(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
+
+/**
+ * end the mapping header. Should be followed by MAPPED_PROP, MAPPED_PROP_L, MAPPED_PROP2 or OBJECT_ID
+ * @param cls the fully qualified class name
+ */
 #define START_MAPPING_END(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
 template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
 
-#define START_MAPPING(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{}; \
-template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
-template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
+/**
+ * close the mapping for one class
+ * @param cls the fully qualified class name
+ */
 #define END_MAPPING(cls) }; template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
+
+/**
+ * close the mapping for one class, with reference to a (mapped) superclass
+ * @param cls the fully qualified class name
+ * @param cls2 the fully qualified name of the superclass
+ */
 #define END_MAPPING_SUP(cls1, cls2) }; template<> Properties * ClassTraitsBase<cls1>::properties(Properties::mk<cls1, cls2>());
+
+/**
+ * define mapping for one property
+ *
+ * @param cls the fully qualified class name
+ * @param propkind the mapping class name
+ * @param proptype the property data type
+ * @param propname the property name
+ */
 #define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname)
-#define MAPPED_PROP_L(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname, true)
+
+/**
+ * define mapping for one property. Same as MAPPED_PROP, but for mapping types with lazy option (true)
+ */
+#define MAPPED_PROP_LAZY(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname, true)
+
+/**
+ * define mapping for one property. Same as MAPPED_PROP, but with different names for property and field
+ */
 #define MAPPED_PROP2(cls, propkind, proptype, prop, name) new propkind<cls, proptype, &cls::prop>(#name)
+
+/**
+ * define mapping for a objectid property
+ *
+ * @param cls the fully qualified class name
+ * @param the property name. The field must have type ObjectId and be initialized to 0
+ */
+#define OBJECT_ID(cls, prop) new ObjectIdAssign<cls, &cls::prop>()
 
 
 #endif //FLEXIS_FLEXIS_KVTRAITS_H
