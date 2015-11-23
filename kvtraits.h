@@ -107,7 +107,6 @@ struct StoreAccessBase {
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
                     bool force=false) = 0;
-  virtual bool getStorageKey(void *obj, const PropertyAccessBase *pa, StorageKey &key) {return false;}
 };
 
 /**
@@ -326,12 +325,12 @@ class Properties
   Properties(const Properties& mit) = delete;
 public:
   template <typename T, typename S=EmptyClass>
-  static Properties *mk(unsigned keyStorageId=0) {
+  static Properties *mk() {
     Properties *p = new Properties(
         ClassTraits<T>::decl_props,
         ARRAY_SZ(ClassTraits<T>::decl_props),
         ClassTraits<S>::properties,
-        keyStorageId);
+        ClassTraits<T>::keyPropertyId);
 
     for(unsigned i=0; i<p->full_size(); i++)
       p->get(i)->id = i+1;
@@ -339,12 +338,13 @@ public:
     return p;
   }
 
-  PropertyAccessBase *storageKeyAccess()
+  template <typename O>
+  PropertyAccess<O, ObjectId> *objectIdAccess()
   {
     if(keyStorageId)
-      return properties[keyStorageId-1];
+      return (PropertyAccess<O, ObjectId> *)properties[keyStorageId-1];
     else
-      return superIter ? superIter->storageKeyAccess() : nullptr;
+      return superIter ? superIter->objectIdAccess<O>() : nullptr;
   }
 
   inline unsigned full_size() {
@@ -372,9 +372,15 @@ struct ClassInfo {
 template <typename T>
 struct ClassTraitsBase
 {
+  static const unsigned keyPropertyId = 0;
+
   static ClassInfo info;
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
+
+  static PropertyAccess<T, ObjectId> *objectIdAccess() {
+    return properties->objectIdAccess<T>();
+  }
 
   /**
    * put (copy) the value of the given property into value
