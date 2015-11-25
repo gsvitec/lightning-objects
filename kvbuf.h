@@ -7,6 +7,7 @@
 
 #include <persistence_error.h>
 #include <string.h>
+#include <memory>
 
 namespace flexis {
 namespace persistence {
@@ -23,6 +24,48 @@ static const size_t ObjectHeader_sz = ClassId_sz + ObjectId_sz + 4;
 static const size_t ChunkHeader_sz = 4 * 3;
 
 using byte_t = unsigned char;
+
+/**
+ * custom deleter used to store the objectId inside a std::shared_ptr
+ */
+template <typename T> struct object_handler
+{
+  ObjectId objectId;
+
+  object_handler(ObjectId objectId) : objectId(objectId) {}
+
+  void operator () (T *t) {
+    delete t;
+  }
+};
+
+template <typename T> std::shared_ptr<T> kv_make_ptr(T *t)
+{
+  return std::shared_ptr<T>(t, object_handler<T>(0));
+}
+
+/**
+ * @return the ObjectId which was stored inside the pointer
+ * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
+ */
+template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
+{
+  object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
+  if(!ohm) throw persistence_error("shared_ptr was not created by KV store");
+  return ohm->objectId;
+}
+
+/**
+ * @param obj a pointer to a mapped object
+ * @param oid the ObjectId
+ * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
+ */
+template<typename T> void set_objectid(const std::shared_ptr<T> obj, ObjectId  oid)
+{
+  object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
+  if(!ohm) throw persistence_error("shared_ptr was not created by KV store");
+  ohm->objectId = oid;
+}
 
 /**
  * a storage key. This structure must not be changed (lest db files become unreadable)

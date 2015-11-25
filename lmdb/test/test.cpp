@@ -118,14 +118,15 @@ void testValueVectorProperty(KeyValueStore *kv)
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
-  IFlexisOverlayPtr ro(new RectangularOverlay());
-  IFlexisOverlayPtr to(new TimeCodeOverlay());
+  auto ro = kv_make_ptr<IFlexisOverlay>(new RectangularOverlay());
+  auto to = kv_make_ptr<IFlexisOverlay>(new TimeCodeOverlay());
 
   ro->rangeInP->setValue(-1);
   ro->rangeOutP->setValue(-1);
+  ro->validFor.push_back(flexis::data::recording::ContextType::Player);
   to->rangeInP->setValue(-1);
   to->rangeOutP->setValue(-1);
-
+  to->validFor.push_back(flexis::data::recording::ContextType::Player);
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
 

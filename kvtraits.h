@@ -92,6 +92,8 @@ class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
 
+enum class StoreMode {none, force_all, force_buffer};
+
 /**
  * abstract superclass for all Store Access classes
  */
@@ -101,12 +103,12 @@ struct StoreAccessBase {
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
-                    bool force=false) = 0;
+                    StoreMode mode=StoreMode::none) = 0;
   virtual void load(ReadTransaction *tr,
                     ReadBuf &buf,
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
-                    bool force=false) = 0;
+                    StoreMode mode=StoreMode::none) = 0;
 };
 
 /**
@@ -192,7 +194,7 @@ struct ValueTraits<bool> : public ValueTraitsFixed<true>
   }
   static void putBytes(WriteBuf &buf, bool val) {
     byte_t *data = buf.allocate(1);
-    *data = char(val ? 1 : 0);
+    *data = byte_t(val ? 1 : 0);
   }
 };
 
@@ -268,7 +270,7 @@ struct PropertyAccessBase
   const PropertyType type;
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : name(name), storage(storage), type(type) {}
-  virtual bool same(void *obj, ClassId cid, ObjectId oid) {return false;}
+  virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 };
 
@@ -285,13 +287,6 @@ template <typename O, typename P, P O::*p> struct PropertyAssign : public Proper
       : PropertyAccess<O, P>(name, storage, type) {}
   void set(O &o, P val) const override { o.*p = val;}
   P get(O &o) const override { return o.*p;}
-};
-
-template <typename O, typename P, typename V, P O::*p> struct PropertyAssign2 : public PropertyAccess<O, V> {
-  PropertyAssign2(const char * name, StoreAccessBase *storage, const PropertyType &type)
-      : PropertyAccess<O, V>(name, storage, type) {}
-  void set(O &o, V val) const override { o.*p = val;}
-  V get(O &o) const override { return o.*p;}
 };
 
 template <typename O, typename P, P O::*p>
@@ -378,8 +373,18 @@ struct ClassTraitsBase
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
 
+  /**
+   * @return the objectid accessor for this class
+   */
   static PropertyAccess<T, ObjectId> *objectIdAccess() {
     return properties->objectIdAccess<T>();
+  }
+
+  template <typename V>
+  static bool same(T &t, ObjectId id, std::shared_ptr<V> &val)
+  {
+    ObjectId oid = get_objectid(val);
+    return decl_props[id-1]->same(&t, oid);
   }
 
   /**
@@ -460,11 +465,6 @@ template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
  * @param propname the property name
  */
 #define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname)
-
-/**
- * define mapping for one property. Same as MAPPED_PROP, but for mapping types with lazy option (true)
- */
-#define MAPPED_PROP_LAZY(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname, true)
 
 /**
  * define mapping for one property. Same as MAPPED_PROP, but with different names for property and field

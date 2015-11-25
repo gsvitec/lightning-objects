@@ -7,6 +7,7 @@
 
 #include <string>
 #include <typeinfo>
+#include <typeindex>
 #include <memory>
 #include <functional>
 #include <unordered_map>
@@ -95,6 +96,22 @@ using ObjectFactories = std::unordered_map<ClassId, std::function<void *()>>;
 using ObjectProperties = std::unordered_map<ClassId, Properties *>;
 using ObjectClassInfos = std::unordered_map<ClassId, ClassInfo *>;
 
+using TypeInfoRef = std::reference_wrapper<const std::type_info>;
+
+struct TypeinfoHasher {
+  std::size_t operator()(TypeInfoRef code) const
+  {
+    return code.get().hash_code();
+  }
+};
+
+struct TypeinfoEqualTo {
+  bool operator()(TypeInfoRef lhs, TypeInfoRef rhs) const
+  {
+    return lhs.get() == rhs.get();
+  }
+};
+
 /**
  * high-performance key/value store interface
  */
@@ -109,7 +126,7 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   ObjectProperties objectProperties;
   ObjectClassInfos objectClassInfos;
 
-  std::unordered_map<const std::type_info *, ClassId> typeInfos;
+  std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> typeInfos;
 
 protected:
   ObjectId m_maxCollectionId;
@@ -135,7 +152,7 @@ public:
     objectClassInfos[Traits::info.classId] = &Traits::info;
 
     const std::type_info &ti = typeid(T);
-    typeInfos[&ti] = Traits::info.classId;
+    typeInfos[ti] = Traits::info.classId;
   }
 
   /**
@@ -170,19 +187,6 @@ namespace kv {
 void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size);
-
-/**
- * custom deleter used to store the objectId inside a std::shared_ptr
- */
-template <typename T> struct object_handler {
-  const ObjectId objectId;
-
-  object_handler(ObjectId objectId) : objectId(objectId) {}
-
-  void operator () (T *t) {
-    delete t;
-  }
-};
 
 /**
  * Helper interface used by cursor, to be extended by implementors
@@ -267,8 +271,8 @@ struct ChunkInfo {
   size_t dataSize = 0;
 
   ChunkInfo() {}
-  ChunkInfo(PropertyId chunkId, size_t startIndex=0, size_t elementCount=0)
-      : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount) {}
+  ChunkInfo(PropertyId chunkId, size_t startIndex=0, size_t elementCount=0, size_t dataSize=0)
+      : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount), dataSize(dataSize) {}
   bool operator == (const ChunkInfo &other) {
     return chunkId == other.chunkId;
   }
@@ -588,7 +592,8 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
-  template<typename T, typename V> friend class ObjectPtrPropertyStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
+  template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
   friend class CollectionCursorBase;
   friend class CollectionAppenderBase;
@@ -602,17 +607,6 @@ protected:
 
   void setBlockWrites(bool blockWrites) {
     m_blockWrites = blockWrites;
-  }
-
-  /**
-   * @return the ObjectId which was (hopefully) stored with a custom deleter
-   * @throws persistence_error if no ObjectId
-   */
-  template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
-  {
-    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-    if(!ohm) throw persistence_error("no objectId. Was shared_ptr read from the KV store?");
-    return ohm->objectId;
   }
 
   template<typename T> T *readObject(ReadBuf &buf, ClassId classId, ObjectId objectId)
@@ -875,9 +869,9 @@ public:
   {
     using Traits = ClassTraits<T>;
 
-    ReadBuf rbuf;
+    ReadBuf rb;
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    pa->storage->load(this, rbuf, Traits::info.classId, objId, &obj, pa, true);
+    pa->storage->load(this, rb, Traits::info.classId, objId, &obj, pa, StoreMode::force_all);
   }
 
   /**
@@ -895,13 +889,12 @@ public:
 
     ObjectId objId = get_objectid(obj);
 
-    ReadBuf rbuf;
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    pa->storage->load(this, rbuf, Traits::info.classId, objId, &obj, pa, true);
+    pa->storage->load(this, ReadBuf(), Traits::info.classId, objId, &obj, pa, StoreMode::force_all);
   }
 
   ClassId getClassId(const std::type_info &ti) {
-    return store.typeInfos[&ti];
+    return store.typeInfos[ti];
   }
 
   void abort();
@@ -976,7 +969,8 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V> friend class VectorPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
-  template<typename T, typename V> friend class ObjectPtrPropertyStorage;
+  template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
+  template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
   friend class CollectionAppenderBase;
 
@@ -1329,6 +1323,27 @@ public:
   }
 
   /**
+   * save an object into the KV store. If the shared_ptr carries an ObjectId, the object will be written under the existing key.
+   * Otherwise, the object will be stored under a new key (whiuch is again stored inside the shared_ptr)
+   *
+   * @return true if the object was newly inserted
+   */
+  template <typename T>
+  bool saveObject(const std::shared_ptr<T> &obj)
+  {
+    ObjectId oid = get_objectid(obj);
+    if(oid) {
+      saveObject<T>(oid, *obj, false);
+      return false;
+    }
+    else {
+      oid = saveObject<T>(0, *obj, true);
+      set_objectid(obj, oid);
+      return true;
+    }
+  }
+
+  /**
    * update an existing object in the KV store.
    *
    * @param objectId the object identifier as returned from a previous call to putObject
@@ -1350,14 +1365,14 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(ObjectId objId, T &obj, PropertyId propertyId)
+  void updateMember(ObjectId objId, T &obj, PropertyId propertyId, bool shallow=false)
   {
     using Traits = ClassTraits<T>;
 
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
     if(pa->type.isVector)
       //vector goes to a separate key, no need to touch the object buffer
-      pa->storage->save(this, Traits::info.classId, objId, &obj, pa, true);
+      pa->storage->save(this, Traits::info.classId, objId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
     else
       //update the complete shallow buffer
       saveObject<T>(objId, obj, false, true);
@@ -1372,10 +1387,10 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(std::shared_ptr<T> &obj, PropertyId propertyId)
+  void updateMember(std::shared_ptr<T> &obj, PropertyId propertyId, bool shallow=false)
   {
     ObjectId objId = get_objectid(obj);
-    updateMember(objId, *obj, propertyId);
+    updateMember(objId, *obj, propertyId, shallow);
   }
 
   /**
@@ -1618,7 +1633,7 @@ struct BasePropertyStorage : public StoreAccessBase
     return TypeTraits<V>::byteSize;
   }
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1626,7 +1641,7 @@ struct BasePropertyStorage : public StoreAccessBase
     ValueTraits<V>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1652,7 +1667,7 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
     return strlen(val) + 1;
   }
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1660,7 +1675,7 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
     ValueTraits<const char *>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1685,7 +1700,7 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
     return val.length() + 1;
   }
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1693,7 +1708,7 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
     ValueTraits<std::string>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1712,12 +1727,12 @@ struct ObjectIdStorage : public StoreAccessBase
     return 0;
   }
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     //not saved, only loaded
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::get(*tp, pa, objectId);
@@ -1731,7 +1746,7 @@ template<typename T, typename V>
 struct VectorPropertyStorage : public StoreAccessPropertyKey
 {
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1739,15 +1754,17 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
 
     size_t psz = 0;
     for(auto &v : val) psz += ValueTraits<V>::size(v);
-    WriteBuf propBuf(psz);
+    if(psz) {
+      WriteBuf propBuf(psz);
 
-    for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
+      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
 
-    if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
+      if(!tr->putData(classId, objectId, pa->id, propBuf))
+        throw persistence_error("data was not saved");
+    }
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::vector<V> val;
 
@@ -1772,7 +1789,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
   VALUEOBJECT_API_ASSERT
 
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1794,7 +1811,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     tr->writeBuf().append(childClassId, childId, 0);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     StorageKey sk;
     buf.read(sk);
@@ -1808,22 +1825,59 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
   }
 };
 
+template <typename V, template <typename> class Ptr> struct OidAccess
+{
+  static Ptr<V> make(V *v, ObjectId oid) {
+    Ptr<V> ptr(v, oid);
+    return ptr;
+  }
+
+  static ObjectId getObjectId(Ptr<V> ptr) {
+    return ptr.objectid;
+  }
+
+  static Ptr<V> setObjectId(ObjectId oid, Ptr<V> &ptr) {
+    ptr.objectid = oid;
+    return ptr;
+  }
+};
+
+template <typename V> struct OidAccess<V, std::shared_ptr>
+{
+  static std::shared_ptr<V> make(V *v, ObjectId oid) {
+    std::shared_ptr<V> ptr = std::shared_ptr<V>(v, object_handler<V>(oid));
+    return ptr;
+  }
+
+  static ObjectId getObjectId(std::shared_ptr<V> ptr) {
+    return get_objectid(ptr);
+  }
+
+  static std::shared_ptr<V> setObjectId(ObjectId oid, std::shared_ptr<V> ptr) {
+    std::shared_ptr<V> val2(nullptr, object_handler<V>(oid));
+    val2.swap(ptr);
+    return val2;
+  }
+};
+
 /**
  * storage trait for mapped object references. Pointer-based, polymorphic
  */
-template<typename T, typename V> class ObjectPtrPropertyStorage : public StoreAccessEmbeddedKey
+template<typename T, typename V, template<typename> class Ptr>
+class ObjectPtrPropertyStorage : public StoreAccessEmbeddedKey
 {
-  const bool m_lazy;
+protected:
+  bool m_lazy;
 
 public:
-  ObjectPtrPropertyStorage(bool lazy) : m_lazy(lazy) {}
+  ObjectPtrPropertyStorage(bool lazy=false) : m_lazy(lazy) {}
 
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) return;
 
-    std::shared_ptr<V> val;
+    Ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
@@ -1831,42 +1885,75 @@ public:
     ObjectId childId = 0;
     if(val) {
       //save the pointed-to object
-
       childClassId = tr->getClassId(typeid(*val));
-      tr->pushWriteBuf();
-      object_handler<V> *ohm = std::get_deleter<object_handler<V>>(val);
-      if(ohm) {
-        childId = ohm->objectId;
-        tr->saveObject<V>(childClassId, childId, *val, false);
-      }
-      else {
-        childId = tr->saveObject<V>(childClassId, 0, *val, true);
-      }
-      tr->popWriteBuf();
+      childId = OidAccess<V, Ptr>::getObjectId(val);
 
-      //update the property so that it holds the object id
-      std::shared_ptr<V> val2(nullptr, object_handler<V>(childId));
-      val2.swap(val);
-      ClassTraits<T>::get(*tp, pa, val2);
+      if(mode != StoreMode::force_buffer) {
+        tr->pushWriteBuf();
+        if(childId) {
+          tr->saveObject<V>(childClassId, childId, *val, false);
+        }
+        else {
+          childId = tr->saveObject<V>(childClassId, 0, *val, true);
+        }
+        tr->popWriteBuf();
+
+        //update the property so that it holds the object id
+        Ptr<V> val2 = OidAccess<V, Ptr>::setObjectId(childId, val);
+        ClassTraits<T>::get(*tp, pa, val2);
+      }
     }
 
     //save the key in this objects write buffer
     tr->writeBuf().append(childClassId, childId, 0);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) {
+      buf.read(StorageKey::byteSize);
+      return;
+    }
 
     StorageKey sk;
     buf.read(sk);
 
     if(sk.classId > 0) {
       V *v = tr->getObject<V>(sk.objectId);
-      std::shared_ptr<V> vp = std::shared_ptr<V>(v, object_handler<V>(sk.objectId));
+      Ptr<V> vp = OidAccess<V, Ptr>::make(v, sk.objectId);
       T *tp = reinterpret_cast<T *>(obj);
       ClassTraits<T>::get(*tp, pa, vp);
     }
+  }
+};
+
+template<typename T, typename V, template<typename> class Ptr>
+class ObjectPtrPropertyDeferredStorage : public ObjectPtrPropertyStorage<T, V, Ptr>
+{
+public:
+  ObjectPtrPropertyDeferredStorage() : ObjectPtrPropertyStorage<T, V, Ptr>(true) {}
+
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    if(mode == StoreMode::none) {
+      const byte_t *data = buf.read(StorageKey::byteSize);
+      ObjectId oid = *(ObjectId *)(data+ClassId_sz);
+
+      T *tp = reinterpret_cast<T *>(obj);
+      Ptr<V> val = OidAccess<V, Ptr>::make(nullptr, oid);
+      ClassTraits<T>::put(*tp, pa, val);
+      return;
+    }
+    else
+      ObjectPtrPropertyStorage<T, V, Ptr>::load(tr, buf, classId, objectId, obj, pa, mode);
+  }
+
+  ObjectId oid(void *obj, const PropertyAccessBase *pa) {
+    Ptr<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+    return val.data();
   }
 };
 
@@ -1882,9 +1969,9 @@ public:
   ObjectVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
 
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) return;
 
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1898,12 +1985,12 @@ public:
     auto ida = ClassTraits<V>::objectIdAccess();
 
     for(V &v : val) {
-      ObjectId childId = 0;
+      ObjectId childId = ida->get(v);
 
-      childId = ida->get(v);
-      if(childId) tr->updateObject<V>(childId, v);
-      else childId = tr->putObject<V>(v);
-
+      if(mode != StoreMode::force_buffer) {
+        if (childId) tr->updateObject<V>(childId, v);
+        else childId = tr->putObject<V>(v);
+      }
       propBuf.append(childClassId, childId, 0);
     }
     tr->popWriteBuf();
@@ -1914,9 +2001,9 @@ public:
   }
 
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) return;
 
     std::vector<V> val;
 
@@ -1938,6 +2025,65 @@ public:
 };
 
 /**
+ * storage trait for vectors of mapped objects where the objects are directly serialized into the enclosing object's buffer.
+ * Value-based, therefore not polymorphic
+ */
+template<typename T, typename V> class ObjectVectorPropertyStorageEmbedded : public StoreAccessBase
+{
+  const unsigned m_objectSize;
+
+public:
+  ObjectVectorPropertyStorageEmbedded(unsigned objectSize) : m_objectSize(objectSize) {}
+
+  size_t size(const byte_t *buf) const override {
+    unsigned vectSize = read_integer<unsigned>(buf, 4);
+    unsigned objSize = read_integer<unsigned>(buf, 4);
+    return vectSize * (objSize + 4) + 4;
+  }
+  size_t size(void *obj, const PropertyAccessBase *pa) override {
+    std::vector<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+    return val.size() * (m_objectSize + 4) + 4;
+  }
+
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::vector<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    tr->writeBuf().appendInteger((unsigned)val.size(), 4);
+    ClassId childClassId = ClassTraits<V>::info.classId;
+    PropertyId childObjectId = 0;
+    for(V &v : val) {
+      tr->writeBuf().appendInteger(m_objectSize, 4);
+      tr->writeObject(childClassId, ++childObjectId, v, ClassTraits<V>::properties, false);
+    }
+  }
+
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::vector<V> val;
+
+    ClassId childClassId = ClassTraits<V>::info.classId;
+    PropertyId childObjectId = 0;
+
+    unsigned sz = buf.readInteger<unsigned>(4);
+    for(size_t i=0; i< sz; i++) {
+      V v;
+      buf.readInteger<unsigned>(4);
+      tr->readObject(buf, v, childClassId, ++childObjectId);
+      val.push_back(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, val);
+  }
+};
+
+/**
  * storage trait for mapped object pointer vectors. Polymorphic
  */
 template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
@@ -1948,9 +2094,9 @@ public:
   ObjectPtrVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
 
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) return;
 
     std::vector<std::shared_ptr<V>> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -1962,15 +2108,15 @@ public:
     tr->pushWriteBuf();
     for(std::shared_ptr<V> &v : val) {
       ClassId childClassId = tr->getClassId(typeid(*v));
+      ObjectId childId = get_objectid(v);
 
-      ObjectId childId;
-      object_handler<V> *ohm = std::get_deleter<object_handler<V>>(v);
-      if(ohm) {
-        childId = ohm->objectId;
-        tr->saveObject<V>(childClassId, childId, *v, false);
-      }
-      else {
-        childId = tr->saveObject<V>(childClassId, 0, *v, true);
+      if(mode != StoreMode::force_all) {
+        if(childId) {
+          tr->saveObject<V>(childClassId, childId, *v, false);
+        }
+        else {
+          childId = tr->saveObject<V>(childClassId, 0, *v, true);
+        }
       }
 
       propBuf.append(childClassId, childId, 0);
@@ -1983,9 +2129,9 @@ public:
   }
 
   void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, bool force) override
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && !force) return;
+    if(m_lazy && mode == StoreMode::none) return;
 
     std::vector<std::shared_ptr<V>> val;
 
@@ -2046,8 +2192,8 @@ struct ObjectPropertyAssign : public PropertyAccess<O, P> {
 };
 template <typename O, typename P, std::shared_ptr<P> O::*p>
 struct ObjectPtrPropertyAssign : public PropertyAccess<O, std::shared_ptr<P>> {
-  ObjectPtrPropertyAssign(const char * name, bool lazy=false)
-      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorage<O, P>(lazy), object_t<P>()) {}
+  ObjectPtrPropertyAssign(const char * name)
+      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorage<O, P, std::shared_ptr>(), object_t<P>()) {}
   void set(O &o, std::shared_ptr<P> val) const override { o.*p = val;}
   std::shared_ptr<P> get(O &o) const override { return o.*p;}
 };
@@ -2056,6 +2202,11 @@ template <typename O, typename P, std::vector<P> O::*p>
 struct ObjectVectorPropertyAssign : public PropertyAssign<O, std::vector<P>, p> {
   ObjectVectorPropertyAssign(const char * name, bool lazy=false)
       : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
+};
+template <typename O, typename P, std::vector<P> O::*p>
+struct ObjectVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<P>, p> {
+  ObjectVectorPropertyEmbeddedAssign(const char * name, unsigned objectSize)
+      : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorageEmbedded<O, P>(objectSize), object_vector_t<P>()) {}
 };
 template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
 struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
