@@ -370,9 +370,13 @@ struct ClassInfo {
 };
 
 namespace sub {
-//this namespace contains a group of templates that resolve the variadic template list of
-//subclasses
+//this namespace contains a group of templates that resolve the variadic template list
+//on ClassTraits which contains the subclasses. Each subclass is checked against the classId
+//stored in a propertyaccessor. If the class matches, the target object is dynamic_cast to the
+//target type and then accessed
+//certainly not grown on my "mist"...
 
+//this one does the real work
 template<typename T, typename S>
 struct resolve_impl
 {
@@ -384,11 +388,17 @@ struct resolve_impl
     S *s = dynamic_cast<S *>(obj);
     return s ? ClassTraits<S>::save(wtr, objectId, s, pa, mode) : false;
   }
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
+    S *s = dynamic_cast<S *>(obj);
+    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa) : false;
+  }
 };
 
+//primary template
 template<typename T, typename... Sargs>
 struct resolve;
 
+//helper that removes one type arg from the list
 template<typename T, typename S, typename... Sargs>
 struct resolve_helper
 {
@@ -400,8 +410,13 @@ struct resolve_helper
     if(resolve_impl<T, S>().save(wtr, objectId, obj, pa, mode)) return true;
     return resolve<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
   }
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
+    if(resolve_impl<T, S>().load(tr, buf, classId, objectId, obj, pa)) return true;
+    return resolve<T, Sargs...>().load(tr, buf, classId, objectId, obj, pa);
+  }
 };
 
+//template specialization for non-empty list
 template<typename T, typename... Sargs>
 struct resolve
 {
@@ -411,8 +426,12 @@ struct resolve
   static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
     return resolve_helper<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
   }
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
+    return resolve_helper<T, Sargs...>().load(tr, buf, classId, objectId, obj, pa);
+  }
 };
 
+//template specialization for empty list
 template<typename T>
 struct resolve<T>
 {
@@ -420,6 +439,9 @@ struct resolve<T>
     return false;
   }
   static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    return false;
+  }
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
     return false;
   }
 };
@@ -473,6 +495,20 @@ struct ClassTraitsBase
       if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, objectId, obj, pa, mode))
         return true;
       return sub::resolve<T, SUBS...>().save(wtr, objectId, obj, pa, mode);
+    }
+    return false;
+  }
+
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa)
+  {
+    if(pa->classId == info.classId) {
+      pa->storage->load(tr, buf, classId, objectId, obj, pa);
+      return true;
+    }
+    else if(pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa))
+        return true;
+      return sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
     }
     return false;
   }

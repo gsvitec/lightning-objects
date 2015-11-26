@@ -632,7 +632,7 @@ protected:
       PropertyAccessBase *p = props->get(px);
       if(!p->enabled) continue;
 
-      p->storage->load(this, buf, classId, objectId, obj, p);
+      ClassTraits<T>::load(this, buf, classId, objectId, obj, p);
     }
     return obj;
   }
@@ -649,7 +649,7 @@ protected:
       PropertyAccessBase *p = props->get(px);
       if(!p->enabled) continue;
 
-      p->storage->load(this, buf, classId, objectId, &obj, p);
+      ClassTraits<T>::load(this, buf, classId, objectId, &obj, p);
     }
   }
 
