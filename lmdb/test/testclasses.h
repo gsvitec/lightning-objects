@@ -112,40 +112,29 @@ namespace flexis {
 namespace persistence {
 namespace kv {
 
-//OtherThing
-template <>
-struct ClassTraits<OtherThing> : public ClassTraitsBase<OtherThing>{
+using OtherThingTraitsBase = ClassTraitsBase<OtherThing, OtherThing, OtherThingA, OtherThingB>;
+START_MAPPINGHDR_INH(OtherThing, OtherThingTraitsBase)
   enum PropertyIds {name=1, dvalue};
-};
-template<> ClassInfo ClassTraitsBase<OtherThing>::info ("OtherThing", typeid(OtherThing));
-template<> PropertyAccessBase * ClassTraitsBase<OtherThing>::decl_props[] = {
-    new BasePropertyAssign<OtherThing, std::string, &OtherThing::name>("name"),
-    new BasePropertyAssign<OtherThing, double, &OtherThing::dvalue>("dvalue")
-};
-template<> Properties * ClassTraitsBase<OtherThing>::properties(Properties::mk<OtherThing>());
+END_MAPPINGHDR_INH(OtherThing, OtherThingTraitsBase)
+  MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name),
+  MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
+END_MAPPING_INH(OtherThing, OtherThingTraitsBase)
 
-//OtherThingA
-template <>
-struct ClassTraits<OtherThingA> : public ClassTraitsBase<OtherThingA>{
-  enum PropertyIds {lvalue=1};
-};
-template<> ClassInfo ClassTraitsBase<OtherThingA>::info ("OtherThingA", typeid(OtherThingA));
-template<> PropertyAccessBase * ClassTraitsBase<OtherThingA>::decl_props[] = {
-    new BasePropertyAssign<OtherThingA, long, &OtherThingA::lvalue>("lvalue"),
-    new BasePropertyAssign<OtherThingA, std::vector<std::string>, &OtherThingA::testnames>("testnames")
-};
-template<> Properties * ClassTraitsBase<OtherThingA>::properties(Properties::mk<OtherThingA, OtherThing>());
+using OtherThingATraitsBase = ClassTraitsBase<OtherThingA, OtherThing>;
+START_MAPPINGHDR_INH(OtherThingA, OtherThingATraitsBase)
+  enum PropertyIds {lvalue=1, testnames};
+END_MAPPINGHDR_INH(OtherThingA, OtherThingATraitsBase)
+  MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue),
+  MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
+END_MAPPING_INH2(OtherThingA, OtherThingATraitsBase, OtherThing)
 
-//OtherThingB
-template <>
-struct ClassTraits<OtherThingB> : public ClassTraitsBase<OtherThingB>{
+
+using OtherThingBTraitsBase = ClassTraitsBase<OtherThingB, OtherThing>;
+START_MAPPINGHDR_INH(OtherThingB, OtherThingBTraitsBase)
   enum PropertyIds {llvalue=1};
-};
-template<> ClassInfo ClassTraitsBase<OtherThingB>::info ("OtherThingB", typeid(OtherThingB));
-template<> PropertyAccessBase * ClassTraitsBase<OtherThingB>::decl_props[] = {
-    new BasePropertyAssign<OtherThingB, unsigned long long, &OtherThingB::llvalue>("llvalue")
-};
-template<> Properties * ClassTraitsBase<OtherThingB>::properties(Properties::mk<OtherThingB, OtherThing>());
+END_MAPPINGHDR_INH(OtherThingB, OtherThingBTraitsBase)
+  MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue),
+END_MAPPING_INH2(OtherThingB, OtherThingBTraitsBase, OtherThing)
 
 //SomethingWithALazyVector
 template <>

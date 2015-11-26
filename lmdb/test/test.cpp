@@ -118,8 +118,8 @@ void testValueVectorProperty(KeyValueStore *kv)
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
-  auto ro = kv_make_ptr<IFlexisOverlay>(new RectangularOverlay());
-  auto to = kv_make_ptr<IFlexisOverlay>(new TimeCodeOverlay());
+  auto ro = make_ptr<IFlexisOverlay>(new RectangularOverlay());
+  auto to = make_ptr<IFlexisOverlay>(new TimeCodeOverlay());
 
   ro->rangeInP->setValue(-1);
   ro->rangeOutP->setValue(-1);
@@ -129,6 +129,13 @@ void testPolymorphism(KeyValueStore *kv)
   to->validFor.push_back(flexis::data::recording::ContextType::Player);
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
+
+  long val = -1;
+  WriteBuf bf(10);
+  ValueTraits<long>::putBytes(bf, val);
+  ReadBuf rbuf;
+  rbuf.start(bf.data()+2, 9);
+  ValueTraits<long>::getBytes(rbuf, val);
 
   auto wtxn = kv->beginWrite();
   ObjectId id = wtxn->putObject(si);
@@ -157,10 +164,10 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     //insert test data
     SomethingWithALazyVector sv;
 
-    OtherThingPtr ptra(new OtherThingA("Hans"));
+    auto ptra = make_ptr<OtherThing>(new OtherThingA("Hans"));
     sv.otherThings.push_back(ptra);
 
-    OtherThingPtr ptrb(new OtherThingB("Otto"));
+    auto ptrb = make_ptr<OtherThing>(new OtherThingB("Otto"));
     sv.otherThings.push_back(ptrb);
 
     auto wtxn = kv->beginWrite();
@@ -182,6 +189,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     assert(loaded && loaded->otherThings.empty());
 
     rtxn->loadMember(sv_id, *loaded, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+
     assert(loaded && loaded->otherThings.size() == 2);
     for (auto &ot : loaded->otherThings)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
@@ -540,8 +548,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
 void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 {
-  flexis::player::SourceDisplayConfig::Ptr sd = flexis::player::SourceDisplayConfig::Ptr(
-      new flexis::player::SourceDisplayConfig(1, 2, false, 4, 5, 6, 7));
+  auto sd = make_ptr(new flexis::player::SourceDisplayConfig(1, 2, false, 4, 5, 6, 7));
 
   flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
 
@@ -650,9 +657,13 @@ int main()
 
   kv->registerType<player::SourceDisplayConfig>();
   kv->registerType<player::SourceInfo>();
+
+  kv->registerAbstractType<flexis::data::recording::StreamProcessor>();
+  kv->registerAbstractType<flexis::IFlexisOverlay>();
   kv->registerType<flexis::RectangularOverlay>();
   kv->registerType<flexis::TimeCodeOverlay>();
 
+  kv->registerAbstractType<OtherThing>();
   kv->registerType<OtherThingA>();
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();

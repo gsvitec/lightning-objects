@@ -92,23 +92,25 @@ class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
 
-enum class StoreMode {none, force_all, force_buffer};
+enum class StoreMode {force_none, force_all, force_buffer};
 
 /**
  * abstract superclass for all Store Access classes
  */
 struct StoreAccessBase {
   virtual size_t size(const byte_t *buf) const = 0;
-  virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;};
+  virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
+
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
-                    StoreMode mode=StoreMode::none) = 0;
+                    StoreMode mode=StoreMode::force_none) = 0;
+
   virtual void load(ReadTransaction *tr,
                     ReadBuf &buf,
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
-                    StoreMode mode=StoreMode::none) = 0;
+                    StoreMode mode=StoreMode::force_none) = 0;
 };
 
 /**
@@ -265,6 +267,7 @@ struct PropertyAccessBase
 {
   const char * const name;
   bool enabled = true;
+  ClassId classId;
   unsigned id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
@@ -320,7 +323,8 @@ class Properties
   Properties(const Properties& mit) = delete;
 public:
   template <typename T, typename S=EmptyClass>
-  static Properties *mk() {
+  static Properties *mk()
+  {
     Properties *p = new Properties(
         ClassTraits<T>::decl_props,
         ARRAY_SZ(ClassTraits<T>::decl_props),
@@ -358,13 +362,71 @@ struct ClassInfo {
 
   const char *name;
   const std::type_info &typeinfo;
-  ClassId classId;
+  ClassId classId = 0;
   ObjectId maxObjectId = 0;
 
   ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
       : name(name), typeinfo(typeinfo), classId(classId) {}
 };
-template <typename T>
+
+namespace sub {
+//this namespace contains a group of templates that resolve the variadic template list of
+//subclasses
+
+template<typename T, typename S>
+struct resolve_impl
+{
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+    S *s = dynamic_cast<S *>(obj);
+    return s ? ClassTraits<S>::add(s, pa, size) : false;
+  }
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    S *s = dynamic_cast<S *>(obj);
+    return s ? ClassTraits<S>::save(wtr, objectId, s, pa, mode) : false;
+  }
+};
+
+template<typename T, typename... Sargs>
+struct resolve;
+
+template<typename T, typename S, typename... Sargs>
+struct resolve_helper
+{
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+    if(resolve_impl<T, S>().add(obj, pa, size)) return true;
+    return resolve<T, Sargs...>().add(obj, pa, size);
+  }
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    if(resolve_impl<T, S>().save(wtr, objectId, obj, pa, mode)) return true;
+    return resolve<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
+  }
+};
+
+template<typename T, typename... Sargs>
+struct resolve
+{
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+    return resolve_helper<T, Sargs...>().add(obj, pa, size);
+  }
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    return resolve_helper<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
+  }
+};
+
+template<typename T>
+struct resolve<T>
+{
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+    return false;
+  }
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    return false;
+  }
+};
+
+} //sub
+
+template <typename T, typename SUP=T, typename ... SUBS>
 struct ClassTraitsBase
 {
   static const unsigned keyPropertyId = 0;
@@ -387,13 +449,45 @@ struct ClassTraitsBase
     return decl_props[id-1]->same(&t, oid);
   }
 
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size)
+  {
+    if(pa->classId == info.classId) {
+      size += pa->storage->size(obj, pa);
+      return true;
+    }
+    else if(pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size))
+        return true;
+      return sub::resolve<T, SUBS...>().add(obj, pa, size);
+    }
+    return false;
+  }
+
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode)
+  {
+    if(pa->classId == info.classId) {
+      pa->storage->save(wtr, info.classId, objectId, obj, pa, mode);
+      return true;
+    }
+    else if(pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, objectId, obj, pa, mode))
+        return true;
+      return sub::resolve<T, SUBS...>().save(wtr, objectId, obj, pa, mode);
+    }
+    return false;
+  }
+
   /**
    * put (copy) the value of the given property into value
    */
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value) {
-    const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
-    value = acc->get(d);
+    if(pa->classId == info.classId) {
+      const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
+      value = acc->get(d);
+    }
+    else if(pa->classId)
+      ClassTraits<SUP>::put(d, pa, value);
   }
 
   /**
@@ -401,8 +495,12 @@ struct ClassTraitsBase
    */
   template <typename TV>
   static void get(T &d, const PropertyAccessBase *pa, TV &value) {
-    const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
-    acc->set(d, value);
+    if(pa->classId == info.classId) {
+      const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
+      acc->set(d, value);
+    }
+    else if(pa->classId)
+      ClassTraits<SUP>::get(d, pa, value);
   }
 };
 
@@ -431,17 +529,30 @@ static PropertyType object_t() {
 //convenience macros for manually defining mappings
 
 /**
- * start the mapping header. Should be followed by PropertyIds and keyPropertyId, if applicable
+ * start the mapping header.
  * @param cls the fully qualified class name
  */
-#define START_MAPPING_BEGIN(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
+#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
 
 /**
- * end the mapping header. Should be followed by MAPPED_PROP, MAPPED_PROP_L, MAPPED_PROP2 or OBJECT_ID
+ * start the mapping header with inheritance.
  * @param cls the fully qualified class name
  */
-#define START_MAPPING_END(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
+#define START_MAPPINGHDR_INH(cls, base) template <> struct ClassTraits<cls> : public base{
+
+/**
+ * end the mapping header
+ * @param cls the fully qualified class name
+ */
+#define END_MAPPINGHDR(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
 template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
+
+/**
+ * end the mapping header with inheritance
+ * @param cls the fully qualified class name
+ */
+#define END_MAPPINGHDR_INH(cls, base) }; template<> ClassInfo base::info (#cls, typeid(cls)); \
+template<> PropertyAccessBase * base::decl_props[] = {
 
 /**
  * close the mapping for one class
@@ -450,11 +561,12 @@ template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
 #define END_MAPPING(cls) }; template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
 
 /**
- * close the mapping for one class, with reference to a (mapped) superclass
+ * close the mapping for one class, with inheritance
  * @param cls the fully qualified class name
- * @param cls2 the fully qualified name of the superclass
+ * @param sup the fully qualified name of the superclass
  */
-#define END_MAPPING_SUP(cls1, cls2) }; template<> Properties * ClassTraitsBase<cls1>::properties(Properties::mk<cls1, cls2>());
+#define END_MAPPING_INH2(cls, base, sup) }; template<> Properties * base::properties(Properties::mk<cls, sup>());
+#define END_MAPPING_INH(cls, base) }; template<> Properties * base::properties(Properties::mk<cls>());
 
 /**
  * define mapping for one property

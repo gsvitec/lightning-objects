@@ -24,7 +24,6 @@ using namespace kv;
 
 static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
-static const ClassId CHUNKINFO_CLSID = 3;
 static const size_t CHUNKSIZE = 4060; //default chunksize
 
 class incompatible_schema_error : public persistence_error
@@ -121,6 +120,8 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   friend class kv::ExclusiveReadTransaction;
   friend class kv::WriteTransaction;
 
+  ClassId minAbstractClassId = UINT32_MAX;
+
   //backward mapping from ClassId, used during polymorphic operations
   ObjectFactories objectFactories;
   ObjectProperties objectProperties;
@@ -133,6 +134,14 @@ protected:
   bool m_reuseChunkspace = false;
 
 public:
+  template <typename T>
+  void registerAbstractType() {
+    using Traits = ClassTraits<T>;
+
+    Traits::info.classId = --minAbstractClassId;
+    for(auto &p : Traits::decl_props) p->classId = minAbstractClassId;
+  }
+
   /**
    * register a type for key/value persistence. It is assumed that a ClassTraits<type> implementation is visibly defined in the
    * current namespace. If this is the first call for this type, a ClassId and a ObjectId generator will be persistently
@@ -147,6 +156,7 @@ public:
     unsigned index = 0;
     updateClassSchema(Traits::info, Traits::decl_props, ARRAY_SZ(Traits::decl_props));
 
+    for(auto &p : Traits::decl_props) p->classId = Traits::info.classId;
     objectFactories[Traits::info.classId] = []() {return new T();};
     objectProperties[Traits::info.classId] = Traits::properties;
     objectClassInfos[Traits::info.classId] = &Traits::info;
@@ -988,7 +998,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
       if(!info->enabled) continue;
 
       //calculate variable size
-      size += info->storage->size(obj, info);
+      ClassTraits<T>::add(obj, info, size);
     }
     return size;
   }
@@ -1050,13 +1060,12 @@ protected:
       //we use the key index (+1) as id
       propertyId++;
 
-      PropertyAccessBase *p = properties->get(px);
-      if(!p->enabled) continue;
+      PropertyAccessBase *pa = properties->get(px);
+      if(!pa->enabled) continue;
 
-      p->storage->save(this, classId, objectId, &obj, p);
+      ClassTraits<T>::save(this, objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_none);
     }
   }
-
 
   /**
    * non-polymorphic save. Use in statically typed context
@@ -1370,9 +1379,10 @@ public:
     using Traits = ClassTraits<T>;
 
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    if(pa->type.isVector)
+    if(pa->type.isVector) {
       //vector goes to a separate key, no need to touch the object buffer
-      pa->storage->save(this, Traits::info.classId, objId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
+      Traits::save(this, objId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
+    }
     else
       //update the complete shallow buffer
       saveObject<T>(objId, obj, false, true);
@@ -1875,8 +1885,6 @@ public:
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) return;
-
     Ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
@@ -1910,7 +1918,7 @@ public:
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) {
+    if(m_lazy && mode == StoreMode::force_none) {
       buf.read(StorageKey::byteSize);
       return;
     }
@@ -1936,7 +1944,7 @@ public:
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(mode == StoreMode::none) {
+    if(mode == StoreMode::force_none) {
       const byte_t *data = buf.read(StorageKey::byteSize);
       ObjectId oid = *(ObjectId *)(data+ClassId_sz);
 
@@ -1971,7 +1979,7 @@ public:
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) return;
+    if(m_lazy && mode == StoreMode::force_none) return;
 
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -2003,7 +2011,7 @@ public:
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) return;
+    if(m_lazy && mode == StoreMode::force_none) return;
 
     std::vector<V> val;
 
@@ -2096,7 +2104,7 @@ public:
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) return;
+    if(m_lazy && mode == StoreMode::force_none) return;
 
     std::vector<std::shared_ptr<V>> val;
     T *tp = reinterpret_cast<T *>(obj);
@@ -2110,12 +2118,13 @@ public:
       ClassId childClassId = tr->getClassId(typeid(*v));
       ObjectId childId = get_objectid(v);
 
-      if(mode != StoreMode::force_all) {
+      if(mode != StoreMode::force_buffer) {
         if(childId) {
           tr->saveObject<V>(childClassId, childId, *v, false);
         }
         else {
           childId = tr->saveObject<V>(childClassId, 0, *v, true);
+          set_objectid(v, childId);
         }
       }
 
@@ -2131,7 +2140,7 @@ public:
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(m_lazy && mode == StoreMode::none) return;
+    if(m_lazy && mode == StoreMode::force_none) return;
 
     std::vector<std::shared_ptr<V>> val;
 
