@@ -1315,6 +1315,17 @@ public:
 
   /**
    * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
+   * key, which will be unique within the class identifier, will be stored inside the shared_ptr
+   */
+  template <typename T>
+  void putObject(std::shared_ptr<T> obj)
+  {
+    ObjectId oid = saveObject<T>(0, *obj, true);
+    set_objectid(obj, oid);
+  }
+
+  /**
+   * put a new object into the KV store. A key will be generated that consists of [class identifier/object identifier]. The
    * object identifier will be unique within the class identifier.
    *
    * @return the object identifier
@@ -1341,6 +1352,7 @@ public:
    * save an object into the KV store. If the shared_ptr carries an ObjectId, the object will be written under the existing key.
    * Otherwise, the object will be stored under a new key (whiuch is again stored inside the shared_ptr)
    *
+   * @param obj a persistent object pointer, which must have been obtained from KV (see make_obj, make_ptr)
    * @return true if the object was newly inserted
    */
   template <typename T>

@@ -40,6 +40,15 @@ template <typename T> struct object_handler
 };
 
 /**
+ * create an object wrapped by a shared_ptr ready to be input into the KV API. All shared_ptr objects passed
+ * to the KV API must have been created through this method (or KV itself)
+ */
+template <typename T> std::shared_ptr<T> make_obj()
+{
+  return std::shared_ptr<T>(new T(), object_handler<T>(0));
+}
+
+/**
  * create a shared_ptr ready to be input into the KV API. All shared_ptr objects passed to the KV API
  * must have been created through this method (or KV itself)
  */
