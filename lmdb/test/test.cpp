@@ -606,15 +606,9 @@ void testGrowDatabase(KeyValueStore *kv)
     for(unsigned i=0; i<1000; i++) data[i] = i;
     collectionId = wtxn->putValueCollectionData(data, 1000);
 
-    //wtxn->commit();
-
     for(unsigned i=0; i<1000; i++) {
-      //auto wtxn = kv->beginWrite();
-
       for(unsigned j=0; j<1000; j++) data[j] = (i+1) * 1000 + j;
       wtxn->appendValueCollectionData(collectionId, data, 1000);
-
-      //wtxn->commit();
     }
     wtxn->commit();
   }

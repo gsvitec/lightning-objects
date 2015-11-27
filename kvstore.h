@@ -24,7 +24,7 @@ using namespace kv;
 
 static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
-static const size_t CHUNKSIZE = 4060; //default chunksize
+static const size_t CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
 class incompatible_schema_error : public persistence_error
 {
@@ -280,9 +280,14 @@ struct ChunkInfo {
   size_t elementCount = 0;
   size_t dataSize = 0;
 
+  size_t chunkSize = 0;  //transient
+  byte_t *chunkData = nullptr;  //transient
+
   ChunkInfo() {}
-  ChunkInfo(PropertyId chunkId, size_t startIndex=0, size_t elementCount=0, size_t dataSize=0)
+  ChunkInfo(PropertyId chunkId, size_t startIndex, size_t elementCount, size_t dataSize)
       : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount), dataSize(dataSize) {}
+  ChunkInfo(PropertyId chunkId, size_t chunkSize, byte_t *chunkData=nullptr)
+      : chunkId(chunkId), chunkSize(chunkSize), chunkData(chunkData) {}
   bool operator == (const ChunkInfo &other) {
     return chunkId == other.chunkId;
   }
@@ -1016,7 +1021,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
    * @param chunkSize
    * @param elementCount the number of elements written to the current chunk. Used to write the header. If
    */
-  bool startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount);
+  size_t startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount);
 
 protected:
   const bool m_append;
@@ -1164,9 +1169,9 @@ protected:
   void saveChunks(const std::vector<Ptr<T>> &vect,
                   CollectionInfo *collectionInfo, size_t chunkSize, bool poly)
   {
-    if(!vect.empty()) startChunk(collectionInfo, chunkSize, 0);
+    if(vect.empty()) return;
+    size_t elementCount = startChunk(collectionInfo, chunkSize, 0);
 
-    size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(poly) {
         ClassId classId = getClassId(typeid(*vect[i]));
@@ -1219,9 +1224,9 @@ protected:
   template <typename T>
   void saveChunks(const std::vector<T> &vect, CollectionInfo *ci, size_t chunkSize)
   {
-    if(!vect.empty()) startChunk(ci, chunkSize, 0);
+    if(vect.empty()) return;
+    size_t elementCount = startChunk(ci, chunkSize, 0);
 
-    size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(writeBuf().avail() < ValueTraits<T>::size(vect[i])) {
         if(elementCount == 0) throw persistence_error("chunk size too small");
@@ -1246,10 +1251,11 @@ protected:
   template <typename T>
   void saveChunks(const T *array, size_t arraySize, CollectionInfo *ci, size_t chunkSize)
   {
-    if(arraySize) startChunk(ci, chunkSize, 0);
+    if(!arraySize) return;
+    size_t elementCount = startChunk(ci, chunkSize, 0);
 
     size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::byteSize);
-    size_t elementCount = chunkEls < arraySize ? chunkEls : arraySize;
+    elementCount += chunkEls < arraySize ? chunkEls : arraySize;
     byte_t *data = (byte_t *)array;
 
     while(elementCount) {

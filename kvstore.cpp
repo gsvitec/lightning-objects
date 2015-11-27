@@ -171,28 +171,37 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
   return info;
 }
 
-bool WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)
+size_t WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)
 {
-  if(elementCount > 0) {
+  if(elementCount == 0) {
+    //begin chunk sequence - try to append to cached chunk buffer
+    if (!collectionInfo->chunkInfos.empty()) {
+      ChunkInfo &ci = collectionInfo->chunkInfos.back();
+      if (ci.dataSize < ci.chunkSize && ci.chunkData) {
+        writeBuf().start(ci.chunkData + ci.dataSize, ci.chunkSize - ci.dataSize);
+        return ci.elementCount;
+      }
+    }
+  }
+  else {
+    //chunk was completed
     ChunkInfo &ci = collectionInfo->chunkInfos.back();
     ci.startIndex = collectionInfo->nextStartIndex;
     ci.elementCount = elementCount;
-    ci.dataSize = writeBuf().size();
+    ci.dataSize += writeBuf().size();
 
     writeChunkHeader(collectionInfo->nextStartIndex, elementCount);
   }
-
   //allocate a new chunk
-  byte_t * data;
+  byte_t * data = nullptr;
   if(allocData(COLLECTION_CLSID, collectionInfo->collectionId, collectionInfo->nextChunkId, chunkSize, &data)) {
-    collectionInfo->chunkInfos.push_back(ChunkInfo(collectionInfo->nextChunkId));
+    collectionInfo->chunkInfos.push_back(ChunkInfo(collectionInfo->nextChunkId, chunkSize, data));
     writeBuf().start(data, chunkSize);
     writeBuf().allocate(ChunkHeader_sz); //reserve for writing later
 
     collectionInfo->nextChunkId++;
-    return true;
   }
-  return false;
+  return 0;
 }
 
 CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
@@ -222,6 +231,7 @@ CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, Wri
                                                ObjectId collectionId, size_t chunkSize)
     : m_chunkCursor(chunkCursor), m_chunkSize(chunkSize), m_wtxn(wtxn)
 {
+  //TODO: check for appendability in collectioninfo
   bool needAlloc = true;
   m_collectionInfo = m_wtxn->getCollectionInfo(collectionId);
   if(!m_chunkCursor->atEnd()) {
@@ -239,8 +249,7 @@ CollectionAppenderBase::CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, Wri
   }
 
   if(needAlloc) {
-    m_elementCount = 0;
-    m_wtxn->startChunk(m_collectionInfo, m_chunkSize, 0);
+    m_elementCount = m_wtxn->startChunk(m_collectionInfo, m_chunkSize, 0);
   }
 }
 

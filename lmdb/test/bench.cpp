@@ -130,6 +130,10 @@ void testColored2DPointRead(KeyValueStore *kv)
   DUR()
 }
 
+//raw LMDB tests
+//////////////////
+
+//write Colored2DPoint w/ integer key + raw copying
 void test_lmdb_write()
 {
   auto env = ::lmdb::env::create();
@@ -157,6 +161,7 @@ void test_lmdb_write()
   DUR()
 }
 
+//read + verify
 void test_lmdb_read()
 {
   auto env = ::lmdb::env::create();
@@ -193,8 +198,95 @@ void test_lmdb_read()
   DUR()
 }
 
+//test writing chunks of 0.5 MB
+void test_lmdb_write2()
+{
+  auto env = ::lmdb::env::create();
+  size_t sz = size_t(10) * size_t(1024) * size_t(1024) * size_t(1024); //1 GiB
+  env.set_mapsize(sz);
+  env.open(".", MDB_NOLOCK, 0664);
+
+  BEG()
+
+  auto wtxn = ::lmdb::txn::begin(env);
+  auto dbi = ::lmdb::dbi::open(wtxn, nullptr, MDB_INTEGERKEY);
+  for(size_t i=1; i < 20001; i++) {
+
+    ::lmdb::val kval, dval;
+    kval.assign(&i, sizeof(i));
+
+    char buf[1024 * 512];
+    memset(buf, 'x', 1024 * 512);
+    dval.assign(buf, 1024 * 512);
+
+    dbi.put(wtxn, kval, dval, 0);
+  }
+  wtxn.commit();
+
+  DUR()
+}
+
+//test writing chunks of 0.5 MB, using MDB_RESERVE to avoid memcpying
+void test_lmdb_write2a()
+{
+  auto env = ::lmdb::env::create();
+  size_t sz = size_t(10) * size_t(1024) * size_t(1024) * size_t(1024); //1 GiB
+  env.set_mapsize(sz);
+  env.open(".", MDB_NOLOCK, 0664);
+
+  BEG()
+
+  auto wtxn = ::lmdb::txn::begin(env);
+  auto dbi = ::lmdb::dbi::open(wtxn, nullptr, MDB_INTEGERKEY);
+  for(size_t i=1; i < 20001; i++) {
+
+    ::lmdb::val kval{&i, sizeof(i)};
+    ::lmdb::val dval{nullptr, 1024 * 512};
+
+    dbi.put(wtxn, kval, dval, MDB_RESERVE);
+
+    memset(dval.data(), 'x', 1024 * 512);
+  }
+  wtxn.commit();
+
+  DUR()
+}
+
+//read & verify
+void test_lmdb_read2()
+{
+  auto env = ::lmdb::env::create();
+  size_t sz = size_t(10) * size_t(1024) * size_t(1024) * size_t(1024); //1 GiB
+  env.set_mapsize(sz);
+  env.open(".", MDB_NOLOCK, 0664);
+
+  BEG()
+  auto rtxn = ::lmdb::txn::begin(env, nullptr, MDB_RDONLY);
+  auto dbi = ::lmdb::dbi::open(rtxn, nullptr, MDB_INTEGERKEY);
+
+  auto cursor = ::lmdb::cursor::open(rtxn, dbi);
+  size_t k = 1;
+  ::lmdb::val kval, dval;
+  kval.assign(&k, sizeof(k));
+
+  long count = 0;
+  if(cursor.get(kval, dval, MDB_SET)) {
+    do {
+      //cursor.get(kval, dval, MDB_GET_CURRENT);
+      assert(dval.size() == 1024 * 512 && dval.data()[0] == 'x');
+      count++;
+    } while(cursor.get(kval, dval, MDB_NEXT));
+  }
+  cursor.close();
+
+  assert(count == 20000);
+  rtxn.abort();
+  DUR()
+}
+
 int main()
 {
+#if 0
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
   kv->registerType<Colored2DPoint>();
@@ -204,9 +296,14 @@ int main()
   testColored2DPointRead(kv);
   testValueCollection(kv);
 
+  delete kv;
+
   test_lmdb_write();
   test_lmdb_read();
 
-  delete kv;
+#endif
+  test_lmdb_write2a();
+  test_lmdb_read2();
+
   return 0;
 }
