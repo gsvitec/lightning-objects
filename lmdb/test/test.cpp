@@ -593,6 +593,7 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
            && loaded->objects[1].number1 == 3 \
            && loaded->objects[3].number1 == 7 \
            && loaded->objects[3].number2 == 8);
+    delete loaded;
   }
 }
 

@@ -274,7 +274,6 @@ public:
 };
 
 struct ChunkInfo {
-  ObjectId objectId = 0;
   PropertyId chunkId = 0;
   size_t startIndex = 0;
   size_t elementCount = 0;
@@ -284,9 +283,9 @@ struct ChunkInfo {
   byte_t *chunkData = nullptr;  //transient
 
   ChunkInfo() {}
-  ChunkInfo(PropertyId chunkId, size_t startIndex, size_t elementCount, size_t dataSize)
+  ChunkInfo(PropertyId chunkId, size_t startIndex, size_t elementCount=0, size_t dataSize=0)
       : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount), dataSize(dataSize) {}
-  ChunkInfo(PropertyId chunkId, size_t chunkSize, byte_t *chunkData=nullptr)
+  ChunkInfo(PropertyId chunkId, size_t chunkSize, byte_t *chunkData)
       : chunkId(chunkId), chunkSize(chunkSize), chunkData(chunkData) {}
   bool operator == (const ChunkInfo &other) {
     return chunkId == other.chunkId;
@@ -1021,7 +1020,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
    * @param chunkSize
    * @param elementCount the number of elements written to the current chunk. Used to write the header. If
    */
-  size_t startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount);
+  void startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount);
 
 protected:
   const bool m_append;
@@ -1170,8 +1169,9 @@ protected:
                   CollectionInfo *collectionInfo, size_t chunkSize, bool poly)
   {
     if(vect.empty()) return;
-    size_t elementCount = startChunk(collectionInfo, chunkSize, 0);
+    startChunk(collectionInfo, chunkSize, 0);
 
+    size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(poly) {
         ClassId classId = getClassId(typeid(*vect[i]));
@@ -1209,7 +1209,6 @@ protected:
         writeObject(classId, objectId, *vect[i], Traits::properties, true);
       }
     }
-    if(elementCount) writeChunkHeader(collectionInfo->nextStartIndex, elementCount);
     putCollectionInfo(collectionInfo, elementCount);
   }
 
@@ -1225,8 +1224,9 @@ protected:
   void saveChunks(const std::vector<T> &vect, CollectionInfo *ci, size_t chunkSize)
   {
     if(vect.empty()) return;
-    size_t elementCount = startChunk(ci, chunkSize, 0);
+    startChunk(ci, chunkSize, 0);
 
+    size_t elementCount = 0;
     for(size_t i=0, vectSize = vect.size(); i<vectSize; i++, elementCount++) {
       if(writeBuf().avail() < ValueTraits<T>::size(vect[i])) {
         if(elementCount == 0) throw persistence_error("chunk size too small");
@@ -1236,7 +1236,6 @@ protected:
       }
       ValueTraits<T>::putBytes(writeBuf(), vect[i]);
     }
-    if(elementCount) writeChunkHeader(ci->nextStartIndex, elementCount);
     putCollectionInfo(ci, elementCount);
   }
 
@@ -1252,10 +1251,10 @@ protected:
   void saveChunks(const T *array, size_t arraySize, CollectionInfo *ci, size_t chunkSize)
   {
     if(!arraySize) return;
-    size_t elementCount = startChunk(ci, chunkSize, 0);
+    startChunk(ci, chunkSize, 0);
 
     size_t chunkEls = size_t(writeBuf().avail() / TypeTraits<T>::byteSize);
-    elementCount += chunkEls < arraySize ? chunkEls : arraySize;
+    size_t elementCount = chunkEls < arraySize ? chunkEls : arraySize;
     byte_t *data = (byte_t *)array;
 
     while(elementCount) {
@@ -1270,7 +1269,6 @@ protected:
       data += elementCount * TypeTraits<T>::byteSize;
       elementCount = arraySize >= chunkEls ? chunkEls : arraySize;
     }
-    if(elementCount) writeChunkHeader(ci->nextStartIndex, elementCount);
     putCollectionInfo(ci, elementCount);
   }
 
