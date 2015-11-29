@@ -470,7 +470,7 @@ void testValueCollectionData(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putValueCollectionData(vect, 1000, 128);
+    collectionId = wtxn->putDataCollection(vect, 1000, 128);
 
     wtxn->commit();
   }
@@ -511,7 +511,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId2 = wtxn->putValueCollectionData(darray, 100, 128);
+    collectionId2 = wtxn->putDataCollection(darray, 100, 128);
 
     wtxn->commit();
   }
@@ -531,7 +531,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    wtxn->appendValueCollectionData(collectionId2, darray, 100, 128);
+    wtxn->appendDataCollection(collectionId2, darray, 100, 128);
 
     wtxn->commit();
   }
@@ -605,11 +605,11 @@ void testGrowDatabase(KeyValueStore *kv)
 
     unsigned data [1000];
     for(unsigned i=0; i<1000; i++) data[i] = i;
-    collectionId = wtxn->putValueCollectionData(data, 1000);
+    collectionId = wtxn->putDataCollection(data, 1000);
 
     for(unsigned i=0; i<1000; i++) {
       for(unsigned j=0; j<1000; j++) data[j] = (i+1) * 1000 + j;
-      wtxn->appendValueCollectionData(collectionId, data, 1000);
+      wtxn->appendDataCollection(collectionId, data, 1000);
     }
     wtxn->commit();
   }

@@ -279,14 +279,10 @@ struct ChunkInfo {
   size_t elementCount = 0;
   size_t dataSize = 0;
 
-  size_t chunkSize = 0;  //transient
-  byte_t *chunkData = nullptr;  //transient
-
   ChunkInfo() {}
   ChunkInfo(PropertyId chunkId, size_t startIndex, size_t elementCount=0, size_t dataSize=0)
       : chunkId(chunkId), startIndex(startIndex), elementCount(elementCount), dataSize(dataSize) {}
-  ChunkInfo(PropertyId chunkId, size_t chunkSize, byte_t *chunkData)
-      : chunkId(chunkId), chunkSize(chunkSize), chunkData(chunkData) {}
+  ChunkInfo(PropertyId chunkId) : chunkId(chunkId) {}
   bool operator == (const ChunkInfo &other) {
     return chunkId == other.chunkId;
   }
@@ -958,15 +954,15 @@ public:
 class CollectionAppenderBase
 {
 protected:
-  ChunkCursor::Ptr m_chunkCursor;
   CollectionInfo *m_collectionInfo;
   const size_t m_chunkSize;
   WriteTransaction * const m_wtxn;
 
+  WriteBuf &m_writeBuf;
   size_t m_elementCount;
 
-  CollectionAppenderBase(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize);
-  void preparePut(size_t size);
+  CollectionAppenderBase(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize);
+  void startChunk(size_t size);
 
 public:
   void close();
@@ -1465,7 +1461,7 @@ public:
    * @param chunkSize size of chunk
    */
   template <typename T>
-  ObjectId putValueCollectionData(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
+  ObjectId putDataCollection(const T* array, size_t arraySize, size_t chunkSize = CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
@@ -1518,7 +1514,7 @@ public:
    * @param chunkSize size of keys chunk
    */
   template <typename T>
-  void appendValueCollectionData(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
+  void appendDataCollection(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
     CollectionInfo *ci = getCollectionInfo(collectionId);
@@ -1567,18 +1563,21 @@ public:
         properties = ClassTraits<T>::properties;
       }
       size_t size = calculateBuffer(&obj, properties) + ObjectHeader_sz;
-      preparePut(size);
+
+      if(m_writeBuf.avail() < size) startChunk(size);
 
       m_wtxn->writeObjectHeader(cid, oid, size);
       m_wtxn->writeObject(cid, oid, obj, properties, false);
+
+      m_elementCount++;
     }
 
   public:
     using Ptr = std::shared_ptr<ObjectCollectionAppender>;
 
-    ObjectCollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId,
+    ObjectCollectionAppender(WriteTransaction *wtxn, ObjectId collectionId,
                              size_t chunkSize, ObjectClassInfos *objectClassInfos, ObjectProperties *objectProperties, bool poly)
-        : CollectionAppenderBase(chunkCursor, wtxn, collectionId, chunkSize),
+        : CollectionAppenderBase(wtxn, collectionId, chunkSize),
           m_objectClassInfos(objectClassInfos), m_objectProperties(objectProperties), m_poly(poly)
     {
     }
@@ -1601,8 +1600,8 @@ public:
   public:
     using Ptr = std::shared_ptr<ValueCollectionAppender>;
 
-    ValueCollectionAppender(ChunkCursor::Ptr chunkCursor, WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
-        : CollectionAppenderBase(chunkCursor, wtxn, collectionId, chunkSize)
+    ValueCollectionAppender(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
+        : CollectionAppenderBase(wtxn, collectionId, chunkSize)
     {}
 
     void put(T val)
@@ -1610,8 +1609,44 @@ public:
       size_t sz = TypeTraits<T>::byteSize;
       if(sz == 0) sz = ValueTraits<T>::size(val);
 
-      preparePut(TypeTraits<T>::byteSize);
-      ValueTraits<T>::putBytes(m_wtxn->writeBuf(), val);
+      size_t avail = m_writeBuf.avail();
+
+      if(avail < sz) startChunk(sz);
+
+      ValueTraits<T>::putBytes(m_writeBuf, val);
+      m_elementCount++;
+    }
+  };
+
+  /**
+  * appender for sequentially extending a top-level, chunked value collection
+  */
+  template <typename T>
+  class DataCollectionAppender : public CollectionAppenderBase
+  {
+  public:
+    using Ptr = std::shared_ptr<DataCollectionAppender>;
+
+    DataCollectionAppender(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
+        : CollectionAppenderBase(wtxn, collectionId, chunkSize)
+    {}
+
+    void put(T *val, size_t dataSize)
+    {
+      size_t avail = m_writeBuf.avail();
+      byte_t *data = (byte_t *)val;
+
+      if(avail >= sizeof(T)) {
+        m_writeBuf.append(data, avail);
+        m_elementCount += avail / sizeof(T);
+        dataSize -= avail;
+        data += avail;
+      }
+      if(dataSize) {
+        startChunk(dataSize < m_chunkSize ? m_chunkSize : dataSize);
+        m_writeBuf.append(data, dataSize);
+        m_elementCount += dataSize / sizeof(T);
+      }
     }
   };
 
@@ -1619,30 +1654,42 @@ public:
    * create an appender for the given top-level object collection
    *
    * @param collectionId the id of a top-level collection
-   * @param chunkSize the keychunk size
+   * @param chunkSize the chunk size
    * @param bool poly whether polymorphic type resolution should be employed
-   * @return a writer over the contents of the collection.
+   * @return an appender over the contents of the collection.
    */
   template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
       ObjectId collectionId, size_t chunkSize = CHUNKSIZE, bool poly = true)
   {
     return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
-        _openChunkCursor(COLLECTION_CLSID, collectionId, true),
         this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, poly));
   }
 
   /**
-   * create an appender for the given top-level value collection
+   * create an appender for the given top-level raw-data collection
    *
    * @param collectionId the id of a top-level collection
-   * @param chunkSize the keychunk size
-   * @return a writer over the contents of the collection.
+   * @param chunkSize the chunk size
+   * @return an appender over the contents of the collection.
    */
   template <typename V> typename ValueCollectionAppender<V>::Ptr appendValueCollection(
       ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
   {
-    return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(
-        _openChunkCursor(COLLECTION_CLSID, collectionId, true), this, collectionId, chunkSize));
+    return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(this, collectionId, chunkSize));
+  }
+
+  /**
+   * create an appender for the given top-level raw-data collection
+   *
+   * @param collectionId the id of a top-level collection
+   * @param chunkSize the keychunk size
+   * @return an appender over the contents of the collection.
+   */
+  template <typename T> typename ValueCollectionAppender<T>::Ptr appendDataCollection(
+      ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
+  {
+    RAWDATA_API_ASSERT
+    return typename DataCollectionAppender<T>::Ptr(new DataCollectionAppender<T>(this, collectionId, chunkSize));
   }
 };
 
