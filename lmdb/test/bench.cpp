@@ -50,7 +50,7 @@ void testValueCollection(KeyValueStore *kv) {
       vect.push_back(1.44 * i);
 
     auto wtxn = kv->beginWrite();
-    collectionId = wtxn->putValueCollection(vect, 128);
+    collectionId = wtxn->putValueCollection(vect);
     wtxn->commit();
   }
   /*{
@@ -82,7 +82,7 @@ void testValueCollection(KeyValueStore *kv) {
       vect.push_back(5.66 * i);
 
     auto wtxn = kv->beginWrite();
-    wtxn->appendValueCollection(collectionId, vect, 128);
+    wtxn->appendValueCollection(collectionId, vect);
     wtxn->commit();
   }
   /*{
@@ -96,7 +96,7 @@ void testValueCollection(KeyValueStore *kv) {
     //use appender to add more test data
     auto wtxn = kv->beginWrite();
 
-    auto appender = wtxn->appendValueCollection<double>(collectionId, 128);
+    auto appender = wtxn->appendValueCollection<double>(collectionId);
     for(int i=0; i<1000; i++) appender->put(6.55 * i);
     appender->close();
 
@@ -286,7 +286,7 @@ void test_lmdb_read2()
 
 int main()
 {
-#if 0
+#if 1
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
   kv->registerType<Colored2DPoint>();
@@ -300,10 +300,11 @@ int main()
 
   test_lmdb_write();
   test_lmdb_read();
-
 #endif
+#if 0
   test_lmdb_write2a();
   test_lmdb_read2();
+#endif
 
   return 0;
 }

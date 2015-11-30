@@ -273,7 +273,7 @@ void testObjectCollection(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putCollection(vect, 128);
+    collectionId = wtxn->putCollection(vect);
 
     wtxn->commit();
   }
@@ -317,7 +317,7 @@ void testObjectCollection(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    wtxn->appendCollection(collectionId, vect, 128);
+    wtxn->appendCollection(collectionId, vect);
 
     wtxn->commit();
   }
@@ -332,7 +332,7 @@ void testObjectCollection(KeyValueStore *kv)
     //use appender to add more test data
     auto wtxn = kv->beginWrite();
 
-    auto appender = wtxn->appendCollection<OtherThing>(collectionId, 128);
+    auto appender = wtxn->appendCollection<OtherThing>(collectionId);
     for(int i=0; i<10; i++) {
       stringstream ss;
       ss << "Test_" << i;
@@ -376,7 +376,7 @@ void testValueCollection(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putValueCollection(vect, 128);
+    collectionId = wtxn->putValueCollection(vect);
 
     wtxn->commit();
   }
@@ -470,7 +470,7 @@ void testValueCollectionData(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId = wtxn->putDataCollection(vect, 1000, 128);
+    collectionId = wtxn->putDataCollection(vect, 1000);
 
     wtxn->commit();
   }
@@ -511,7 +511,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    collectionId2 = wtxn->putDataCollection(darray, 100, 128);
+    collectionId2 = wtxn->putDataCollection(darray, 100);
 
     wtxn->commit();
   }

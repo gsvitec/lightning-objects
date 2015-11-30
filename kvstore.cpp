@@ -101,18 +101,6 @@ void WriteTransaction::writeObjectHeader(ClassId classId, ObjectId objectId, siz
   write_integer<size_t>(hdr+ClassId_sz+ObjectId_sz, size, 4);
 }
 
-void WriteTransaction::putCollectionInfo(CollectionInfo *info, size_t elementCount)
-{
-  ChunkInfo &ci = info->chunkInfos.back();
-  if(!ci.startIndex) ci.startIndex = info->nextStartIndex;
-  ci.elementCount += elementCount;
-  ci.dataSize = writeBuf().size();
-
-  writeChunkHeader(ci.startIndex, ci.elementCount);
-
-  info->nextStartIndex += elementCount;
-}
-
 void WriteTransaction::commit()
 {
   for(auto &it : m_collectionInfos) {
@@ -171,26 +159,21 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
 
 void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)
 {
-  if(elementCount != 0) {
-    //chunk was completed
-    ChunkInfo &ci = collectionInfo->chunkInfos.back();
-    if(!ci.startIndex) ci.startIndex = collectionInfo->nextStartIndex;
-    ci.elementCount += elementCount;
-    ci.dataSize = writeBuf().size();
-
-    writeChunkHeader(ci.startIndex, ci.elementCount);
-  }
-  //allocate a new chunk
   byte_t * data = nullptr;
-  if(allocData(COLLECTION_CLSID, collectionInfo->collectionId, collectionInfo->nextChunkId, chunkSize, &data)) {
-    collectionInfo->chunkInfos.push_back(ChunkInfo(collectionInfo->nextChunkId));
+  chunkSize += ChunkHeader_sz;
 
-    writeBuf().start(data, chunkSize);
-    writeBuf().allocate(ChunkHeader_sz); //reserve for writing later
+  if(!allocData(COLLECTION_CLSID, collectionInfo->collectionId, collectionInfo->nextChunkId, chunkSize, &data))
+    throw persistence_error("allocData failed");
 
-    collectionInfo->nextChunkId++;
-  }
-  else throw persistence_error("allocData failed");
+  collectionInfo->chunkInfos.push_back(ChunkInfo(
+      collectionInfo->nextChunkId, collectionInfo->nextStartIndex, elementCount, chunkSize));
+
+  writeBuf().start(data, chunkSize);
+  writeBuf().allocate(ChunkHeader_sz);
+  writeChunkHeader(collectionInfo->nextStartIndex, elementCount);
+
+  collectionInfo->nextStartIndex += elementCount;
+  collectionInfo->nextChunkId++;
 }
 
 CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
@@ -251,8 +234,14 @@ void CollectionAppenderBase::startChunk(size_t size)
   m_elementCount = 0;
 }
 
-void CollectionAppenderBase::close() {
-  m_wtxn->putCollectionInfo(m_collectionInfo, m_elementCount);
+void CollectionAppenderBase::close()
+{
+  ChunkInfo &ci = m_collectionInfo->chunkInfos.back();
+  if(!ci.startIndex) ci.startIndex = m_collectionInfo->nextStartIndex;
+  ci.elementCount += m_elementCount;
+  ci.dataSize = m_writeBuf.size();
+
+  m_wtxn->writeChunkHeader(ci.startIndex, ci.elementCount);
 }
 
 } //kv
