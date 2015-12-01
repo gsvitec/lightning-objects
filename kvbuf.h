@@ -43,16 +43,18 @@ template <typename T> struct object_handler
  * create an object wrapped by a shared_ptr ready to be input into the KV API. All shared_ptr objects passed
  * to the KV API must have been created through this method (or KV itself)
  */
-template <typename T> std::shared_ptr<T> make_obj()
+template <typename T, typename... Args>
+static auto make_obj(Args&&... args) -> decltype(std::make_shared<T>(std::forward<Args>(args)...))
 {
-  return std::shared_ptr<T>(new T(), object_handler<T>(0));
+  return std::shared_ptr<T>(new T(std::forward<Args>(args)...), object_handler<T>(0));
 }
 
 /**
  * create a shared_ptr ready to be input into the KV API. All shared_ptr objects passed to the KV API
  * must have been created through this method (or KV itself)
  */
-template <typename T> std::shared_ptr<T> make_ptr(T *t)
+template <typename T>
+static std::shared_ptr<T> make_ptr(T *t)
 {
   return std::shared_ptr<T>(t, object_handler<T>(0));
 }
@@ -61,11 +63,12 @@ template <typename T> std::shared_ptr<T> make_ptr(T *t)
  * @return the ObjectId which was stored inside the pointer
  * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
  */
-template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
+template<typename T> ObjectId get_objectid(const std::shared_ptr<T> &obj, bool force=true)
 {
   object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-  if(!ohm) throw persistence_error("shared_ptr was not created by KV store");
-  return ohm->objectId;
+  if(ohm) return ohm->objectId;
+  else if(force) throw persistence_error("shared_ptr was not created by KV store");
+  return 0;
 }
 
 /**
@@ -73,11 +76,11 @@ template<typename T> ObjectId get_objectid(std::shared_ptr<T> obj)
  * @param oid the ObjectId
  * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
  */
-template<typename T> void set_objectid(const std::shared_ptr<T> obj, ObjectId  oid)
+template<typename T> void set_objectid(const std::shared_ptr<T> &obj, ObjectId  oid, bool force = true)
 {
   object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-  if(!ohm) throw persistence_error("shared_ptr was not created by KV store");
-  ohm->objectId = oid;
+  if(ohm) ohm->objectId = oid;
+  else if(force) throw persistence_error("shared_ptr was not created by KV store");
 }
 
 /**

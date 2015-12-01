@@ -118,8 +118,8 @@ void testValueVectorProperty(KeyValueStore *kv)
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
-  auto ro = make_ptr<IFlexisOverlay>(new RectangularOverlay());
-  auto to = make_ptr<IFlexisOverlay>(new TimeCodeOverlay());
+  auto ro = make_obj<RectangularOverlay>();
+  auto to = make_obj<TimeCodeOverlay>();
 
   ro->rangeInP->setValue(-1);
   ro->rangeOutP->setValue(-1);
@@ -164,10 +164,10 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     //insert test data
     SomethingWithALazyVector sv;
 
-    auto ptra = make_ptr<OtherThing>(new OtherThingA("Hans"));
+    auto ptra = make_obj<OtherThingA>("Hans");
     sv.otherThings.push_back(ptra);
 
-    auto ptrb = make_ptr<OtherThing>(new OtherThingB("Otto"));
+    auto ptrb = make_obj<OtherThingB>("Otto");
     sv.otherThings.push_back(ptrb);
 
     auto wtxn = kv->beginWrite();
@@ -548,7 +548,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
 void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 {
-  auto sd = make_ptr(new flexis::player::SourceDisplayConfig(1, 2, false, 4, 5, 6, 7));
+  auto sd = make_obj<flexis::player::SourceDisplayConfig>(1, 2, false, 4, 5, 6, 7);
 
   flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
 

@@ -374,12 +374,19 @@ namespace sub {
 //on ClassTraits which contains the subclasses. Each subclass is checked against the classId
 //stored in a propertyaccessor. If the class matches, the target object is dynamic_cast to the
 //target type and then accessed
-//certainly not grown on my "mist"...
 
 //this one does the real work
 template<typename T, typename S>
 struct resolve_impl
 {
+  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> obj, bool force) {
+    auto s = std::dynamic_pointer_cast<S>(obj);
+    return s ? ClassTraits<S>::get_id(objId, classId, s, force) : false;
+  }
+  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> obj, bool force) {
+    auto s = std::dynamic_pointer_cast<S>(obj);
+    return s ? ClassTraits<S>::set_id(objId, classId, s, force) : false;
+  }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     S *s = dynamic_cast<S *>(obj);
     return s ? ClassTraits<S>::add(s, pa, size) : false;
@@ -402,6 +409,14 @@ struct resolve;
 template<typename T, typename S, typename... Sargs>
 struct resolve_helper
 {
+  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    if(resolve_impl<T, S>().get_id(objId, classId, obj, force)) return true;
+    return resolve<T, Sargs...>().get_id(objId, classId, obj, force);
+  }
+  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    if(resolve_impl<T, S>().set_id(objId, classId, obj, force)) return true;
+    return resolve<T, Sargs...>().set_id(objId, classId, obj, force);
+  }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     if(resolve_impl<T, S>().add(obj, pa, size)) return true;
     return resolve<T, Sargs...>().add(obj, pa, size);
@@ -420,6 +435,12 @@ struct resolve_helper
 template<typename T, typename... Sargs>
 struct resolve
 {
+  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    return resolve_helper<T, Sargs...>().get_id(objId, classId, obj, force);
+  }
+  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    return resolve_helper<T, Sargs...>().set_id(objId, classId, obj, force);
+  }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return resolve_helper<T, Sargs...>().add(obj, pa, size);
   }
@@ -435,6 +456,12 @@ struct resolve
 template<typename T>
 struct resolve<T>
 {
+  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    return false;
+  }
+  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
+    return false;
+  }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return false;
   }
@@ -481,6 +508,34 @@ struct ClassTraitsBase
       if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size))
         return true;
       return sub::resolve<T, SUBS...>().add(obj, pa, size);
+    }
+    return false;
+  }
+
+  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force=false)
+  {
+    if(classId == info.classId) {
+      objId = get_objectid(obj, force);
+      return true;
+    }
+    else if(classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::get_id(objId, classId, obj, force))
+        return true;
+      return sub::resolve<T, SUBS...>().get_id(objId, classId, obj, force);
+    }
+    return false;
+  }
+
+  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force=false)
+  {
+    if(classId == info.classId) {
+      set_objectid(obj, objId, force);
+      return true;
+    }
+    else if(classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::set_id(objId, classId, obj, force))
+        return true;
+      return sub::resolve<T, SUBS...>().set_id(objId, classId, obj, force);
     }
     return false;
   }

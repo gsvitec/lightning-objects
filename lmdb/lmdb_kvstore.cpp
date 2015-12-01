@@ -477,7 +477,12 @@ public:
 
 KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 {
-  return new KeyValueStoreImpl(location, name, options);
+  try {
+    return new KeyValueStoreImpl(location, name, options);
+  }
+  catch(::lmdb::error &err) {
+    throw persistence_error(err.what());
+  }
 }
 
 KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
