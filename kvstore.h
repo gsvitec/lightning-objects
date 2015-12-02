@@ -816,7 +816,7 @@ public:
    * @param vect (out) the contents of the associated collection.
    */
   template <typename T, typename V>
-  void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect)
+  void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect, ClassId classId = 0)
   {
     ObjectId objectId = get_objectid(obj);
 
@@ -830,10 +830,12 @@ public:
       ObjectId oid;
       readObjectHeader(buf, &cid, &oid, 0);
 
-      V *obj = readObject<V>(buf, cid, oid);
-      if(obj) vect.push_back(std::shared_ptr<V>(obj, object_handler<V>(oid)));
-      else
-        throw persistence_error("collection object not found");
+      if(!classId || classId == cid) {
+        V *obj = readObject<V>(buf, cid, oid);
+        if(obj) vect.push_back(std::shared_ptr<V>(obj, object_handler<V>(oid)));
+        else
+          throw persistence_error("collection object not found");
+      }
     }
   }
 
