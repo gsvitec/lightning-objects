@@ -7,6 +7,7 @@
 
 #include <string>
 #include <vector>
+#include <set>
 #include <cstring>
 #include <typeinfo>
 #include <stdexcept>
@@ -50,6 +51,7 @@ struct PropertyType
 template <typename T> struct TypeTraits;
 #define TYPETRAITS template <> struct TypeTraits
 #define TYPETRAITSV template <> struct TypeTraits<std::vector
+#define TYPETRAITSS template <> struct TypeTraits<std::set
 
 #define TYPEDEF(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=false;
 #define TYPEDEFV(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=true;
@@ -81,6 +83,20 @@ TYPETRAITSV<float>>             {TYPEDEFV(10, 4);};
 TYPETRAITSV<double>>            {TYPEDEFV(11, 8);};
 TYPETRAITSV<const char *>>      {TYPEDEFV(12, 0);};
 TYPETRAITSV<std::string>>       {TYPEDEFV(13, 0);};
+
+TYPETRAITSS<short>>             {TYPEDEFV(1, 2);};
+TYPETRAITSS<unsigned short>>    {TYPEDEFV(2, 2);};
+TYPETRAITSS<int>>               {TYPEDEFV(3, 4);};
+TYPETRAITSS<unsigned int>>      {TYPEDEFV(4, 4);};
+TYPETRAITSS<long>>              {TYPEDEFV(5, 8);};
+TYPETRAITSS<unsigned long>>     {TYPEDEFV(6, 8);};
+TYPETRAITSS<long long>>         {TYPEDEFV(7, 8);};
+TYPETRAITSS<unsigned long long>>{TYPEDEFV(8, 8);};
+TYPETRAITSS<bool>>              {TYPEDEFV(9, 1);};
+TYPETRAITSS<float>>             {TYPEDEFV(10, 4);};
+TYPETRAITSS<double>>            {TYPEDEFV(11, 8);};
+TYPETRAITSS<const char *>>      {TYPEDEFV(12, 0);};
+TYPETRAITSS<std::string>>       {TYPEDEFV(13, 0);};
 
 //these assertions must hold because certain elmements are written/read natively
 static_assert(sizeof(ClassId) == TypeTraits<ClassId>::byteSize, "ClassId: byteSize must match native size");

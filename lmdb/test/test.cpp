@@ -123,10 +123,8 @@ void testPolymorphism(KeyValueStore *kv)
 
   ro->rangeInP->setValue(-1);
   ro->rangeOutP->setValue(-1);
-  ro->validFor.push_back(flexis::data::recording::ContextType::Player);
   to->rangeInP->setValue(-1);
   to->rangeOutP->setValue(-1);
-  to->validFor.push_back(flexis::data::recording::ContextType::Player);
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
 

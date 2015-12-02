@@ -17,6 +17,8 @@
 
 #define PROPERTY_ID(cls, name) ClassTraits<cls>::PropertyIds::name
 
+#define IS_SAME(cls, var, prop, other) ClassTraits<cls>::same(var, ClassTraits<cls>::PropertyIds::prop, other)
+
 namespace flexis {
 namespace persistence {
 
@@ -601,6 +603,7 @@ public:
 class FlexisPersistence_EXPORT ReadTransaction
 {
   template<typename T, typename V> friend class VectorPropertyStorage;
+  template<typename T, typename V> friend class SetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
@@ -1023,6 +1026,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V> friend class BasePropertyStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
   template<typename T, typename V> friend class VectorPropertyStorage;
+  template<typename T, typename V> friend class SetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
@@ -1431,7 +1435,7 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(ObjectId objId, T &obj, PropertyId propertyId, bool shallow=false)
+  void updateMember(const ObjectId objId, T &obj, PropertyId propertyId, bool shallow=false)
   {
     using Traits = ClassTraits<T>;
 
@@ -1454,7 +1458,7 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(std::shared_ptr<T> &obj, PropertyId propertyId, bool shallow=false)
+  void updateMember(const std::shared_ptr<T> &obj, PropertyId propertyId, bool shallow=false)
   {
     ObjectId objId = get_objectid(obj);
     updateMember(objId, *obj, propertyId, shallow);
@@ -1929,6 +1933,48 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
 };
 
 /**
+ * storage trait for value set.
+ */
+template<typename T, typename V>
+struct SetPropertyStorage : public StoreAccessPropertyKey
+{
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::set<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    size_t psz = 0;
+    for(auto &v : val) psz += ValueTraits<V>::size(v);
+    if(psz) {
+      WriteBuf propBuf(psz);
+
+      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
+
+      if(!tr->putData(classId, objectId, pa->id, propBuf))
+        throw persistence_error("data was not saved");
+    }
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::set<V> val;
+
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    while(!readBuf.atEnd()) {
+      V v;
+      ValueTraits<V>::getBytes(readBuf, v);
+      val.insert(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, val);
+  }
+};
+
+/**
  * storage trait for mapped object references. Value-based, therefore non-polymorphic
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
@@ -2323,6 +2369,18 @@ template<typename T> struct PropertyStorage<T, std::vector<double>> : public Vec
 template<typename T> struct PropertyStorage<T, std::vector<bool>> : public VectorPropertyStorage<T, bool>{};
 template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public VectorPropertyStorage<T, const char *>{};
 template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public VectorPropertyStorage<T, std::string>{};
+
+template<typename T> struct PropertyStorage<T, std::set<short>> : public SetPropertyStorage<T, short>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned short>> : public SetPropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, std::set<long>> : public SetPropertyStorage<T, long>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned long>> : public SetPropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, std::set<long long>> : public SetPropertyStorage<T, long long>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned long long>> : public SetPropertyStorage<T, unsigned long long>{};
+template<typename T> struct PropertyStorage<T, std::set<float>> : public SetPropertyStorage<T, float>{};
+template<typename T> struct PropertyStorage<T, std::set<double>> : public SetPropertyStorage<T, double>{};
+template<typename T> struct PropertyStorage<T, std::set<bool>> : public SetPropertyStorage<T, bool>{};
+template<typename T> struct PropertyStorage<T, std::set<const char *>> : public SetPropertyStorage<T, const char *>{};
+template<typename T> struct PropertyStorage<T, std::set<std::string>> : public SetPropertyStorage<T, std::string>{};
 
 template <typename O, ObjectId O::*p>
 struct ObjectIdAssign : public PropertyAssign<O, ObjectId, p> {
