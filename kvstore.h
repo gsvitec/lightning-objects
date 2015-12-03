@@ -15,9 +15,10 @@
 #include <FlexisPersistence_Export.h>
 #include "kvtraits.h"
 
-#define PROPERTY_ID(cls, name) ClassTraits<cls>::PropertyIds::name
+#define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
 
-#define IS_SAME(cls, var, prop, other) ClassTraits<cls>::same(var, ClassTraits<cls>::PropertyIds::prop, other)
+#define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
+  var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
 
 namespace flexis {
 namespace persistence {
@@ -141,7 +142,8 @@ public:
     using Traits = ClassTraits<T>;
 
     Traits::info.classId = --minAbstractClassId;
-    for(auto &p : Traits::decl_props) p->classId = minAbstractClassId;
+    for(int i=0; i<Traits::decl_props_sz; i++)
+      Traits::decl_props[i]->classId = minAbstractClassId;
   }
 
   /**
@@ -156,9 +158,11 @@ public:
     using Traits = ClassTraits<T>;
 
     unsigned index = 0;
-    updateClassSchema(Traits::info, Traits::decl_props, ARRAY_SZ(Traits::decl_props));
+    updateClassSchema(Traits::info, Traits::decl_props, Traits::decl_props_sz);
 
-    for(auto &p : Traits::decl_props) p->classId = Traits::info.classId;
+    for(int i=0; i<Traits::decl_props_sz; i++)
+      Traits::decl_props[i]->classId = Traits::info.classId;
+
     objectFactories[Traits::info.classId] = []() {return new T();};
     objectProperties[Traits::info.classId] = Traits::properties;
     objectClassInfos[Traits::info.classId] = &Traits::info;
@@ -540,7 +544,7 @@ public:
   {
     ObjectId id;
     T *obj = get(&id);
-    return std::shared_ptr<T>(obj, object_handler<T>(id));
+    return make_ptr(obj, id);
   }
 
   ClassCursor &operator++() {
@@ -805,34 +809,35 @@ public:
   }
 
   /**
-   * retrieve an associated collection. An associated collection is stored under a key that is derived from
-   * another mapped object. The key is the same as if the collection was a property member of the associated object,
-   * but the property does not exist. Instead, the associated collection must be loaded and saved explicitly using
-   * the given API
+   * retrieve an attached member collection. Attached mebers are stored under a key that is derived from
+   * the object they are attached to. The key is the same as if the member was a property member of the
+   * attached-to object, but the property does not exist. Instead, the attached member must be loaded and saved
+   * explicitly using the given API
    *
-   * @param obj the associated object
-   * @param propertyId a property Id from the Id space of obj's class. Ideally, there is an entry in PropertyIds. This
-   * propertyId must not belong to a mapped property
-   * @param vect (out) the contents of the associated collection.
+   * @param obj the object this property is attached to
+   * @param propertyId a property Id which must not be one of the mapped property's id
+   * @param vect (out) the contents of the attached collection.
    */
   template <typename T, typename V>
   void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect, ClassId classId = 0)
   {
-    ObjectId objectId = get_objectid(obj);
+    ObjectId objectId = ClassTraits<T>::get_id(obj);
+    ClassId objClassId = getClassId(typeid(*obj));
 
     ReadBuf buf;
-    getData(buf, ClassTraits<T>::info.classId, objectId, propertyId);
+    getData(buf, objClassId, objectId, propertyId);
+    if(buf.empty())
+      return;
 
     size_t elementCount = buf.readInteger<size_t>(4);
 
     for(size_t i=0; i < elementCount; i++) {
-      ClassId cid;
-      ObjectId oid;
-      readObjectHeader(buf, &cid, &oid, 0);
+      StorageKey sk;
+      buf.read(sk);
 
-      if(!classId || classId == cid) {
-        V *obj = readObject<V>(buf, cid, oid);
-        if(obj) vect.push_back(std::shared_ptr<V>(obj, object_handler<V>(oid)));
+      if(!classId || sk.classId == classId) {
+        V *obj = loadObject<V>(sk.classId, sk.objectId);
+        if(obj) vect.push_back(make_ptr(obj, sk.objectId));
         else
           throw persistence_error("collection object not found");
       }
@@ -913,7 +918,7 @@ public:
   template<typename T> std::shared_ptr<T> getObjectP(ObjectId objectId)
   {
     T *t = loadObject<T>(objectId);
-    return std::shared_ptr<T>(t, object_handler<T>(objectId));
+    return make_ptr(t, objectId);
   }
 
   /**
@@ -948,7 +953,7 @@ public:
   {
     using Traits = ClassTraits<T>;
 
-    ObjectId objId = get_objectid(obj);
+    ObjectId objId = ClassTraits<T>::get_id(obj);
 
     PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
     pa->storage->load(this, ReadBuf(), Traits::info.classId, objId, &obj, pa, StoreMode::force_all);
@@ -1355,7 +1360,7 @@ public:
   std::shared_ptr<T> putObject(T *obj)
   {
     ObjectId oid = saveObject<T>(0, *obj, true);
-    return std::shared_ptr<T>(obj, object_handler<T>(oid));
+    return make_ptr(obj, oid);
   }
 
   /**
@@ -1403,7 +1408,7 @@ public:
   template <typename T>
   bool saveObject(const std::shared_ptr<T> &obj)
   {
-    ObjectId oid = get_objectid(obj);
+    ObjectId oid = ClassTraits<T>::get_id(obj);
     if(oid) {
       saveObject<T>(oid, *obj, false);
       return false;
@@ -1462,43 +1467,101 @@ public:
   template <typename T>
   void updateMember(const std::shared_ptr<T> &obj, PropertyId propertyId, bool shallow=false)
   {
-    ObjectId objId = get_objectid(obj);
+    ObjectId objId = ClassTraits<T>::get_id(obj);
     updateMember(objId, *obj, propertyId, shallow);
   }
 
   /**
-   * insert an associated collection. An associated collection (currently only shared pointer-based object collection
-   * supported) which is stored under a key that is derived from another mapped object. The key is the same as if the
-   * collection was a property member of the associated object, but the property does not exist. Instead, the associated
-   * collection must be loaded and saved explicitly using the given API
+   * insert an attached member collection (see explanation in accompanying get function)
    *
-   * @param obj the associated object
-   * @param propertyId a property Id from the Id space of obj's class. Ideally, there is an entry in PropertyIds. This
-   * propertyId must not belong to a mapped property
-   * @param vect the contents of the associated collection
+   * @param obj the object this collection is attached to
+   * @param propertyId a property Id outside the Id space of obj's class
+   * @param vect the contents of the collection
    */
   template <typename T, typename V>
-  void putCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect)
+  void putCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect,
+                     bool saveMembers=true)
   {
-    ObjectId objId = get_objectid(obj);
-
-    size_t chunkSize = 0;
-    chunk_helper *helpers = prepare_collection(vect, chunkSize);
+    ClassId classId = getClassId(typeid(*obj));
+    ObjectId objId = ClassTraits<T>::get_id(obj);
 
     byte_t *data;
-    if(!allocData(ClassTraits<T>::info.classId, objId, propertyId, chunkSize+sizeof(size_t), &data))
+    size_t bufSz = vect.size()*StorageKey::byteSize+4;
+
+    if(!allocData(classId, objId, propertyId, bufSz, &data))
       throw persistence_error("allocData failed");
 
-    writeBuf().start(data, chunkSize);
+    writeBuf().start(data, bufSz);
     writeBuf().appendInteger<size_t>(vect.size(), 4);
 
-    for(size_t i=0, vectSize = vect.size(); i<vectSize; i++) {
-      chunk_helper &helper = helpers[i];
+    for(auto &v : vect) {
+      ClassId classId = getClassId(typeid(*v));
+      ObjectId objectId = ClassTraits<V>::get_id(v);
+      if(!objectId || saveMembers) {
+        pushWriteBuf();
+        saveObject(v);
+        popWriteBuf();
+        objectId = ClassTraits<V>::get_id(v);
+      }
 
-      writeObjectHeader(helper.classId, helper.objectId, helper.size);
-      writeObject(helper.classId, helper.objectId, *vect[i], helper.properties, true);
+      writeBuf().append(classId, objectId, 0);
     }
-    delete [] helpers;
+  }
+
+  /**
+   * add or remove an element to an attached member collection
+   *
+   * @param obj the object the collection is attached to
+   * @param propertyId the attached propertyId (not from the mappings)
+   * @val the value to add. The value will be saved prior to being inserted into the collection
+   */
+  template <typename T, typename V>
+  bool updateCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::shared_ptr<V> &val, bool remove=false)
+  {
+    ObjectId objectId = ClassTraits<T>::get_id(obj);
+    ClassId classId = ClassTraits<T>::info.classId;
+
+    ReadBuf buf;
+    getData(buf, classId, objectId, propertyId);
+    if(buf.empty()) throw persistence_error("collection does not exist");
+
+    size_t elementCount = buf.readInteger<size_t>(4);
+
+    ClassId valueClassId = getClassId(typeid(*val));
+    ObjectId valueId = ClassTraits<V>::get_id(val);
+    byte_t *slotStart = nullptr;
+
+    for(size_t i=0; i < elementCount; i++) {
+      StorageKey sk;
+      buf.read(sk);
+
+      if(sk.classId == valueClassId && sk.objectId == valueId) {
+        if(!remove) {
+          saveObject(val);
+          return false;
+        };
+        slotStart = buf.cur()-StorageKey::byteSize;
+        break;
+      }
+    }
+
+    if(remove) {
+      if(!slotStart) return false;
+      writeBuf().start(buf.size()-StorageKey::byteSize);
+      writeBuf().append(buf.data(), slotStart-buf.data());
+      writeBuf().append(slotStart+StorageKey::byteSize, buf.size()-StorageKey::byteSize);
+      putData(classId, objectId, propertyId, writeBuf());
+      return true;
+    }
+    else {
+      if(!valueId) {
+        saveObject(val);
+        valueId = ClassTraits<V>::get_id(val);
+      }
+      writeBuf().start(buf.size()+StorageKey::byteSize);
+      writeBuf().append(buf.data(), buf.size());
+      writeBuf().append(valueClassId, valueId, 0);
+    }
   }
 
   /**
@@ -1610,7 +1673,7 @@ public:
 
   template <typename T>
   void deleteObject(std::shared_ptr<T> obj) {
-    removeObject(get_objectid(obj), obj);
+    removeObject(ClassTraits<T>::get_id(obj), obj);
   }
 
   /**
@@ -2040,12 +2103,12 @@ template <typename V, template <typename> class Ptr> struct OidAccess
 template <typename V> struct OidAccess<V, std::shared_ptr>
 {
   static std::shared_ptr<V> make(V *v, ObjectId oid) {
-    std::shared_ptr<V> ptr = std::shared_ptr<V>(v, object_handler<V>(oid));
+    std::shared_ptr<V> ptr = make_ptr(v, oid);
     return ptr;
   }
 
   static ObjectId getObjectId(std::shared_ptr<V> ptr) {
-    return get_objectid(ptr, false);
+    return ClassTraits<V>::get_id(ptr);
   }
 
   static std::shared_ptr<V> setObjectId(ObjectId oid, std::shared_ptr<V> ptr) {
@@ -2301,8 +2364,7 @@ public:
     tr->pushWriteBuf();
     for(std::shared_ptr<V> &v : val) {
       ClassId childClassId = tr->getClassId(typeid(*v));
-      ObjectId childId = 0;
-      ClassTraits<V>::get_id(childId, childClassId, v);
+      ObjectId childId = ClassTraits<V>::get_id(v);
 
       if(mode != StoreMode::force_buffer) {
         if(childId) {
@@ -2310,7 +2372,7 @@ public:
         }
         else {
           childId = tr->saveObject<V>(childClassId, 0, *v, true);
-          ClassTraits<V>::set_id(childId, childClassId, v);
+          set_objectid(v, childId, false);
         }
       }
 
@@ -2338,7 +2400,7 @@ public:
       StorageKey sk;
       while(readBuf.read(sk)) {
         V *obj = tr->loadObject<V>(sk.classId, sk.objectId);
-        val.push_back(std::shared_ptr<V>(obj, object_handler<V>(sk.objectId)));
+        val.push_back(make_ptr(obj, sk.objectId));
       }
     }
     T *tp = reinterpret_cast<T *>(obj);

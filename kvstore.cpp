@@ -12,6 +12,7 @@ namespace persistence {
 using namespace std;
 
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
+ClassInfo ClassTraits<kv::EmptyClass>::info {"empty", typeid(EmptyClass), 0};
 
 inline bool streq(string s1, const char *s2) {
   if(s2 == nullptr) return s1.empty();

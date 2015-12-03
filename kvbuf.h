@@ -54,9 +54,9 @@ static auto make_obj(Args&&... args) -> decltype(std::make_shared<T>(std::forwar
  * must have been created through this method (or KV itself)
  */
 template <typename T>
-static std::shared_ptr<T> make_ptr(T *t)
+static std::shared_ptr<T> make_ptr(T *t, ObjectId oid = 0)
 {
-  return std::shared_ptr<T>(t, object_handler<T>(0));
+  return std::shared_ptr<T>(t, object_handler<T>(oid));
 }
 
 /**

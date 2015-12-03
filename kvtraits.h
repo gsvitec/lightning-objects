@@ -395,13 +395,9 @@ namespace sub {
 template<typename T, typename S>
 struct resolve_impl
 {
-  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> obj, bool force) {
+  static ObjectId get_id(const std::shared_ptr<T> obj) {
     auto s = std::dynamic_pointer_cast<S>(obj);
-    return s ? ClassTraits<S>::get_id(objId, classId, s, force) : false;
-  }
-  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> obj, bool force) {
-    auto s = std::dynamic_pointer_cast<S>(obj);
-    return s ? ClassTraits<S>::set_id(objId, classId, s, force) : false;
+    return s ? get_objectid(s, false) : 0;
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     S *s = dynamic_cast<S *>(obj);
@@ -425,13 +421,9 @@ struct resolve;
 template<typename T, typename S, typename... Sargs>
 struct resolve_helper
 {
-  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    if(resolve_impl<T, S>().get_id(objId, classId, obj, force)) return true;
-    return resolve<T, Sargs...>().get_id(objId, classId, obj, force);
-  }
-  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    if(resolve_impl<T, S>().set_id(objId, classId, obj, force)) return true;
-    return resolve<T, Sargs...>().set_id(objId, classId, obj, force);
+  static ObjectId  get_id(const std::shared_ptr<T> &obj) {
+    ObjectId objId = resolve_impl<T, S>().get_id(obj);
+    return objId ? objId : resolve<T, Sargs...>().get_id(obj);
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     if(resolve_impl<T, S>().add(obj, pa, size)) return true;
@@ -451,11 +443,8 @@ struct resolve_helper
 template<typename T, typename... Sargs>
 struct resolve
 {
-  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    return resolve_helper<T, Sargs...>().get_id(objId, classId, obj, force);
-  }
-  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    return resolve_helper<T, Sargs...>().set_id(objId, classId, obj, force);
+  static ObjectId get_id(const std::shared_ptr<T> &obj) {
+    return resolve_helper<T, Sargs...>().get_id(obj);
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return resolve_helper<T, Sargs...>().add(obj, pa, size);
@@ -472,11 +461,8 @@ struct resolve
 template<typename T>
 struct resolve<T>
 {
-  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    return false;
-  }
-  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force) {
-    return false;
+  static bool get_id(const std::shared_ptr<T> &obj) {
+    return 0;
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return false;
@@ -491,7 +477,7 @@ struct resolve<T>
 
 } //sub
 
-template <typename T, typename SUP=T, typename ... SUBS>
+template <typename T, typename SUP=EmptyClass, typename ... SUBS>
 struct ClassTraitsBase
 {
   static const unsigned keyPropertyId = 0;
@@ -499,6 +485,7 @@ struct ClassTraitsBase
   static ClassInfo info;
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
+  static const unsigned decl_props_sz;
 
   /**
    * @return the objectid accessor for this class
@@ -528,32 +515,14 @@ struct ClassTraitsBase
     return false;
   }
 
-  static bool get_id(ObjectId &objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force=false)
+  static ObjectId get_id(const std::shared_ptr<T> &obj)
   {
-    if(classId == info.classId) {
-      objId = get_objectid(obj, force);
-      return true;
+    ObjectId objId = get_objectid(obj, false);
+    if(objId) return objId;
+    else {
+      objId = ClassTraits<SUP>::get_id(obj);
+      return objId ? objId : sub::resolve<T, SUBS...>().get_id(obj);
     }
-    else if(classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::get_id(objId, classId, obj, force))
-        return true;
-      return sub::resolve<T, SUBS...>().get_id(objId, classId, obj, force);
-    }
-    return false;
-  }
-
-  static bool set_id(ObjectId objId, const ClassId classId, const std::shared_ptr<T> &obj, bool force=false)
-  {
-    if(classId == info.classId) {
-      set_objectid(obj, objId, force);
-      return true;
-    }
-    else if(classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::set_id(objId, classId, obj, force))
-        return true;
-      return sub::resolve<T, SUBS...>().set_id(objId, classId, obj, force);
-    }
-    return false;
   }
 
   static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode)
@@ -613,8 +582,33 @@ struct ClassTraitsBase
 
 template <>
 struct ClassTraits<EmptyClass> {
+  static FlexisPersistence_EXPORT ClassInfo info;
   static FlexisPersistence_EXPORT Properties * properties;
+  static FlexisPersistence_EXPORT const unsigned decl_props_sz = 0;
   static PropertyAccessBase * decl_props[0];
+
+  template <typename T>
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+    return false;
+  }
+  template <typename T>
+  static ObjectId get_id(const std::shared_ptr<T> &obj) {
+    return 0;
+  }
+  template <typename T>
+  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    return false;
+  }
+  template <typename T>
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
+    return false;
+  }
+  template <typename T, typename TV>
+  static void put(T &d, const PropertyAccessBase *pa, TV &value) {
+  }
+  template <typename T, typename TV>
+  static void get(T &d, const PropertyAccessBase *pa, TV &value) {
+  }
 };
 
 template<typename T>
@@ -629,9 +623,15 @@ static PropertyType object_t() {
   return PropertyType(Traits::info.name);
 }
 
+template <typename T> bool is_new(std::shared_ptr<T> obj) {
+  return ClassTraits<T>::get_id(obj) != 0;
+}
+
 } //kv
 } //persistence
 } //flexis
+
+using NO_SUPERCLASS = flexis::persistence::kv::EmptyClass;
 
 //convenience macros for manually defining mappings
 
@@ -646,57 +646,5 @@ static PropertyType object_t() {
  * @param cls the fully qualified class name
  */
 #define START_MAPPINGHDR_INH(cls, base) template <> struct ClassTraits<cls> : public base{
-
-/**
- * end the mapping header
- * @param cls the fully qualified class name
- */
-#define END_MAPPINGHDR(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
-template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
-
-/**
- * end the mapping header with inheritance
- * @param cls the fully qualified class name
- */
-#define END_MAPPINGHDR_INH(cls, base) }; template<> ClassInfo base::info (#cls, typeid(cls)); \
-template<> PropertyAccessBase * base::decl_props[] = {
-
-/**
- * close the mapping for one class
- * @param cls the fully qualified class name
- */
-#define END_MAPPING(cls) }; template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
-
-/**
- * close the mapping for one class, with inheritance
- * @param cls the fully qualified class name
- * @param sup the fully qualified name of the superclass
- */
-#define END_MAPPING_INH2(cls, base, sup) }; template<> Properties * base::properties(Properties::mk<cls, sup>());
-#define END_MAPPING_INH(cls, base) }; template<> Properties * base::properties(Properties::mk<cls>());
-
-/**
- * define mapping for one property
- *
- * @param cls the fully qualified class name
- * @param propkind the mapping class name
- * @param proptype the property data type
- * @param propname the property name
- */
-#define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname)
-
-/**
- * define mapping for one property. Same as MAPPED_PROP, but with different names for property and field
- */
-#define MAPPED_PROP2(cls, propkind, proptype, prop, name) new propkind<cls, proptype, &cls::prop>(#name)
-
-/**
- * define mapping for a objectid property
- *
- * @param cls the fully qualified class name
- * @param the property name. The field must have type ObjectId and be initialized to 0
- */
-#define OBJECT_ID(cls, prop) new ObjectIdAssign<cls, &cls::prop>()
-
 
 #endif //FLEXIS_FLEXIS_KVTRAITS_H

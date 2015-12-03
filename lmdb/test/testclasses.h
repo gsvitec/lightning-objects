@@ -9,6 +9,8 @@
 #include <vector>
 #include <memory>
 #include <kvstore/kvstore.h>
+#include <kvstore/traits_impl.h>
+#include <basicoverlays.h>
 
 namespace flexis {
 namespace player {
@@ -116,7 +118,7 @@ using OtherThingTraitsBase = ClassTraitsBase<OtherThing, OtherThing, OtherThingA
 START_MAPPINGHDR_INH(OtherThing, OtherThingTraitsBase)
   enum PropertyIds {name=1, dvalue};
 END_MAPPINGHDR_INH(OtherThing, OtherThingTraitsBase)
-  MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name),
+  MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)
   MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
 END_MAPPING_INH(OtherThing, OtherThingTraitsBase)
 
@@ -124,7 +126,7 @@ using OtherThingATraitsBase = ClassTraitsBase<OtherThingA, OtherThing>;
 START_MAPPINGHDR_INH(OtherThingA, OtherThingATraitsBase)
   enum PropertyIds {lvalue=1, testnames};
 END_MAPPINGHDR_INH(OtherThingA, OtherThingATraitsBase)
-  MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue),
+  MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
 END_MAPPING_INH2(OtherThingA, OtherThingATraitsBase, OtherThing)
 
@@ -133,7 +135,7 @@ using OtherThingBTraitsBase = ClassTraitsBase<OtherThingB, OtherThing>;
 START_MAPPINGHDR_INH(OtherThingB, OtherThingBTraitsBase)
   enum PropertyIds {llvalue=1};
 END_MAPPINGHDR_INH(OtherThingB, OtherThingBTraitsBase)
-  MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue),
+  MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue)
 END_MAPPING_INH2(OtherThingB, OtherThingBTraitsBase, OtherThing)
 
 //SomethingWithALazyVector
