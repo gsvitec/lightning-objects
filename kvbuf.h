@@ -148,6 +148,7 @@ public:
 
   size_t size() {return m_size;}
   bool empty() {return m_size == 0;}
+  bool null() {return m_data == nullptr;}
 
   /**
    * @return a read-only pointer into the store-owned memory

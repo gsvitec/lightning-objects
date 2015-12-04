@@ -516,7 +516,7 @@ public:
     m_helper->get(key, readBuf);
 
     //nothing here
-    if(readBuf.empty()) return nullptr;
+    if(readBuf.null()) return nullptr;
 
     T *obj = m_fact.makeObj(key.classId);
     Properties *properties = m_fact.properties(key.classId);
@@ -676,7 +676,7 @@ protected:
     getData(readBuf, classId, objectId, 0);
 
     //nothing here
-    if(readBuf.empty()) return nullptr;
+    if(readBuf.null()) return nullptr;
 
     return readObject<T>(readBuf, classId, objectId);
   }
@@ -695,7 +695,7 @@ protected:
     getData(readBuf, classId, objectId, 0);
 
     //nothing here
-    if(readBuf.empty()) return nullptr;
+    if(readBuf.null()) return nullptr;
 
     return readObject<T>(readBuf, classId, objectId);
   }
@@ -715,7 +715,7 @@ protected:
     getData(readBuf, classId, objectId, 0);
 
     //nothing here
-    if(readBuf.empty()) return false;
+    if(readBuf.null()) return false;
 
     readObject(readBuf, obj, classId, objectId);
     return true;
@@ -826,8 +826,7 @@ public:
 
     ReadBuf buf;
     getData(buf, objClassId, objectId, propertyId);
-    if(buf.empty())
-      return;
+    if(buf.null()) return;
 
     size_t elementCount = buf.readInteger<size_t>(4);
 
@@ -1531,7 +1530,7 @@ public:
 
     ReadBuf buf;
     getData(buf, classId, objectId, propertyId);
-    if(buf.empty()) throw persistence_error("collection does not exist");
+    if(buf.null()) throw persistence_error("collection does not exist");
 
     size_t elementCount = buf.readInteger<size_t>(4);
 
@@ -2277,7 +2276,7 @@ public:
     ReadBuf readBuf;
     tr->getData(readBuf, classId, objectId, pa->id);
 
-    if(!readBuf.empty()) {
+    if(!readBuf.null()) {
       StorageKey sk;
       while(readBuf.read(sk)) {
         V obj;
@@ -2406,7 +2405,7 @@ public:
     ReadBuf readBuf;
     tr->getData(readBuf, classId, objectId, pa->id);
 
-    if(!readBuf.empty()) {
+    if(!readBuf.null()) {
       StorageKey sk;
       while(readBuf.read(sk)) {
         V *obj = tr->loadObject<V>(sk.classId, sk.objectId);

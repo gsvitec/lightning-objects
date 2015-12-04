@@ -137,7 +137,7 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
   if(m_collectionInfos.count(collectionId) == 0) {
     ReadBuf readBuf;
     getData(readBuf, COLLINFO_CLSID, collectionId, 0);
-    if(!readBuf.empty()) {
+    if(!readBuf.null()) {
       info = new CollectionInfo(collectionId);
       size_t sz = readBuf.readRaw<size_t>();
       for(size_t i=0; i<sz; i++) {
