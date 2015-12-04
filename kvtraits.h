@@ -501,10 +501,10 @@ struct ClassTraitsBase
 
   static const unsigned keyPropertyId = 0;
 
-  static FlexisPersistence_EXPORT ClassInfo info;
-  static FlexisPersistence_EXPORT Properties * properties;
-  static FlexisPersistence_EXPORT PropertyAccessBase * decl_props[];
-  static FlexisPersistence_EXPORT const unsigned decl_props_sz;
+  static ClassInfo info;
+  static Properties * properties;
+  static PropertyAccessBase * decl_props[];
+  static const unsigned decl_props_sz;
 
   /**
    * @return the objectid accessor for this class

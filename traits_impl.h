@@ -5,33 +5,27 @@
 #ifndef FLEXIS_TRAITS_IMPL_H
 #define FLEXIS_TRAITS_IMPL_H
 
-#if defined (_WIN32) && !defined(FLEXISKV_NODLL)
-#define EXPORT __declspec(dllexport)
-#else
-#define EXPORT
-#endif
-
 /**
  * end the mapping header
  * @param cls the fully qualified class name
  */
-#define END_MAPPINGHDR(cls) }; template<> EXPORT ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
-template<> EXPORT PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
+#define END_MAPPINGHDR(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
+template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
 
 /**
  * end the mapping header with inheritance
  * @param cls the fully qualified class name
  */
-#define END_MAPPINGHDR_INH(cls, base) }; template<> EXPORT ClassInfo base::info (#cls, typeid(cls)); \
-template<> EXPORT PropertyAccessBase * base::decl_props[] = {
+#define END_MAPPINGHDR_INH(cls, base) }; template<> ClassInfo base::info (#cls, typeid(cls)); \
+template<> PropertyAccessBase * base::decl_props[] = {
 
 /**
  * close the mapping for one class
  * @param cls the fully qualified class name
  */
 #define END_MAPPING(cls) }; \
-template<> EXPORT const unsigned ClassTraitsBase<cls>::decl_props_sz = ARRAY_SZ(ClassTraits<cls>::decl_props); \
-template<> EXPORT Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
+template<> const unsigned ClassTraitsBase<cls>::decl_props_sz = ARRAY_SZ(ClassTraits<cls>::decl_props); \
+template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
 
 /**
  * close the mapping for one class, with inheritance
@@ -39,12 +33,12 @@ template<> EXPORT Properties * ClassTraitsBase<cls>::properties(Properties::mk<c
  * @param sup the fully qualified name of the superclass
  */
 #define END_MAPPING_INH2(cls, base, sup) }; \
-template<> EXPORT const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
-template<> EXPORT Properties * base::properties(Properties::mk<cls, sup>());
+template<> const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
+template<> Properties * base::properties(Properties::mk<cls, sup>());
 
 #define END_MAPPING_INH(cls, base) }; \
-template<> EXPORT const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
-template<> EXPORT Properties * base::properties(Properties::mk<cls>());
+template<> const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
+template<> Properties * base::properties(Properties::mk<cls>());
 
 /**
  * define mapping for one property
