@@ -16,6 +16,7 @@
 #include "kvtraits.h"
 
 #define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
+#define PROPERTY(cls, name) flexis::persistence::kv::ClassTraits<cls>::decl_props[flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name-1]
 
 #define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
   var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
@@ -475,11 +476,10 @@ public:
    * @param buf (int/out) pointer to the object data buffer. If this pointer is non-null, the address of the object data buffer
    * will be stored there on the first call and reused on subsequent calls
    */
-  void get(PropertyId propertyId, const byte_t **data, const byte_t **buf=nullptr)
+  void get(PropertyAccessBase *p, const byte_t **data, const byte_t **buf=nullptr)
   {
     using Traits = ClassTraits<T>;
 
-    PropertyAccessBase *p = Traits::decl_props[propertyId-1];
     if(!p->enabled || p->type.isVector) {
       *data = nullptr;
       return;
@@ -931,12 +931,11 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void loadMember(ObjectId objId, T &obj, PropertyId propertyId)
+  void loadMember(ObjectId objId, T &obj, PropertyAccessBase *pa)
   {
     using Traits = ClassTraits<T>;
 
     ReadBuf rb;
-    PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
     pa->storage->load(this, rb, Traits::info.classId, objId, &obj, pa, StoreMode::force_all);
   }
 
@@ -949,13 +948,12 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void loadMember(std::shared_ptr<T> &obj, PropertyId propertyId)
+  void loadMember(std::shared_ptr<T> &obj, PropertyAccessBase *pa)
   {
     using Traits = ClassTraits<T>;
 
     ObjectId objId = ClassTraits<T>::get_id(obj);
 
-    PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
     pa->storage->load(this, ReadBuf(), Traits::info.classId, objId, &obj, pa, StoreMode::force_all);
   }
 
@@ -1116,7 +1114,7 @@ protected:
       PropertyAccessBase *pa = properties->get(px);
       if(!pa->enabled) continue;
 
-      ClassTraits<T>::save(this, objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_none);
+      ClassTraits<T>::save(this, classId, objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_none);
     }
   }
 
@@ -1126,10 +1124,11 @@ protected:
    * @param id the object id
    * @param obj the object to save
    * @param newObject whether the object key needs to be generated
-   * @param shallow skip vector properties that go to separate keys
+   * @param pa property that has changed. If null, everything will be written
+   * @param shallow skip properties that go to separate keys (except pa)
    */
   template <typename T>
-  ObjectId saveObject(ObjectId id, T &obj, bool newObject, bool shallow=false)
+  ObjectId saveObject(ObjectId id, T &obj, bool newObject, PropertyAccessBase *pa=nullptr, bool shallow=false)
   {
     using Traits = ClassTraits<T>;
 
@@ -1142,6 +1141,8 @@ protected:
     writeBuf().start(size);
 
     writeObject(classId, objectId, obj, Traits::properties, shallow);
+    if(pa && shallow)
+      Traits::save(this, classId, id, &obj, pa, StoreMode::force_property);
 
     if(!putData(classId, objectId, 0, writeBuf()))
       throw persistence_error("data was not saved");
@@ -1164,7 +1165,7 @@ protected:
    * @param newObject whether the object key needs to be generated
    */
   template <typename T>
-  ObjectId saveObject(ClassId classId, ObjectId id, T &obj, bool newObject)
+  ObjectId saveObject(ClassId classId, ObjectId id, T &obj, bool newObject, PropertyAccessBase *pa=nullptr, bool shallow=false)
   {
     ClassInfo *classInfo = store.objectClassInfos.at(classId);
     if(!classInfo) throw persistence_error("class not registered");
@@ -1176,7 +1177,9 @@ protected:
     size_t size = calculateBuffer(&obj, properties);
     writeBuf().start(size);
 
-    writeObject(classId, objectId, obj, properties, false);
+    writeObject(classId, objectId, obj, properties, shallow);
+    if(pa && shallow)
+      ClassTraits<T>::save(this, classId, id, &obj, pa, StoreMode::force_property);
 
     if(!putData(classId, objectId, 0, writeBuf()))
       throw persistence_error("data was not saved");
@@ -1442,18 +1445,23 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(const ObjectId objId, T &obj, PropertyId propertyId, bool shallow=false)
+  void updateMember(const ObjectId objId, T &obj, PropertyAccessBase *pa, bool shallow=false)
   {
-    using Traits = ClassTraits<T>;
+    ClassId classId = getClassId(typeid(obj));
 
-    PropertyAccessBase *pa = Traits::decl_props[propertyId-1];
-    if(pa->type.isVector) {
-      //vector goes to a separate key, no need to touch the object buffer
-      Traits::save(this, objId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
+    switch(pa->storage->layout) {
+      case StoreLayout::property:
+        //property goes to a separate key, no need to touch the object buffer
+        ClassTraits<T>::save(this, classId, objId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
+        break;
+      case StoreLayout::embedded_key:
+        //save property value and shallow buffer
+        saveObject<T>(classId, objId, obj, false, pa, true);
+        break;
+      case StoreLayout::all_embedded:
+        //shallow buffer only
+        saveObject<T>(classId, objId, obj, false, nullptr, true);
     }
-    else
-      //update the complete shallow buffer
-      saveObject<T>(objId, obj, false, true);
   }
 
   /**
@@ -1465,10 +1473,10 @@ public:
    * parameter must refer to the (super-)class which declares the member
    */
   template <typename T>
-  void updateMember(const std::shared_ptr<T> &obj, PropertyId propertyId, bool shallow=false)
+  void updateMember(const std::shared_ptr<T> &obj, PropertyAccessBase *pa, bool shallow=false)
   {
     ObjectId objId = ClassTraits<T>::get_id(obj);
-    updateMember(objId, *obj, propertyId, shallow);
+    updateMember(objId, *obj, pa, shallow);
   }
 
   /**
@@ -2160,8 +2168,10 @@ public:
       }
     }
 
-    //save the key in this objects write buffer
-    tr->writeBuf().append(childClassId, childId, 0);
+    if(mode != StoreMode::force_property) {
+      //save the key in this objects write buffer
+      tr->writeBuf().append(childClassId, childId, 0);
+    }
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override

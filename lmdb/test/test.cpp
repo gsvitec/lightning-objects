@@ -174,7 +174,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     sv_id = wtxn->putObject(sv);
 
     //since otherThings is lazy, we need to kick it separately
-    wtxn->updateMember(sv_id, sv, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    wtxn->updateMember(sv_id, sv, PROPERTY(SomethingWithALazyVector, otherThings));
 
     wtxn->commit();
   }
@@ -186,7 +186,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
     assert(loaded && loaded->otherThings.empty());
 
-    rtxn->loadMember(sv_id, *loaded, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    rtxn->loadMember(sv_id, *loaded, PROPERTY(SomethingWithALazyVector, otherThings));
 
     assert(loaded && loaded->otherThings.size() == 2);
     for (auto &ot : loaded->otherThings)
@@ -234,9 +234,9 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
         double *dval;
 
         //we're passing in buf, so that only the first call will go to the store
-        cursor->get(PROPERTY_ID(OtherThing, name), (const byte_t **)&name, &buf);
+        cursor->get(PROPERTY(OtherThing, name), (const byte_t **)&name, &buf);
         //buf is set now, so this call will simply return a pointer into buf
-        cursor->get(PROPERTY_ID(OtherThing, dvalue), (const byte_t **)&dval, &buf);
+        cursor->get(PROPERTY(OtherThing, dvalue), (const byte_t **)&dval, &buf);
 
         cout << name << " dvalue: " << *dval << endl;
       }

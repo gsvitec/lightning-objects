@@ -108,12 +108,19 @@ class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
 
-enum class StoreMode {force_none, force_all, force_buffer};
+enum class StoreMode {force_none, force_all, force_buffer, force_property};
+
+enum class StoreLayout {all_embedded, embedded_key, property};
 
 /**
  * abstract superclass for all Store Access classes
  */
-struct StoreAccessBase {
+struct StoreAccessBase
+{
+  const StoreLayout layout;
+
+  StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded) : layout(layout) {}
+
   virtual size_t size(const byte_t *buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
 
@@ -135,6 +142,8 @@ struct StoreAccessBase {
  */
 struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
+  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key) {}
+
   size_t size(const byte_t *buf) const override {return StorageKey::byteSize;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
 };
@@ -145,6 +154,8 @@ struct StoreAccessEmbeddedKey : public StoreAccessBase
  */
 struct StoreAccessPropertyKey: public StoreAccessBase
 {
+  StoreAccessPropertyKey() : StoreAccessBase(StoreLayout::property) {}
+
   size_t size(const byte_t *buf) const override {return 0;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
@@ -385,6 +396,7 @@ struct ClassInfo {
       : name(name), typeinfo(typeinfo), classId(classId) {}
 };
 
+enum class lookup {all, up, ident};
 namespace sub {
 //this namespace contains a group of templates that resolve the variadic template list
 //on ClassTraits which contains the subclasses. Each subclass is checked against the classId
@@ -401,15 +413,15 @@ struct resolve_impl
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::add(s, pa, size) : false;
+    return s ? ClassTraits<S>::add(s, pa, size, lookup::ident) : false;
   }
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::save(wtr, objectId, s, pa, mode) : false;
+    return s ? ClassTraits<S>::save(wtr, classId, objectId, s, pa, mode, lookup::ident) : false;
   }
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa) : false;
+    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa, lookup::ident) : false;
   }
 };
 
@@ -429,9 +441,9 @@ struct resolve_helper
     if(resolve_impl<T, S>().add(obj, pa, size)) return true;
     return resolve<T, Sargs...>().add(obj, pa, size);
   }
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    if(resolve_impl<T, S>().save(wtr, objectId, obj, pa, mode)) return true;
-    return resolve<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    if(resolve_impl<T, S>().save(wtr, classId, objectId, obj, pa, mode)) return true;
+    return resolve<T, Sargs...>().save(wtr, classId, objectId, obj, pa, mode);
   }
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
     if(resolve_impl<T, S>().load(tr, buf, classId, objectId, obj, pa)) return true;
@@ -449,8 +461,8 @@ struct resolve
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return resolve_helper<T, Sargs...>().add(obj, pa, size);
   }
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    return resolve_helper<T, Sargs...>().save(wtr, objectId, obj, pa, mode);
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+    return resolve_helper<T, Sargs...>().save(wtr, classId, objectId, obj, pa, mode);
   }
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
     return resolve_helper<T, Sargs...>().load(tr, buf, classId, objectId, obj, pa);
@@ -467,7 +479,7 @@ struct resolve<T>
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     return false;
   }
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
     return false;
   }
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
@@ -501,54 +513,56 @@ struct ClassTraitsBase
     return decl_props[id-1]->same(&t, oid);
   }
 
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size)
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, lookup lk=lookup::all)
   {
     if(pa->classId == info.classId) {
       size += pa->storage->size(obj, pa);
       return true;
     }
-    else if(pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size))
+    else if(lk != lookup::ident && pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size, lookup::up))
         return true;
-      return sub::resolve<T, SUBS...>().add(obj, pa, size);
+      return lk==lookup::all && sub::resolve<T, SUBS...>().add(obj, pa, size);
     }
     return false;
   }
 
-  static ObjectId get_id(const std::shared_ptr<T> &obj)
+  static ObjectId get_id(const std::shared_ptr<T> &obj, lookup lk=lookup::all)
   {
     ObjectId objId = get_objectid(obj, false);
     if(objId) return objId;
-    else {
-      objId = ClassTraits<SUP>::get_id(obj);
-      return objId ? objId : sub::resolve<T, SUBS...>().get_id(obj);
+    else if(lk != lookup::ident) {
+      objId = ClassTraits<SUP>::get_id(obj, lookup::up);
+      return objId ? objId : lk==lookup::all && sub::resolve<T, SUBS...>().get_id(obj);
     }
   }
 
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode)
+  static bool save(WriteTransaction *wtr,
+                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, lookup lk=lookup::all)
   {
     if(pa->classId == info.classId) {
-      pa->storage->save(wtr, info.classId, objectId, obj, pa, mode);
+      pa->storage->save(wtr, classId, objectId, obj, pa, mode);
       return true;
     }
-    else if(pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, objectId, obj, pa, mode))
+    else if(lk != lookup::ident && pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, lookup::up))
         return true;
-      return sub::resolve<T, SUBS...>().save(wtr, objectId, obj, pa, mode);
+      return lk==lookup::all && sub::resolve<T, SUBS...>().save(wtr, classId, objectId, obj, pa, mode);
     }
     return false;
   }
 
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa)
+  static bool load(ReadTransaction *tr,
+                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, lookup lk=lookup::all)
   {
     if(pa->classId == info.classId) {
       pa->storage->load(tr, buf, classId, objectId, obj, pa);
       return true;
     }
-    else if(pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa))
+    else if(lk != lookup::ident && pa->classId) {
+      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, lookup::up))
         return true;
-      return sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
+      return lk==lookup::all && sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
     }
     return false;
   }
@@ -557,26 +571,26 @@ struct ClassTraitsBase
    * put (copy) the value of the given property into value
    */
   template <typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value) {
+  static void put(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::all) {
     if(pa->classId == info.classId) {
       const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
       value = acc->get(d);
     }
-    else if(pa->classId)
-      ClassTraits<SUP>::put(d, pa, value);
+    else if(lk != lookup::ident && pa->classId)
+      ClassTraits<SUP>::put(d, pa, value, lookup::up);
   }
 
   /**
    * update the given property using value
    */
   template <typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value) {
+  static void get(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::all) {
     if(pa->classId == info.classId) {
       const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
       acc->set(d, value);
     }
-    else if(pa->classId)
-      ClassTraits<SUP>::get(d, pa, value);
+    else if(lk != lookup::ident && pa->classId)
+      ClassTraits<SUP>::get(d, pa, value, lookup::up);
   }
 };
 
@@ -588,26 +602,26 @@ struct ClassTraits<EmptyClass> {
   static PropertyAccessBase * decl_props[0];
 
   template <typename T>
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, lookup lk=lookup::ident) {
     return false;
   }
   template <typename T>
-  static ObjectId get_id(const std::shared_ptr<T> &obj) {
+  static ObjectId get_id(const std::shared_ptr<T> &obj, lookup lk=lookup::ident) {
     return 0;
   }
   template <typename T>
-  static bool save(WriteTransaction *wtr, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, lookup lk=lookup::ident) {
     return false;
   }
   template <typename T>
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, lookup lk=lookup::ident) {
     return false;
   }
   template <typename T, typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value) {
+  static void put(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::ident) {
   }
   template <typename T, typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value) {
+  static void get(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::ident) {
   }
 };
 
@@ -624,7 +638,7 @@ static PropertyType object_t() {
 }
 
 template <typename T> bool is_new(std::shared_ptr<T> obj) {
-  return ClassTraits<T>::get_id(obj) != 0;
+  return ClassTraits<T>::get_id(obj) == 0;
 }
 
 } //kv
