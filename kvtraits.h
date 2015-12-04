@@ -396,7 +396,6 @@ struct ClassInfo {
       : name(name), typeinfo(typeinfo), classId(classId) {}
 };
 
-enum class lookup {all, up, ident};
 namespace sub {
 //this namespace contains a group of templates that resolve the variadic template list
 //on ClassTraits which contains the subclasses. Each subclass is checked against the classId
@@ -407,21 +406,21 @@ namespace sub {
 template<typename T, typename S>
 struct resolve_impl
 {
-  static ObjectId get_id(const std::shared_ptr<T> obj) {
+  static ObjectId get_id(const std::shared_ptr<T> &obj) {
     auto s = std::dynamic_pointer_cast<S>(obj);
-    return s ? get_objectid(s, false) : 0;
+    return s ? ClassTraits<S>::get_id(s, 0x2) : 0;
   }
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::add(s, pa, size, lookup::ident) : false;
+    return s ? ClassTraits<S>::add(s, pa, size, 0x2) : false;
   }
   static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::save(wtr, classId, objectId, s, pa, mode, lookup::ident) : false;
+    return s ? ClassTraits<S>::save(wtr, classId, objectId, s, pa, mode, 0x2) : false;
   }
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
     S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa, lookup::ident) : false;
+    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa, 0x2) : false;
   }
 };
 
@@ -492,6 +491,14 @@ struct resolve<T>
 template <typename T, typename SUP=EmptyClass, typename ... SUBS>
 struct ClassTraitsBase
 {
+  static const unsigned FLAG_UP = 0x1;
+  static const unsigned FLAG_DN = 0x2;
+  static const unsigned FLAG_HR = 0x4;
+  static const unsigned FLAGS_ALL = FLAG_UP | FLAG_DN | FLAG_HR;
+
+#define DN flags & FLAG_DN
+#define UP flags & FLAG_UP
+
   static const unsigned keyPropertyId = 0;
 
   static ClassInfo info;
@@ -513,56 +520,56 @@ struct ClassTraitsBase
     return decl_props[id-1]->same(&t, oid);
   }
 
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, lookup lk=lookup::all)
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == info.classId) {
       size += pa->storage->size(obj, pa);
       return true;
     }
-    else if(lk != lookup::ident && pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size, lookup::up))
+    else if(pa->classId) {
+      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size, FLAG_UP))
         return true;
-      return lk==lookup::all && sub::resolve<T, SUBS...>().add(obj, pa, size);
+      return DN && sub::resolve<T, SUBS...>().add(obj, pa, size);
     }
     return false;
   }
 
-  static ObjectId get_id(const std::shared_ptr<T> &obj, lookup lk=lookup::all)
+  static ObjectId get_id(const std::shared_ptr<T> &obj, unsigned flags=FLAGS_ALL)
   {
     ObjectId objId = get_objectid(obj, false);
     if(objId) return objId;
-    else if(lk != lookup::ident) {
-      objId = ClassTraits<SUP>::get_id(obj, lookup::up);
-      return objId ? objId : lk==lookup::all && sub::resolve<T, SUBS...>().get_id(obj);
+    else {
+      objId = UP ? ClassTraits<SUP>::get_id(obj, FLAG_UP) : 0;
+      return objId ? objId : (DN ? sub::resolve<T, SUBS...>().get_id(obj) : 0);
     }
   }
 
   static bool save(WriteTransaction *wtr,
-                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, lookup lk=lookup::all)
+                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == info.classId) {
       pa->storage->save(wtr, classId, objectId, obj, pa, mode);
       return true;
     }
-    else if(lk != lookup::ident && pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, lookup::up))
+    else if(pa->classId) {
+      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return lk==lookup::all && sub::resolve<T, SUBS...>().save(wtr, classId, objectId, obj, pa, mode);
+      return DN && sub::resolve<T, SUBS...>().save(wtr, classId, objectId, obj, pa, mode);
     }
     return false;
   }
 
   static bool load(ReadTransaction *tr,
-                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, lookup lk=lookup::all)
+                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == info.classId) {
       pa->storage->load(tr, buf, classId, objectId, obj, pa);
       return true;
     }
-    else if(lk != lookup::ident && pa->classId) {
-      if(ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, lookup::up))
+    else if(pa->classId) {
+      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, FLAG_UP))
         return true;
-      return lk==lookup::all && sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
+      return DN && sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
     }
     return false;
   }
@@ -571,26 +578,26 @@ struct ClassTraitsBase
    * put (copy) the value of the given property into value
    */
   template <typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::all) {
+  static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
     if(pa->classId == info.classId) {
       const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
       value = acc->get(d);
     }
-    else if(lk != lookup::ident && pa->classId)
-      ClassTraits<SUP>::put(d, pa, value, lookup::up);
+    else if(UP && pa->classId)
+      ClassTraits<SUP>::put(d, pa, value, FLAG_UP);
   }
 
   /**
    * update the given property using value
    */
   template <typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::all) {
+  static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
     if(pa->classId == info.classId) {
       const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
       acc->set(d, value);
     }
-    else if(lk != lookup::ident && pa->classId)
-      ClassTraits<SUP>::get(d, pa, value, lookup::up);
+    else if(UP && pa->classId)
+      ClassTraits<SUP>::get(d, pa, value, FLAG_UP);
   }
 };
 
@@ -602,26 +609,26 @@ struct ClassTraits<EmptyClass> {
   static PropertyAccessBase * decl_props[0];
 
   template <typename T>
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, lookup lk=lookup::ident) {
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags) {
     return false;
   }
   template <typename T>
-  static ObjectId get_id(const std::shared_ptr<T> &obj, lookup lk=lookup::ident) {
+  static ObjectId get_id(const std::shared_ptr<T> &obj, unsigned flags) {
     return 0;
   }
   template <typename T>
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, lookup lk=lookup::ident) {
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags) {
     return false;
   }
   template <typename T>
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, lookup lk=lookup::ident) {
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, unsigned flags) {
     return false;
   }
   template <typename T, typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::ident) {
+  static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags) {
   }
   template <typename T, typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value, lookup lk=lookup::ident) {
+  static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags) {
   }
 };
 
