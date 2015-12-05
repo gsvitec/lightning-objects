@@ -1172,13 +1172,13 @@ protected:
     Properties *properties = store.objectProperties[classId];
     ObjectId objectId = newObject ? ++classInfo->maxObjectId : id;
 
+    if(pa && shallow)
+      ClassTraits<T>::save(this, classId, id, &obj, pa, StoreMode::force_property);
+
     //create the data buffer
     size_t size = calculateBuffer(&obj, properties);
     writeBuf().start(size);
-
     writeObject(classId, objectId, obj, properties, shallow);
-    if(pa && shallow)
-      ClassTraits<T>::save(this, classId, id, &obj, pa, StoreMode::force_property);
 
     if(!putData(classId, objectId, 0, writeBuf()))
       throw persistence_error("data was not saved");
@@ -2101,9 +2101,8 @@ template <typename V, template <typename> class Ptr> struct OidAccess
     return ptr.objectid;
   }
 
-  static Ptr<V> setObjectId(ObjectId oid, Ptr<V> &ptr) {
+  static void setObjectId(ObjectId oid, Ptr<V> &ptr) {
     ptr.objectid = oid;
-    return ptr;
   }
 };
 
@@ -2118,10 +2117,8 @@ template <typename V> struct OidAccess<V, std::shared_ptr>
     return ClassTraits<V>::get_id(ptr);
   }
 
-  static std::shared_ptr<V> setObjectId(ObjectId oid, std::shared_ptr<V> ptr) {
-    std::shared_ptr<V> val2(nullptr, object_handler<V>(oid));
-    val2.swap(ptr);
-    return val2;
+  static void setObjectId(ObjectId oid, std::shared_ptr<V> ptr) {
+    set_objectid(ptr, oid);
   }
 };
 
@@ -2162,8 +2159,7 @@ public:
         tr->popWriteBuf();
 
         //update the property so that it holds the object id
-        Ptr<V> val2 = OidAccess<V, Ptr>::setObjectId(childId, val);
-        ClassTraits<T>::get(*tp, pa, val2);
+        OidAccess<V, Ptr>::setObjectId(childId, val);
       }
     }
 
