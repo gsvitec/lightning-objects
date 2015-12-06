@@ -429,6 +429,7 @@ struct resolve_impl
 {
   bool publish(AbstractClassInfo *res) {
     ClassTraits<S>::info->addSub(res);
+    return true;
   }
 };
 
