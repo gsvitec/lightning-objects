@@ -1,18 +1,24 @@
 //
 // Created by cse on 12/3/15.
 //
+/**
+ * start the mapping header.
+ * @param cls the fully qualified class name
+ */
+#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
 
-#ifndef FLEXIS_TRAITS_DECL_H
-#define FLEXIS_TRAITS_DECL_H
+/**
+ * start the mapping header.
+ * @param cls the fully qualified class name
+ */
+#define START_MAPPINGHDR_SUB(cls, sup, nm) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls, sup> {
 
 #define END_MAPPINGHDR(cls) };
-#define END_MAPPINGHDR_INH(cls, base) };
+#define END_MAPPINGHDR_SUB(cls, sup, nm) };
 #define END_MAPPING(cls)
-#define END_MAPPING_INH2(cls, base, sup)
-#define END_MAPPING_INH(cls, base)
+#define END_MAPPING_SUB(cls, sub, nm)
 
 #define MAPPED_PROP(cls, propkind, proptype, propname)
 #define MAPPED_PROP2(cls, propkind, proptype, prop, name)
+#define MAPPED_PROP3(cls, propkind, proptype, propname, parm)
 #define OBJECT_ID(cls, prop)
-
-#endif //FLEXIS_TRAITS_DECL_H

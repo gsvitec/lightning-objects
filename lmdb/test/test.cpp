@@ -6,7 +6,6 @@
 #include <kvstore/kvstore.h>
 #include <lmdb_kvstore.h>
 #include "testclasses.h"
-#include <kv/kvlibtraits.h>
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;

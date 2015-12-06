@@ -60,15 +60,20 @@ static std::shared_ptr<T> make_ptr(T *t, ObjectId oid = 0)
 }
 
 /**
- * @return the ObjectId which was stored inside the pointer
- * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
+ * retrieve the ObjectId stored inside the given pointer
+ *
+ * @param obj the object pointer
+ * @param oid (out) the retrieved ObjectId
+ * @return true if the ObjectId was retrieved
  */
-template<typename T> ObjectId get_objectid(const std::shared_ptr<T> &obj, bool force=true)
+template<typename T> bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid)
 {
   object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-  if(ohm) return ohm->objectId;
-  else if(force) throw persistence_error("shared_ptr was not created by KV store");
-  return 0;
+  if(ohm) {
+    oid = ohm->objectId;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -94,11 +99,9 @@ struct StorageKey
   ObjectId objectId;
   PropertyId propertyId; //will be 0 if this is an object key
 
-  bool dirty; //used by objects that carry a StorageKey property
-
-  StorageKey(bool dirty=false) : classId(0), objectId(0), propertyId(0), dirty(dirty) {}
-  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId, bool dirty=false)
-      : classId(classId), objectId(objectId), propertyId(propertyId), dirty(dirty) {}
+  StorageKey() : classId(0), objectId(0), propertyId(0) {}
+  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId)
+      : classId(classId), objectId(objectId), propertyId(propertyId) {}
 };
 
 /*

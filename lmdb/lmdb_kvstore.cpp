@@ -455,7 +455,7 @@ class KeyValueStoreImpl : public KeyValueStore
 
 protected:
   void loadSaveClassMeta(
-      ClassInfo &classInfo,
+      AbstractClassInfo *classInfo,
       PropertyAccessBase * currentProps[],
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
@@ -873,7 +873,7 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
 }
 
 void KeyValueStoreImpl::loadSaveClassMeta(
-    ClassInfo &classInfo,
+    AbstractClassInfo *classInfo,
     PropertyAccessBase * currentProps[],
     unsigned numProps,
     vector<PropertyMetaInfoPtr> &propertyInfos)
@@ -886,14 +886,14 @@ void KeyValueStoreImpl::loadSaveClassMeta(
   dbi.set_dupsort(txn, meta_dup_compare);
 
   ::lmdb::val key, val;
-  key.assign(classInfo.name);
+  key.assign(classInfo->name);
   auto cursor = ::lmdb::cursor::open(txn, dbi);
   if(cursor.get(key, val, MDB_SET)) {
     bool first = true;
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
         //class already known. First record is [propertyId == 0, classId]
-        classInfo.classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
+        classInfo->classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
         first = false;
       }
       else //rest is properties
@@ -911,16 +911,16 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     cursor = ::lmdb::cursor::open(txn, dbi);
     while (cursor.get(key, val, MDB_NEXT_NODUP)) {
       ClassId cid = read_integer<ClassId>(val.data<byte_t>()+2, 2);
-      if(cid > classInfo.classId) classInfo.classId = cid;
+      if(cid > classInfo->classId) classInfo->classId = cid;
     }
     cursor.close();
-    classInfo.classId++;
+    classInfo->classId++;
 
     //save the first record [0, classId]
     byte_t buf[4];
     write_integer<PropertyId>(buf, 0, 2);
-    write_integer<ClassId>(buf+2, classInfo.classId, 2);
-    key.assign(classInfo.name);
+    write_integer<ClassId>(buf+2, classInfo->classId, 2);
+    key.assign(classInfo->name);
     val.assign(buf, 4);
     dbi.put(txn, key, val);
 
@@ -933,7 +933,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     }
     txn.commit();
   }
-  classInfo.maxObjectId = findMaxObjectId(classInfo.classId);
+  classInfo->maxObjectId = findMaxObjectId(classInfo->classId);
 }
 
 } //lmdb

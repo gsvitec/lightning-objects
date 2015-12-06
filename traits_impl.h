@@ -6,39 +6,48 @@
 #define FLEXIS_TRAITS_IMPL_H
 
 /**
+ * start the mapping header.
+ * @param cls the fully qualified class name
+ */
+#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
+
+/**
+ * start the mapping header.
+ * @param cls the fully qualified class name
+ */
+#define START_MAPPINGHDR_SUB(cls, sup, nm) using nm##_traits = ClassTraitsBase<cls, sup>; \
+template <> struct ClassTraits<cls> : public nm##_traits {
+
+/**
  * end the mapping header
  * @param cls the fully qualified class name
  */
-#define END_MAPPINGHDR(cls) }; template<> ClassInfo ClassTraitsBase<cls>::info (#cls, typeid(cls)); \
+#define END_MAPPINGHDR(cls) }; \
+template <> const char * ClassTraitsBase<cls>::name = #cls;\
+template <> ClassInfo<cls, EmptyClass> * ClassTraitsBase<cls, EmptyClass>::info = new ClassInfo<cls, EmptyClass>(#cls, typeid(cls)); \
 template<> PropertyAccessBase * ClassTraitsBase<cls>::decl_props[] = {
 
 /**
- * end the mapping header with inheritance
+ * end the mapping header
  * @param cls the fully qualified class name
+ * @param sup the name of the superclass
  */
-#define END_MAPPINGHDR_INH(cls, base) }; template<> ClassInfo base::info (#cls, typeid(cls)); \
-template<> PropertyAccessBase * base::decl_props[] = {
+#define END_MAPPINGHDR_SUB(cls, sup, nm) }; \
+template <> const char * nm##_traits::name = #cls;\
+template <> ClassInfo<cls, sup> * nm##_traits::info = ClassInfo<cls, sup>::subclass<sup>(#cls, typeid(cls)); \
+template<> PropertyAccessBase * nm##_traits::decl_props[] = {
 
 /**
  * close the mapping for one class
  * @param cls the fully qualified class name
  */
 #define END_MAPPING(cls) }; \
-template<> const unsigned ClassTraitsBase<cls>::decl_props_sz = ARRAY_SZ(ClassTraits<cls>::decl_props); \
+template<> const unsigned ClassTraitsBase<cls>::decl_props_sz = ARRAY_SZ(ClassTraitsBase<cls>::decl_props); \
 template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
 
-/**
- * close the mapping for one class, with inheritance
- * @param cls the fully qualified class name
- * @param sup the fully qualified name of the superclass
- */
-#define END_MAPPING_INH2(cls, base, sup) }; \
-template<> const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
-template<> Properties * base::properties(Properties::mk<cls, sup>());
-
-#define END_MAPPING_INH(cls, base) }; \
-template<> const unsigned base::decl_props_sz = ARRAY_SZ(base::decl_props); \
-template<> Properties * base::properties(Properties::mk<cls>());
+#define END_MAPPING_SUB(cls, sup, nm) }; \
+template<> const unsigned nm##_traits::decl_props_sz = ARRAY_SZ(nm##_traits::decl_props); \
+template<> Properties * nm##_traits::properties(Properties::mk<cls, sup>());
 
 /**
  * define mapping for one property
@@ -54,6 +63,8 @@ template<> Properties * base::properties(Properties::mk<cls>());
  * define mapping for one property. Same as MAPPED_PROP, but with different names for property and field
  */
 #define MAPPED_PROP2(cls, propkind, proptype, prop, name) new propkind<cls, proptype, &cls::prop>(#name),
+
+#define MAPPED_PROP3(cls, propkind, proptype, propname, parm) new propkind<cls, proptype, &cls::propname>(#propname, parm),
 
 /**
  * define mapping for a objectid property

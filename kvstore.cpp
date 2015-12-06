@@ -12,14 +12,14 @@ namespace persistence {
 using namespace std;
 
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
-ClassInfo ClassTraits<kv::EmptyClass>::info {"empty", typeid(EmptyClass), 0};
+ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
 
 inline bool streq(string s1, const char *s2) {
   if(s2 == nullptr) return s1.empty();
   return s1 == s2;
 }
 
-void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBase * properties[], unsigned numProperties)
+void KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
   loadSaveClassMeta(classInfo, properties, numProperties, propertyInfos);
@@ -36,7 +36,7 @@ void KeyValueStoreBase::updateClassSchema(ClassInfo &classInfo, PropertyAccessBa
              || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
              || pi->isVector != pa->type.isVector) {
             stringstream ss;
-            ss << "class " << classInfo.name << ": data type for property '" << pi->name << "' has changed";
+            ss << "class " << classInfo->name << ": data type for property '" << pi->name << "' has changed";
             throw incompatible_schema_error(ss.str());
           }
         }

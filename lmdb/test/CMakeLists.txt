@@ -2,12 +2,12 @@
 
 add_definitions(-DFlexisPersistence_EXPORTS)
 
-set(DEP_SRC ../../kvstore.cpp)
+set(DEP_SRC ../../kvstore.cpp ../../../kv/kvlibtraits.cpp)
 
-add_executable(LmdbTest test.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
+add_executable(LmdbTest test.cpp testclasses.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
 add_dependencies(LmdbTest LmdbStore FlexisOverlays)
 
-add_executable(LmdbBench bench.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
+add_executable(LmdbBench bench.cpp testclasses.cpp ${DEP_SRC} $<TARGET_OBJECTS:LmdbStore> $<TARGET_OBJECTS:FlexisOverlays>)
 add_dependencies(LmdbBench LmdbStore FlexisOverlays)
 
 target_link_libraries(LmdbTest FlexisBase)

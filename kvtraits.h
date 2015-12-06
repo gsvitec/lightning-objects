@@ -382,45 +382,53 @@ public:
   }
 };
 
-struct ClassInfo {
+struct AbstractClassInfo {
   static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
 
-  ClassInfo(const ClassInfo &other) = delete;
+  AbstractClassInfo(const AbstractClassInfo &other) = delete;
 
   const char *name;
   const std::type_info &typeinfo;
   ClassId classId = 0;
   ObjectId maxObjectId = 0;
 
-  ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
+  std::vector<AbstractClassInfo *> subs;
+
+  AbstractClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId)
       : name(name), typeinfo(typeinfo), classId(classId) {}
+
+  void addSub(AbstractClassInfo *rsub) {
+    subs.push_back(rsub);
+  }
+
+  AbstractClassInfo *resolve(ClassId otherClassId)
+  {
+    if(classId == 0) return nullptr; //empty class
+
+    if(otherClassId == classId) {
+      return this;
+    }
+    for(auto res : subs) {
+      AbstractClassInfo *r = res->resolve(otherClassId);
+      if(r) return r;
+    }
+    return nullptr;
+  }
 };
 
 namespace sub {
-//this namespace contains a group of templates that resolve the variadic template list
-//on ClassTraits which contains the subclasses. Each subclass is checked against the classId
-//stored in a propertyaccessor. If the class matches, the target object is dynamic_cast to the
-//target type and then accessed
 
-//this one does the real work
+/**
+ * a group of structs that resolve the variadic template list used by the ClassInfo#subclass function
+ * the list is expanded and the ClassTraits for each type are notified about the subclass
+ */
+
+//this one does the real work by adding the resolver as subtype
 template<typename T, typename S>
 struct resolve_impl
 {
-  static ObjectId get_id(const std::shared_ptr<T> &obj) {
-    auto s = std::dynamic_pointer_cast<S>(obj);
-    return s ? ClassTraits<S>::get_id(s, 0x2) : 0;
-  }
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
-    S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::add(s, pa, size, 0x2) : false;
-  }
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::save(wtr, classId, objectId, s, pa, mode, 0x2) : false;
-  }
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
-    S *s = dynamic_cast<S *>(obj);
-    return s ? ClassTraits<S>::load(tr, buf, classId, objectId, s, pa, 0x2) : false;
+  bool publish(AbstractClassInfo *res) {
+    ClassTraits<S>::info->addSub(res);
   }
 };
 
@@ -432,21 +440,9 @@ struct resolve;
 template<typename T, typename S, typename... Sargs>
 struct resolve_helper
 {
-  static ObjectId  get_id(const std::shared_ptr<T> &obj) {
-    ObjectId objId = resolve_impl<T, S>().get_id(obj);
-    return objId ? objId : resolve<T, Sargs...>().get_id(obj);
-  }
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
-    if(resolve_impl<T, S>().add(obj, pa, size)) return true;
-    return resolve<T, Sargs...>().add(obj, pa, size);
-  }
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    if(resolve_impl<T, S>().save(wtr, classId, objectId, obj, pa, mode)) return true;
-    return resolve<T, Sargs...>().save(wtr, classId, objectId, obj, pa, mode);
-  }
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
-    if(resolve_impl<T, S>().load(tr, buf, classId, objectId, obj, pa)) return true;
-    return resolve<T, Sargs...>().load(tr, buf, classId, objectId, obj, pa);
+  bool publish(AbstractClassInfo *res) {
+    if(resolve_impl<T, S>().publish(res)) return true;
+    return resolve<T, Sargs...>().publish(res);
   }
 };
 
@@ -454,17 +450,8 @@ struct resolve_helper
 template<typename T, typename... Sargs>
 struct resolve
 {
-  static ObjectId get_id(const std::shared_ptr<T> &obj) {
-    return resolve_helper<T, Sargs...>().get_id(obj);
-  }
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
-    return resolve_helper<T, Sargs...>().add(obj, pa, size);
-  }
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    return resolve_helper<T, Sargs...>().save(wtr, classId, objectId, obj, pa, mode);
-  }
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
-    return resolve_helper<T, Sargs...>().load(tr, buf, classId, objectId, obj, pa);
+  bool publish(AbstractClassInfo *res) {
+    return resolve_helper<T, Sargs...>().publish(res);
   }
 };
 
@@ -472,23 +459,48 @@ struct resolve
 template<typename T>
 struct resolve<T>
 {
-  static bool get_id(const std::shared_ptr<T> &obj) {
-    return 0;
-  }
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size) {
-    return false;
-  }
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode) {
-    return false;
-  }
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa) {
-    return false;
-  }
+  bool publish(AbstractClassInfo *res) {return false;}
 };
 
 } //sub
 
-template <typename T, typename SUP=EmptyClass, typename ... SUBS>
+template <typename T, typename ... Sup>
+struct ClassInfo : public AbstractClassInfo
+{
+  bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const get_id)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
+  bool (* const save)(WriteTransaction *wtr,
+                      ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
+  bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
+                      ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
+
+  ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
+      : AbstractClassInfo(name, typeinfo, classId),
+        add(&ClassTraits<T>::add),
+        get_id(&ClassTraits<T>::get_id),
+        save(&ClassTraits<T>::save),
+        load(&ClassTraits<T>::load) {}
+
+  template <typename ... Sup2>
+  static ClassInfo<T, Sup...> *subclass(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
+  {
+    //create a classinfo
+    return new ClassInfo<T, Sup2...>(name, typeinfo, classId);
+  }
+
+  void publish() {
+    //make it known to superclasses
+    sub::resolve<T, Sup...>().publish(this);
+  }
+};
+
+#define RESOLVE_SUB(__cid) reinterpret_cast<ClassInfo<T> *>(ClassTraits<T>::info->resolve(__cid))
+
+/**
+ * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a subtype
+ * of this class
+ */
+template <typename T, typename SUP=EmptyClass>
 struct ClassTraitsBase
 {
   static const unsigned FLAG_UP = 0x1;
@@ -501,7 +513,8 @@ struct ClassTraitsBase
 
   static const unsigned keyPropertyId = 0;
 
-  static ClassInfo info;
+  static const char *name;
+  static ClassInfo<T, SUP> *info;
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
   static const unsigned decl_props_sz;
@@ -516,60 +529,69 @@ struct ClassTraitsBase
   template <typename V>
   static bool same(T &t, ObjectId id, std::shared_ptr<V> &val)
   {
+    //TODO: this is not polymorphic!
     ObjectId oid = get_objectid(val);
     return decl_props[id-1]->same(&t, oid);
   }
 
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info.classId) {
+    if(pa->classId == info->classId) {
       size += pa->storage->size(obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::add(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::add(obj, pa, size, FLAG_UP))
         return true;
-      return DN && sub::resolve<T, SUBS...>().add(obj, pa, size);
+      return DN && RESOLVE_SUB(pa->classId)->add(obj, pa, size, FLAG_DN);
     }
     return false;
   }
 
-  static ObjectId get_id(const std::shared_ptr<T> &obj, unsigned flags=FLAGS_ALL)
+  static bool get_id(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
   {
-    ObjectId objId = get_objectid(obj, false);
-    if(objId) return objId;
-    else {
-      objId = UP ? ClassTraits<SUP>::get_id(obj, FLAG_UP) : 0;
-      return objId ? objId : (DN ? sub::resolve<T, SUBS...>().get_id(obj) : 0);
+    if(get_objectid(obj, oid)) {
+      return true;
     }
+    else {
+      if(UP && ClassTraits<SUP>::get_id(obj, oid, FLAG_UP)) return true;
+      if(DN) {
+        for(auto &sub : info->subs) {
+          ClassInfo<T> * si = reinterpret_cast<ClassInfo<T> *>(sub);
+          if(si->get_id(obj, oid, FLAG_DN)) return true;
+        }
+      }
+    }
+    return false;
   }
 
   static bool save(WriteTransaction *wtr,
                    ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info.classId) {
+    if(pa->classId == info->classId) {
       pa->storage->save(wtr, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return DN && sub::resolve<T, SUBS...>().save(wtr, classId, objectId, obj, pa, mode);
+      return DN && RESOLVE_SUB(pa->classId)->save(wtr, classId, objectId, obj, pa, mode, FLAG_DN);
     }
     return false;
   }
 
   static bool load(ReadTransaction *tr,
-                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, unsigned flags=FLAGS_ALL)
+                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa,
+                   StoreMode mode=StoreMode::force_none, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info.classId) {
-      pa->storage->load(tr, buf, classId, objectId, obj, pa);
+    if(pa->classId == info->classId) {
+      pa->storage->load(tr, buf, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info.classId != info.classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, FLAG_UP))
+      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return DN && sub::resolve<T, SUBS...>().load(tr, buf, classId, objectId, obj, pa);
+      return DN && RESOLVE_SUB(pa->classId)->load(tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
     }
     return false;
   }
@@ -579,12 +601,11 @@ struct ClassTraitsBase
    */
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId == info.classId) {
-      const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
-      value = acc->get(d);
-    }
-    else if(UP && pa->classId)
-      ClassTraits<SUP>::put(d, pa, value, FLAG_UP);
+    if(pa->classId != info->classId)
+      throw persistence_error("internal error: type mismatch");
+
+    const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
+    value = acc->get(d);
   }
 
   /**
@@ -592,36 +613,38 @@ struct ClassTraitsBase
    */
   template <typename TV>
   static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId == info.classId) {
-      const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
-      acc->set(d, value);
-    }
-    else if(UP && pa->classId)
-      ClassTraits<SUP>::get(d, pa, value, FLAG_UP);
+    if(pa->classId != info->classId)
+      throw persistence_error("internal error: type mismatch");
+
+    const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
+    acc->set(d, value);
   }
 };
 
 template <>
-struct ClassTraits<EmptyClass> {
-  static FlexisPersistence_EXPORT ClassInfo info;
-  static FlexisPersistence_EXPORT Properties * properties;
-  static FlexisPersistence_EXPORT const unsigned decl_props_sz = 0;
-  static FlexisPersistence_EXPORT PropertyAccessBase * decl_props[0];
+struct ClassTraits<EmptyClass>
+{
+  static ClassInfo<EmptyClass> *info;
+  static Properties * properties;
+  static const unsigned decl_props_sz = 0;
+  static PropertyAccessBase * decl_props[0];
 
   template <typename T>
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags) {
+  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static ObjectId get_id(const std::shared_ptr<T> &obj, unsigned flags) {
-    return 0;
-  }
-  template <typename T>
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags) {
+  static bool get_id(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, unsigned flags) {
+  static bool save(WriteTransaction *wtr,
+                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=0) {
+    return false;
+  }
+  template <typename T>
+  static bool load(ReadTransaction *tr, ReadBuf &buf,
+                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=0) {
     return false;
   }
   template <typename T, typename TV>
@@ -635,17 +658,13 @@ struct ClassTraits<EmptyClass> {
 template<typename T>
 static PropertyType object_vector_t() {
   using Traits = ClassTraits<T>;
-  return PropertyType(Traits::info.name, true);
+  return PropertyType(Traits::name, true);
 }
 
 template<typename T>
 static PropertyType object_t() {
   using Traits = ClassTraits<T>;
-  return PropertyType(Traits::info.name);
-}
-
-template <typename T> bool is_new(std::shared_ptr<T> obj) {
-  return ClassTraits<T>::get_id(obj) == 0;
+  return PropertyType(Traits::name);
 }
 
 } //kv
@@ -653,19 +672,5 @@ template <typename T> bool is_new(std::shared_ptr<T> obj) {
 } //flexis
 
 using NO_SUPERCLASS = flexis::persistence::kv::EmptyClass;
-
-//convenience macros for manually defining mappings
-
-/**
- * start the mapping header.
- * @param cls the fully qualified class name
- */
-#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
-
-/**
- * start the mapping header with inheritance.
- * @param cls the fully qualified class name
- */
-#define START_MAPPINGHDR_INH(cls, base) template <> struct ClassTraits<cls> : public base{
 
 #endif //FLEXIS_FLEXIS_KVTRAITS_H
