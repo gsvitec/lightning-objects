@@ -1,6 +1,15 @@
 //
 // Created by cse on 12/3/15.
 //
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+// macros for inclusion in application files. If mappings are referenced from multiple
+// application files, definitions must be separated from declarations. Definitions must be kept
+// in a source file. This can be achieved by using the mapping definition macros below and
+// #including this file for the application files and traits_impl.h for the mapping definition
+// file
+////////////////////////////////////////////////////////////////////////////////////////////
+
 /**
  * start the mapping header.
  * @param cls the fully qualified class name

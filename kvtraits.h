@@ -162,6 +162,9 @@ struct StoreAccessPropertyKey: public StoreAccessBase
 
 template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
 
+/**
+ * base class for value handler templates. Main task is determining storage size and serializing/deserializing
+ */
 struct ValueTraitsBase {
   const bool fixed;
   ValueTraitsBase(bool fixed) : fixed(fixed) {}
@@ -174,6 +177,9 @@ struct ValueTraitsFixed : public ValueTraitsBase
   ValueTraitsFixed() : ValueTraitsBase(Fixed) {}
 };
 
+/**
+ * base class for single-byte value handlers
+ */
 template <typename T>
 struct ValueTraitsByte : public ValueTraitsFixed<true>
 {
@@ -190,6 +196,9 @@ struct ValueTraitsByte : public ValueTraitsFixed<true>
   }
 };
 
+/**
+ * base template value handler for fixed size values
+ */
 template <typename T>
 struct ValueTraits : public ValueTraitsFixed<true>
 {
@@ -211,6 +220,9 @@ struct ValueTraits : public ValueTraitsFixed<true>
   }
 };
 
+/**
+ * value handler specialization for boolean values
+ */
 template <>
 struct ValueTraits<bool> : public ValueTraitsFixed<true>
 {
@@ -227,6 +239,9 @@ struct ValueTraits<bool> : public ValueTraitsFixed<true>
   }
 };
 
+/**
+ * value handler specialization for string values
+ */
 template <>
 struct ValueTraits<std::string> : public ValueTraitsFixed<false>
 {
@@ -245,6 +260,9 @@ struct ValueTraits<std::string> : public ValueTraitsFixed<false>
   }
 };
 
+/**
+ * value handler specialization for C string values
+ */
 template <>
 struct ValueTraits<const char *> : public ValueTraitsFixed<false>
 {
@@ -262,6 +280,9 @@ struct ValueTraits<const char *> : public ValueTraitsFixed<false>
   }
 };
 
+/**
+ * value handler base class for float values
+ */
 template <typename T>
 struct ValueTraitsFloat : public ValueTraitsFixed<true>
 {
@@ -285,11 +306,20 @@ struct ValueTraitsFloat : public ValueTraitsFixed<true>
 
 #define PROPERTY_TYPE(P) PropertyType(TypeTraits<P>::id, TypeTraits<P>::byteSize, TypeTraits<P>::isVect)
 
+/**
+ * value handler specialization for float values
+ */
 template <>
 struct ValueTraits<float> : public ValueTraitsFloat<float> {};
+/**
+ * value handler specialization for double values
+ */
 template <>
 struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
+/**
+ * non-templated base class for property accessors
+ */
 struct PropertyAccessBase
 {
   const char * const name;
@@ -304,6 +334,9 @@ struct PropertyAccessBase
   virtual ~PropertyAccessBase() {delete storage;}
 };
 
+/**
+ * templated abstract superclass for property accessors
+ */
 template <typename O, typename P>
 struct PropertyAccess : public PropertyAccessBase {
   PropertyAccess(const char * name, StoreAccessBase *storage, const PropertyType &type)
@@ -312,6 +345,9 @@ struct PropertyAccess : public PropertyAccessBase {
   virtual P get(O &o) const = 0;
 };
 
+/**
+ * property accessor that performs direct assignment
+ */
 template <typename O, typename P, P O::*p> struct PropertyAssign : public PropertyAccess<O, P> {
   PropertyAssign(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : PropertyAccess<O, P>(name, storage, type) {}
@@ -319,6 +355,9 @@ template <typename O, typename P, P O::*p> struct PropertyAssign : public Proper
   P get(O &o) const override { return o.*p;}
 };
 
+/**
+ * assignment property accessor for predeclared base types
+ */
 template <typename O, typename P, P O::*p>
 struct BasePropertyAssign : public PropertyAssign<O, P, p> {
   BasePropertyAssign(const char * name)
@@ -327,10 +366,17 @@ struct BasePropertyAssign : public PropertyAssign<O, P, p> {
 
 template <typename T> struct ClassTraits;
 
+/**
+ * dummy class
+ */
 struct EmptyClass
 {
 };
 
+/**
+ * iterates over class property mappings. In an inheritance context, the iteration will start with the topmost
+ * class and  run down the hierarchy so that all properties are covered. Single-inheritance only
+ */
 class Properties
 {
   const unsigned keyStorageId;
@@ -382,6 +428,9 @@ public:
   }
 };
 
+/**
+ * non-templated superclass for ClassInfo
+ */
 struct AbstractClassInfo {
   static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
 
@@ -464,6 +513,9 @@ struct resolve<T>
 
 } //sub
 
+/**
+ * peer object for the ClassTraitsBase below which contains class metadata and references subclasses
+ */
 template <typename T, typename ... Sup>
 struct ClassInfo : public AbstractClassInfo
 {
@@ -497,8 +549,9 @@ struct ClassInfo : public AbstractClassInfo
 #define RESOLVE_SUB(__cid) reinterpret_cast<ClassInfo<T> *>(ClassTraits<T>::info->resolve(__cid))
 
 /**
- * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a subtype
- * of this class
+ * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a templated
+ * instance of this class. All calls to access/update mapped object properties should go through here and will be
+ * dispatched to the correct location
  */
 template <typename T, typename SUP=EmptyClass>
 struct ClassTraitsBase
@@ -621,6 +674,9 @@ struct ClassTraitsBase
   }
 };
 
+/**
+ * represents a non-class, e.g. where a mapped superclass must be defined but does not exist
+ */
 template <>
 struct ClassTraits<EmptyClass>
 {

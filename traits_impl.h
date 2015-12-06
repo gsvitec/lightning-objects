@@ -5,6 +5,14 @@
 #ifndef FLEXIS_TRAITS_IMPL_H
 #define FLEXIS_TRAITS_IMPL_H
 
+/////////////////////////////////////////////////////////////////////////////////////////////
+// macros for inclusion in mapping implementation files. If mappings are referenced from multiple
+// application files, definitions must be separated from declarations. Definitions must be kept
+// in a source file. This can be achieved by using the mapping definition macros below and
+// #including this file for the implementation (.cpp) file and traits_decl.h for the application
+// files that should only see the declarations.
+////////////////////////////////////////////////////////////////////////////////////////////
+
 /**
  * start the mapping header.
  * @param cls the fully qualified class name
