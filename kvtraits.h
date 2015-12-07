@@ -463,6 +463,15 @@ struct AbstractClassInfo {
     }
     return nullptr;
   }
+
+  AbstractClassInfo *doresolve(ClassId otherClassId)
+  {
+    AbstractClassInfo *resolved = resolve(otherClassId);
+    if(!resolved) {
+      throw persistence_error("unknow classId. Class missing from registry");
+    }
+    return resolved;
+  }
 };
 
 namespace sub {
@@ -547,7 +556,7 @@ struct ClassInfo : public AbstractClassInfo
   }
 };
 
-#define RESOLVE_SUB(__cid) reinterpret_cast<ClassInfo<T> *>(ClassTraits<T>::info->resolve(__cid))
+#define RESOLVE_SUB(__cid) reinterpret_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__cid))
 
 /**
  * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a templated

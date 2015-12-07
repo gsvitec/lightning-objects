@@ -485,10 +485,18 @@ KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
   }
 }
 
+#ifdef _WIN32
+    static const char separator_char = '\\';
+#else
+    static const char separator_char = '/';
+#endif
+
 KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
     : m_env(::lmdb::env::create()), m_options(options), m_curMapSize(options.initialMapSizeMB * size_t(1024) * size_t(1024))
 {
-  m_dbpath = location + "/"+ (name.empty() ? "kvdata" : name);
+  m_dbpath = location;
+  if(m_dbpath.back() != separator_char) m_dbpath += separator_char;
+  m_dbpath += (name.empty() ? "kvdata" : name);
 
   //don't need to worry for existing files. LMDB will increase to committed size if neeed
   m_env.set_mapsize(m_curMapSize);
@@ -504,7 +512,7 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
     m_env.open(m_dbpath.c_str(), m_flags, 0664);
   }
   catch(::lmdb::runtime_error e) {
-    throw persistence_error(e.what());
+    throw persistence_error("error opening database", e.what());
   }
 
   MDB_stat envstat;
