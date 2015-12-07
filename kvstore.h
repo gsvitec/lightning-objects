@@ -122,7 +122,8 @@ struct TypeinfoEqualTo {
 };
 
 /**
- * high-performance key/value store interface
+ * high-performance key/value store interface. Most application-relevant functions are provided by ReadTransaction
+ * and WriteTransaction, which can be obtined from this class
  */
 class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
 {
@@ -1878,7 +1879,7 @@ public:
 };
 
 /**
- * storage trait for base types that go directly into the shallow buffer
+ * storage class template for base types that go directly into the shallow buffer
  */
 template<typename T, typename V>
 struct BasePropertyStorage : public StoreAccessBase
@@ -1908,8 +1909,9 @@ struct BasePropertyStorage : public StoreAccessBase
 };
 
 /**
- * storage trait for cstring, with dynamic size calculation (type.byteSize is 0). Note that upon loading,
- * the character data will reside in transaction memory and therefore may become invalid
+ * storage class template for cstring, with dynamic size calculation (type.byteSize is 0). Note that after loading
+ * the data store, the pointed-to belongs to the datastore and will in all likelihood become invalid by the end of
+ * the trasaction. It is up to the application to copy the value away (or use std::string)
  */
 template<typename T>
 struct BasePropertyStorage<T, const char *> : public StoreAccessBase
@@ -1942,7 +1944,7 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
 };
 
 /**
- * storage trait for string, with dynamic size calculation (type.byteSize is 0)
+ * storage template class for std::string, with dynamic size calculation (type.byteSize is 0)
  */
 template<typename T>
 struct BasePropertyStorage<T, std::string> : public StoreAccessBase
@@ -1974,6 +1976,10 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
   }
 };
 
+/**
+ * storage template for ClassId-typed properties. The ClassId (which is already part of the key) is mapped to an
+ * object property
+ */
 template<typename T>
 struct ObjectIdStorage : public StoreAccessBase
 {
@@ -1997,7 +2003,8 @@ struct ObjectIdStorage : public StoreAccessBase
 };
 
 /**
- * storage trait for value vector
+ * storage template for std::vector of values. All values are serialized into one consecutive buffer which is stored under
+ * a property key for the given object.
  */
 template<typename T, typename V>
 struct VectorPropertyStorage : public StoreAccessPropertyKey
@@ -2039,7 +2046,7 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
 };
 
 /**
- * storage trait for value set.
+ * storage template for value set. Similar to value vector, but based on a std::set
  */
 template<typename T, typename V>
 struct SetPropertyStorage : public StoreAccessPropertyKey
@@ -2081,7 +2088,9 @@ struct SetPropertyStorage : public StoreAccessPropertyKey
 };
 
 /**
- * storage trait for mapped object references. Value-based, therefore non-polymorphic
+ * storage template for mapped non-pointer object references. Since the object is referenced by value value in the enclosing
+ * class, storage can only be non-polymorphic. THe object is serialized into a separate buffer, but the key is written to the
+ * enclosing object's buffer
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
 {
@@ -2124,6 +2133,9 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
   }
 };
 
+/**
+ * base template for access to ObjectId from arbitrary pointer types
+ */
 template <typename V, template <typename> class Ptr> struct OidAccess
 {
   static Ptr<V> make(V *v, ObjectId oid) {
@@ -2140,6 +2152,9 @@ template <typename V, template <typename> class Ptr> struct OidAccess
   }
 };
 
+/**
+ * template specialization for access to ObjectId from std::shared_ptr
+ */
 template <typename V> struct OidAccess<V, std::shared_ptr>
 {
   static std::shared_ptr<V> make(V *v, ObjectId oid) {

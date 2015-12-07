@@ -113,7 +113,7 @@ enum class StoreMode {force_none, force_all, force_buffer, force_property};
 enum class StoreLayout {all_embedded, embedded_key, property};
 
 /**
- * abstract superclass for all Store Access classes
+ * abstract superclass for classes that handle serializing mapped values to the datastore
  */
 struct StoreAccessBase
 {
