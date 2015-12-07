@@ -141,7 +141,8 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> typeInfos;
 
 protected:
-  ObjectId m_maxCollectionId;
+  ClassId m_maxClassId = 0;
+  ObjectId m_maxCollectionId = 0;
   bool m_reuseChunkspace = false;
 
 public:

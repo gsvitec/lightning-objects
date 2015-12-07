@@ -451,7 +451,7 @@ class KeyValueStoreImpl : public KeyValueStore
 
   PropertyMetaInfoPtr make_metainfo(MDB_val *mdbVal);
   MDB_val make_val(unsigned id, const PropertyAccessBase *prop);
-  ObjectId findMaxObjectId(ClassId classId);
+  ObjectId findMaxObjectId(::lmdb::txn &txn, ClassId classId);
 
 protected:
   void loadSaveClassMeta(
@@ -491,6 +491,14 @@ KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
     static const char separator_char = '/';
 #endif
 
+int KeyValueStoreImpl::meta_dup_compare(const MDB_val *a, const MDB_val *b)
+{
+  PropertyId id1 = read_integer<PropertyId>((byte_t *)a->mv_data, 2);
+  PropertyId id2 = read_integer<PropertyId>((byte_t *)b->mv_data, 2);
+
+  return id1 - id2;
+}
+
 KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
     : m_env(::lmdb::env::create()), m_options(options), m_curMapSize(options.initialMapSizeMB * size_t(1024) * size_t(1024))
 {
@@ -524,7 +532,26 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
 
   m_reuseChunkspace = options.writeMap;
 
-  m_maxCollectionId = findMaxObjectId(COLLECTION_CLSID);
+  //create the classmeta database
+  auto txn = ::lmdb::txn::begin(m_env, nullptr);
+  auto dbi = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT | MDB_CREATE);
+  dbi.set_dupsort(txn, meta_dup_compare);
+
+  //find the maximum classId
+  ::lmdb::val key, val;
+
+  key.assign((byte_t *)0, 0);
+  val.assign((byte_t *)0, 0);
+  auto cursor = ::lmdb::cursor::open(txn, dbi);
+  while (cursor.get(key, val, MDB_NEXT_NODUP)) {
+    ClassId cid = read_integer<ClassId>(val.data<byte_t>()+2, 2);
+    if(cid > m_maxClassId) m_maxClassId = cid;
+  }
+  cursor.close();
+
+  //create the classdata database and find the max objectid
+  m_maxCollectionId = findMaxObjectId(txn, COLLECTION_CLSID);
+  txn.commit();
 }
 
 KeyValueStoreImpl::~KeyValueStoreImpl()
@@ -786,10 +813,8 @@ CollectionCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId coll
   return new CollectionCursorHelper(m_txn, m_dbi, classId, collectionId);
 }
 
-ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)
+ObjectId KeyValueStoreImpl::findMaxObjectId(::lmdb::txn &txn, ClassId classId)
 {
-  auto txn = ::lmdb::txn::begin(m_env, nullptr);
-
   //create the classdata database if needed
   auto dbi = ::lmdb::dbi::open(txn, CLASSDATA, MDB_CREATE);
   dbi.set_compare(txn, key_compare); //important!!
@@ -814,17 +839,8 @@ ObjectId KeyValueStoreImpl::findMaxObjectId(ClassId classId)
     }
   }
   cursor.close();
-  txn.commit();
 
   return maxId;
-}
-
-int KeyValueStoreImpl::meta_dup_compare(const MDB_val *a, const MDB_val *b)
-{
-  PropertyId id1 = read_integer<PropertyId>((byte_t *)a->mv_data, 2);
-  PropertyId id2 = read_integer<PropertyId>((byte_t *)b->mv_data, 2);
-
-  return id1 - id2;
 }
 
 KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_metainfo(MDB_val *mdbVal)
@@ -889,18 +905,18 @@ void KeyValueStoreImpl::loadSaveClassMeta(
   using MetaInfo = KeyValueStoreBase::PropertyMetaInfoPtr;
 
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
-  auto dbi = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT | MDB_CREATE);
-
+  auto dbi = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT);
   dbi.set_dupsort(txn, meta_dup_compare);
 
   ::lmdb::val key, val;
   key.assign(classInfo->name);
   auto cursor = ::lmdb::cursor::open(txn, dbi);
   if(cursor.get(key, val, MDB_SET)) {
+    //class already exists
     bool first = true;
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
-        //class already known. First record is [propertyId == 0, classId]
+        //first record is [propertyId == 0, classId]
         classInfo->classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
         first = false;
       }
@@ -908,21 +924,16 @@ void KeyValueStoreImpl::loadSaveClassMeta(
         propertyInfos.push_back(make_metainfo((MDB_val *)val));
     }
     cursor.close();
+
+    classInfo->maxObjectId = findMaxObjectId(txn, classInfo->classId);
+
     txn.abort();
   }
   else {
+    //class appears for the first time
     cursor.close();
 
-    //find the maximum classId + 1
-    key.assign((byte_t *)0, 0);
-    val.assign((byte_t *)0, 0);
-    cursor = ::lmdb::cursor::open(txn, dbi);
-    while (cursor.get(key, val, MDB_NEXT_NODUP)) {
-      ClassId cid = read_integer<ClassId>(val.data<byte_t>()+2, 2);
-      if(cid > classInfo->classId) classInfo->classId = cid;
-    }
-    cursor.close();
-    classInfo->classId++;
+    classInfo->classId = ++m_maxClassId;
 
     //save the first record [0, classId]
     byte_t buf[4];
@@ -940,8 +951,9 @@ void KeyValueStoreImpl::loadSaveClassMeta(
       free(val.mv_data);
     }
     txn.commit();
+
+    classInfo->maxObjectId = 0;
   }
-  classInfo->maxObjectId = findMaxObjectId(classInfo->classId);
 }
 
 } //lmdb
