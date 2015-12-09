@@ -1016,7 +1016,7 @@ public:
    * database-owned or copied, depending on whether start and end lie within the same chunk.
    */
   template <typename T> typename
-  CollectionData<T>::Ptr getValueCollectionData(ObjectId collectionId, size_t startIndex, size_t length)
+  CollectionData<T>::Ptr getDataCollection(ObjectId collectionId, size_t startIndex, size_t length)
   {
     RAWDATA_API_ASSERT
     void *data;
@@ -1608,14 +1608,13 @@ public:
    * save a top-level (chunked) object collection.
    *
    * @param vect the collection contents
-   * @param poly emply polymorphic type resolution.
    */
-  template <typename T, template <typename T> class Ptr>
-  ObjectId putCollection(const std::vector<Ptr<T>> &vect, bool poly = true)
+  template <typename T, template <typename T> class Ptr> ObjectId putCollection(const std::vector<Ptr<T>> &vect)
   {
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
+    bool poly = !ClassTraits<T>::info->subs.empty();
     saveChunk(vect, ci, poly);
 
     return ci->collectionId;

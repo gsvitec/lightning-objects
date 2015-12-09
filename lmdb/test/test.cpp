@@ -454,7 +454,7 @@ void testValueCollection(KeyValueStore *kv)
 }
 
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionData(KeyValueStore *kv)
+void testDataCollection(KeyValueStore *kv)
 {
   ObjectId collectionId;
 
@@ -475,7 +475,7 @@ void testValueCollectionData(KeyValueStore *kv)
     //load saved collection arrays
     auto rtxn = kv->beginExclusiveRead();
 
-    CollectionData<double>::Ptr cd1 = rtxn->getValueCollectionData<double>(collectionId, 2, 3);
+    CollectionData<double>::Ptr cd1 = rtxn->getDataCollection<double>(collectionId, 2, 3);
     assert(cd1);
     double *data = cd1->data();
 
@@ -483,14 +483,14 @@ void testValueCollectionData(KeyValueStore *kv)
     double d2 = data[2];
     assert(d0 == 1.44 * 2 && d2 == 1.44 * 4);
 
-    CollectionData<double>::Ptr cd2 = rtxn->getValueCollectionData<double>(collectionId, 2, 100);
+    CollectionData<double>::Ptr cd2 = rtxn->getDataCollection<double>(collectionId, 2, 100);
     assert(cd2);
     data = cd2->data();
     d0 = data[0];
     double d99 = data[99];
     assert(d0 == 1.44 * 2 && d99 == 1.44 * 101);
 
-    auto cd3 = rtxn->getValueCollectionData<double>(collectionId, 100, 50);
+    auto cd3 = rtxn->getDataCollection<double>(collectionId, 100, 50);
     data = cd3->data();
     assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
 
@@ -498,7 +498,7 @@ void testValueCollectionData(KeyValueStore *kv)
   }
 }
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionData2(KeyValueStore *kv)
+void testDataCollection2(KeyValueStore *kv)
 {
   ObjectId collectionId2;
   {
@@ -515,7 +515,7 @@ void testValueCollectionData2(KeyValueStore *kv)
   {
     auto rtxn = kv->beginExclusiveRead();
 
-    auto cd4 = rtxn->getValueCollectionData<long long>(collectionId2, 10, 50);
+    auto cd4 = rtxn->getDataCollection < long long > (collectionId2, 10, 50);
     long long *data2 = cd4->data();
     assert(data2[0] == -99999 * 10 && data2[49] == -99999 * 59);
 
@@ -535,7 +535,7 @@ void testValueCollectionData2(KeyValueStore *kv)
   {
     auto rtxn = kv->beginExclusiveRead();
 
-    auto cd = rtxn->getValueCollectionData<long long>(collectionId2, 190, 10);
+    auto cd = rtxn->getDataCollection < long long > (collectionId2, 190, 10);
     long long *data = cd->data();
     assert(data[0] == 555 * 90 && data[9] == 555 * 99);
 
@@ -613,22 +613,22 @@ void testGrowDatabase(KeyValueStore *kv)
   {
     auto rtxn = kv->beginExclusiveRead();
 
-    auto coll = rtxn->getValueCollectionData<unsigned>(collectionId, 2000, 10);
+    auto coll = rtxn->getDataCollection<unsigned>(collectionId, 2000, 10);
     unsigned * data = coll->data();
 
     assert(data[0] == 2000 && data[9] == 2009);
 
-    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 900000, 11);
+    coll = rtxn->getDataCollection<unsigned>(collectionId, 900000, 11);
     data = coll->data();
 
     assert(data[0] == 900000 && data[10] == 900010);
 
-    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 1000000-10, 10);
+    coll = rtxn->getDataCollection<unsigned>(collectionId, 1000000 - 10, 10);
     data = coll->data();
 
     assert(data[0] == 999990 && data[9] == 999999);
 
-    coll = rtxn->getValueCollectionData<unsigned>(collectionId, 1001000-10, 10);
+    coll = rtxn->getDataCollection<unsigned>(collectionId, 1001000 - 10, 10);
     data = coll->data();
 
     assert(data[0] == 1000990 && data[9] == 1000999);
@@ -670,8 +670,8 @@ int main()
   testObjectPtrPropertyStorage(kv);
   testValueVectorProperty(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
-  testValueCollectionData(kv);
-  testValueCollectionData2(kv);
+  testDataCollection(kv);
+  testDataCollection2(kv);
 #endif
   testGrowDatabase(kv);
 

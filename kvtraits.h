@@ -25,7 +25,7 @@ namespace kv {
 struct PropertyType
 {
   //predefined base type id, irrelevant if className is set
-  const unsigned id;
+  const ClassId id;
 
   //it's a vector
   const bool isVector;
@@ -53,8 +53,8 @@ template <typename T> struct TypeTraits;
 #define TYPETRAITSV template <> struct TypeTraits<std::vector
 #define TYPETRAITSS template <> struct TypeTraits<std::set
 
-#define TYPEDEF(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=false;
-#define TYPEDEFV(_id, _sz) static const unsigned id=_id; static const unsigned byteSize=_sz; static const bool isVect=true;
+#define TYPEDEF(_id, _sz) static const ClassId id=_id; static const unsigned byteSize=_sz; static const bool isVect=false;
+#define TYPEDEFV(_id, _sz) static const ClassId id=_id; static const unsigned byteSize=_sz; static const bool isVect=true;
 
 TYPETRAITS<short>             {TYPEDEF(1, 2);};
 TYPETRAITS<unsigned short>    {TYPEDEF(2, 2);};
