@@ -16,6 +16,10 @@ if(UNIX)
     target_link_libraries(LmdbTest pthread)
     target_link_libraries(LmdbBench pthread)
 endif()
+if(WIN32)
+    target_link_libraries(LmdbTest ntdll)
+    target_link_libraries(LmdbBench ntdll)
+endif()
 
 set(TEST_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/../..
