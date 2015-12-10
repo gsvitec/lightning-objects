@@ -191,6 +191,13 @@ public:
     return oid;
   }
 
+  template <typename T> bool isNew(std::shared_ptr<T> &obj)
+  {
+    ObjectId oid = 0;
+    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
+    return oid == 0;
+  }
+
   /**
    * @return a transaction object that allows reading the database.
    */
@@ -222,7 +229,7 @@ namespace kv {
 
 void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
-void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size);
+void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size=nullptr, bool *deleted=nullptr);
 
 /**
  * Helper interface used by cursor, to be extended by implementors
@@ -317,8 +324,15 @@ struct ChunkInfo {
     return chunkId <= other.chunkId;
   }
 };
-struct CollectionInfo {
+struct CollectionInfo
+{
+  //unique collection id
   ObjectId collectionId = 0;
+
+  //used if this is an attached collection. Non-persisted
+  StorageKey sk;
+
+  //collection chunks
   std::vector <ChunkInfo> chunkInfos;
 
   PropertyId nextChunkId = 1;
@@ -326,6 +340,8 @@ struct CollectionInfo {
 
   CollectionInfo() {}
   CollectionInfo(ObjectId collectionId) : collectionId(collectionId) {}
+  CollectionInfo(ObjectId collectionId, ClassId classId, ObjectId objectId, PropertyId propertyId)
+      : collectionId(collectionId), sk(classId, objectId, propertyId) {}
 
   void init() {
     for(auto &ci : chunkInfos) {
@@ -364,7 +380,7 @@ protected:
 
   ReadBuf m_readBuf;
   size_t m_elementCount = 0, m_curElement = 0;
-
+  virtual bool isValid() {return true;}
 public:
   CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor);
   bool atEnd();
@@ -380,6 +396,12 @@ class ObjectCollectionCursor : public CollectionCursorBase
   const ClassId m_declClass;
   Fact<T> m_fact;
 
+protected:
+  bool isValid() override
+  {
+    return !read_integer<byte_t>(m_readBuf.data() + ObjectHeader_sz - 1, 1);
+  }
+
 public:
   using Ptr = std::shared_ptr<ObjectCollectionCursor<T, Fact>>;
 
@@ -391,7 +413,7 @@ public:
   {
     ClassId classId;
     ObjectId objectId;
-    readObjectHeader(m_readBuf, &classId, &objectId, 0);
+    readObjectHeader(m_readBuf, &classId, &objectId);
 
     T *obj = m_fact.makeObj(classId);
     Properties *properties = m_fact.properties(classId);
@@ -635,6 +657,8 @@ class FlexisPersistence_EXPORT ReadTransaction
   friend class CollectionCursorBase;
   friend class CollectionAppenderBase;
 
+  CollectionInfo *readCollectionInfo(ReadBuf &readBuf);
+
 protected:
   KeyValueStore &store;
   bool m_blockWrites;
@@ -740,6 +764,33 @@ protected:
     return true;
   }
 
+  template <typename T, template <typename> class Ptr=std::shared_ptr> std::vector<Ptr<T>> loadChunkedCollection(
+      CollectionInfo *ci)
+  {
+    std::vector<Ptr<T>> result;
+    for(ChunkCursor::Ptr cc= _openChunkCursor(COLLECTION_CLSID, ci->collectionId); !cc->atEnd(); cc->next()) {
+      ReadBuf buf;
+      cc->get(buf);
+
+      size_t elementCount;
+      readChunkHeader(buf, 0, 0, &elementCount);
+
+      for(size_t i=0; i < elementCount; i++) {
+        ClassId cid;
+        ObjectId oid;
+        bool deleted;
+        readObjectHeader(buf, &cid, &oid, nullptr, &deleted);
+        if(!deleted && ClassTraits<T>::info->isInstance(cid)) {
+          T *obj = readObject<T>(buf, cid, oid);
+          if(obj) result.push_back(std::shared_ptr<T>(obj));
+          else
+            throw persistence_error("collection object not found");
+        }
+      }
+    }
+    return result;
+  }
+
   /**
    * read sub-object data into a buffer. Used internally by storage traits
    */
@@ -758,12 +809,23 @@ protected:
   virtual bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startindex) = 0;
 
   /**
-   * retrieve info about a collection
+   * retrieve info about a top-level collection
    *
    * @param collectionId
    * @return the collection info or nullptr
    */
   CollectionInfo *getCollectionInfo(ObjectId collectionId);
+
+  /**
+   * retrieve info about a top-level, attached collection
+   *
+   * @param classId the classId of the attached-to object
+   * @param objectId the objectId of the attached-to object
+   * @param propertyId the propertyId of the attached-to object
+   *
+   * @return the collection info or nullptr
+   */
+  CollectionInfo *getCollectionInfo(ClassId classId, ObjectId ObjectId, PropertyId propertyId);
 
   /**
    * @return a cursor ofer a chunked object (e.g., collection)
@@ -835,10 +897,10 @@ public:
    *
    * @param obj the object this property is attached to
    * @param propertyId a property Id which must not be one of the mapped property's id
-   * @param vect (out) the contents of the attached collection.
+   * @vect (out)the contents of the attached collection.
    */
   template <typename T, typename V>
-  void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect, ClassId classId = 0)
+  void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect)
   {
     ClassId objClassId = getClassId(typeid(*obj));
     ObjectId objectId = 0;
@@ -846,15 +908,16 @@ public:
 
     ReadBuf buf;
     getData(buf, objClassId, objectId, propertyId);
-    if(buf.null()) return;
+    if(buf.null()) return ;
 
     size_t elementCount = buf.readInteger<size_t>(4);
+    vect.reserve(elementCount);
 
     for(size_t i=0; i < elementCount; i++) {
       StorageKey sk;
       buf.read(sk);
 
-      if(!classId || sk.classId == classId) {
+      if(ClassTraits<V>::info->isInstance(sk.classId)) {
         V *obj = loadObject<V>(sk.classId, sk.objectId);
         if(obj) vect.push_back(make_ptr(obj, sk.objectId));
         else
@@ -864,34 +927,35 @@ public:
   }
 
   /**
+   * retrieve an attached member collection. Attached mebers are stored under a key that is derived from
+   * the object they are attached to. The key is the same as if the member was a property member of the
+   * attached-to object, but the property does not exist. Instead, the attached member must be loaded and saved
+   * explicitly using the given API
+   *
+   * @param obj the object this property is attached to
+   * @param propertyId a property Id which must not be one of the mapped property's id
+   * @return the contents of the attached collection.
+   */
+  template <typename T, typename V>
+  std::vector<std::shared_ptr<V>> getChunkedCollection(std::shared_ptr<T> &obj, PropertyId propertyId)
+  {
+    ClassId objClassId = getClassId(typeid(*obj));
+    ObjectId objectId = 0;
+    if(!ClassTraits<T>::get_id(obj, objectId)) throw invalid_pointer_error();
+
+    CollectionInfo *ci = getCollectionInfo(objClassId, objectId, propertyId);
+    return loadChunkedCollection<V, std::shared_ptr>(ci);
+  }
+
+  /**
    * load a top-level (chunked) object collection
    *
    * @param collectionId an id returned from a previous #putCollection call
    */
-  template <typename T, template <typename> class Ptr=std::shared_ptr>
-  std::vector<Ptr<T>> getCollection(ObjectId collectionId)
+  template <typename T, template <typename> class Ptr=std::shared_ptr> std::vector<Ptr<T>> getCollection(ObjectId collectionId)
   {
     CollectionInfo *ci = getCollectionInfo(collectionId);
-    std::vector<Ptr<T>> result;
-    for(ChunkCursor::Ptr cc= _openChunkCursor(COLLECTION_CLSID, collectionId); !cc->atEnd(); cc->next()) {
-      ReadBuf buf;
-      cc->get(buf);
-
-      size_t elementCount;
-      readChunkHeader(buf, 0, 0, &elementCount);
-
-      for(size_t i=0; i < elementCount; i++) {
-        ClassId cid;
-        ObjectId oid;
-        readObjectHeader(buf, &cid, &oid, 0);
-
-        T *obj = readObject<T>(buf, cid, oid);
-        if(obj) result.push_back(std::shared_ptr<T>(obj));
-        else
-          throw persistence_error("collection object not found");
-      }
-    }
-    return result;
+    return loadChunkedCollection<T, Ptr>(ci);
   }
 
   /**
@@ -1605,6 +1669,29 @@ public:
   }
 
   /**
+   * insert an attached object collection (for meaning of 'attached' see accompanying get function)
+   *
+   * @param obj the object this collection is attached to
+   * @param propertyId a property Id outside the Id space of obj's class
+   * @param vect the contents of the collection
+   */
+  template <typename T, typename V>
+  void putChunkedCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect,
+                     bool saveMembers=true)
+  {
+    bool poly = !ClassTraits<T>::info->isPoly();
+
+    ClassId cid = poly ? getClassId(typeid(*obj)) : ClassTraits<T>::info->classId;
+    ObjectId oid = 0;
+    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
+
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId, cid, oid, propertyId);
+    m_collectionInfos[ci->collectionId] = ci;
+
+    saveChunk(vect, ci, poly);
+  }
+
+  /**
    * save a top-level (chunked) object collection.
    *
    * @param vect the collection contents
@@ -1614,8 +1701,7 @@ public:
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
-    bool poly = !ClassTraits<T>::info->subs.empty();
-    saveChunk(vect, ci, poly);
+    saveChunk(vect, ci, ClassTraits<T>::info->isPoly());
 
     return ci->collectionId;
   }

@@ -450,6 +450,18 @@ struct AbstractClassInfo {
     subs.push_back(rsub);
   }
 
+  bool isPoly() {
+    return !subs.empty();
+  }
+
+  bool isInstance(ClassId _classId) {
+    if(classId == _classId) return true;
+    for(auto s : subs) {
+      if(s->isInstance(_classId)) return true;
+    }
+    return false;
+  }
+
   AbstractClassInfo *resolve(ClassId otherClassId)
   {
     if(classId == 0) return nullptr; //empty class

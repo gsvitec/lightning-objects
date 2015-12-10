@@ -53,7 +53,7 @@ void KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, Property
 
 namespace kv {
 
-void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size)
+void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size, bool *deleted)
 {
   ClassId cid = buf.readInteger<ClassId>(ClassId_sz);
   if(classId) *classId = cid;
@@ -61,6 +61,8 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
   if(objectId) *objectId = oid;
   size_t sz = buf.readInteger<size_t>(4);
   if(size) *size = sz;
+  byte_t del = buf.readInteger<byte_t>(1);
+  if(deleted) *deleted = del;
 }
 
 void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount)
@@ -100,14 +102,16 @@ void WriteTransaction::writeObjectHeader(ClassId classId, ObjectId objectId, siz
   write_integer<ClassId>(hdr, classId, ClassId_sz);
   write_integer<ObjectId>(hdr+ClassId_sz, objectId, ObjectId_sz);
   write_integer<size_t>(hdr+ClassId_sz+ObjectId_sz, size, 4);
+  write_integer<byte_t>(hdr+ClassId_sz+ObjectId_sz+4, 0, 1);
 }
 
 void WriteTransaction::commit()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
-    size_t sz = sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
+    size_t sz = ObjectId_sz + sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
     writeBuf().start(sz);
+    writeBuf().appendRaw(ci->collectionId);
     writeBuf().appendRaw(ci->chunkInfos.size());
     for(auto &ch : ci->chunkInfos) {
       writeBuf().appendRaw(ch.chunkId);
@@ -115,7 +119,10 @@ void WriteTransaction::commit()
       writeBuf().appendRaw(ch.elementCount);
       writeBuf().appendRaw(ch.dataSize);
     }
-    putData(COLLINFO_CLSID, ci->collectionId, 0, writeBuf());
+    if(ci->sk.classId)
+      putData(ci->sk.classId, ci->sk.objectId, ci->sk.propertyId, writeBuf());
+    else
+      putData(COLLINFO_CLSID, ci->collectionId, 0, writeBuf());
 
     delete ci;
   }
@@ -130,32 +137,45 @@ void ReadTransaction::abort()
   doAbort();
 };
 
-CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
+CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
 {
-  CollectionInfo *info = nullptr;
+  CollectionInfo *info = new CollectionInfo();
+  ClassId collectionId = readBuf.readRaw<ClassId>();
+  size_t sz = readBuf.readRaw<size_t>();
+  for(size_t i=0; i<sz; i++) {
+    PropertyId chunkId = readBuf.readRaw<PropertyId>();
+    size_t startIndex = readBuf.readRaw<size_t>();
+    size_t elementCount = readBuf.readRaw<size_t>();
+    size_t dataSize = readBuf.readRaw<size_t>();
+    info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
+  }
+  //put into transaction cache
+  m_collectionInfos[collectionId] = info;
 
-  if(m_collectionInfos.count(collectionId) == 0) {
-    ReadBuf readBuf;
-    getData(readBuf, COLLINFO_CLSID, collectionId, 0);
-    if(!readBuf.null()) {
-      info = new CollectionInfo(collectionId);
-      size_t sz = readBuf.readRaw<size_t>();
-      for(size_t i=0; i<sz; i++) {
-        PropertyId chunkId = readBuf.readRaw<PropertyId>();
-        size_t startIndex = readBuf.readRaw<size_t>();
-        size_t elementCount = readBuf.readRaw<size_t>();
-        size_t dataSize = readBuf.readRaw<size_t>();
-        info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
-      }
-      m_collectionInfos[collectionId] = info;
+  info->init();
+  return info;
+}
 
-      info->init();
+CollectionInfo *ReadTransaction::getCollectionInfo(ClassId classId, ObjectId objectId, PropertyId propertyId)
+{
+  for(auto &ci : m_collectionInfos) {
+    if(ci.second->sk.classId == classId && ci.second->sk.objectId == objectId && ci.second->sk.propertyId == propertyId) {
+      return ci.second;
     }
   }
-  else
-    info = m_collectionInfos[collectionId];
+  ReadBuf readBuf;
+  getData(readBuf, classId, objectId, propertyId);
+  return readBuf.null() ? nullptr : readCollectionInfo(readBuf);
+}
 
-  return info;
+CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
+{
+  if(m_collectionInfos.count(collectionId)) return m_collectionInfos[collectionId];
+  else {
+    ReadBuf readBuf;
+    getData(readBuf, COLLINFO_CLSID, collectionId, 0);
+    return readBuf.null() ? nullptr : readCollectionInfo(readBuf);
+  }
 }
 
 void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)
@@ -192,11 +212,13 @@ bool CollectionCursorBase::atEnd() {
 
 bool CollectionCursorBase::next()
 {
-  if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
-    m_chunkCursor->get(m_readBuf);
-    readChunkHeader(m_readBuf, 0, 0, &m_elementCount);
-    m_curElement = 0;
-  }
+  do {
+    if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
+      m_chunkCursor->get(m_readBuf);
+      readChunkHeader(m_readBuf, 0, 0, &m_elementCount);
+      m_curElement = 0;
+    }
+  } while(m_curElement < m_elementCount && !isValid());
   return m_curElement < m_elementCount;
 }
 
