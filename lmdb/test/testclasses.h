@@ -127,7 +127,7 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory : public ObjectHistory<T>, public IterPropertyBackend<T>
+struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend<T>
 {
   T& getHistoryValue(uint64_t bufferPos) override {
 
@@ -203,7 +203,7 @@ END_MAPPING(flexis::player::SourceInfo)
 START_MAPPINGHDR(SomethingWithAnObjectIter)
   enum PropertyIds {history=1};
 END_MAPPINGHDR(SomethingWithAnObjectIter)
-  MAPPED_PROP_ITER(SomethingWithAnObjectIter, ObjectIterPropertyAssign, FixedSizeObject, KVObjectHistory, ObjectHistory, history)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, ObjectIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 }

@@ -119,10 +119,7 @@ void WriteTransaction::commit()
       writeBuf().appendRaw(ch.elementCount);
       writeBuf().appendRaw(ch.dataSize);
     }
-    if(ci->sk.classId)
-      putData(ci->sk.classId, ci->sk.objectId, ci->sk.propertyId, writeBuf());
-    else
-      putData(COLLINFO_CLSID, ci->collectionId, 0, writeBuf());
+    putData(COLLINFO_CLSID, ci->collectionId, 0, writeBuf());
 
     delete ci;
   }
@@ -154,18 +151,6 @@ CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
 
   info->init();
   return info;
-}
-
-CollectionInfo *ReadTransaction::getCollectionInfo(ClassId classId, ObjectId objectId, PropertyId propertyId)
-{
-  for(auto &ci : m_collectionInfos) {
-    if(ci.second->sk.classId == classId && ci.second->sk.objectId == objectId && ci.second->sk.propertyId == propertyId) {
-      return ci.second;
-    }
-  }
-  ReadBuf readBuf;
-  getData(readBuf, classId, objectId, propertyId);
-  return readBuf.null() ? nullptr : readCollectionInfo(readBuf);
 }
 
 CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)

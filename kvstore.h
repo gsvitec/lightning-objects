@@ -13,11 +13,13 @@
 #include <unordered_map>
 #include <persistence_error.h>
 #include <FlexisPersistence_Export.h>
+#include <type_traits>
+
 #include "kvtraits.h"
 
 #define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
 #define PROPERTY(cls, name) flexis::persistence::kv::ClassTraits<cls>::decl_props[flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name-1]
-#define PROPERTY_INIT(obj, name) flexis::persistence::kv::ClassTraits<decltype(obj)>::decl_props[flexis::persistence::kv::ClassTraits<decltype(obj)>::PropertyIds::name-1]->initMember(&obj)
+#define PROPERTY_INIT(obj, name) flexis::persistence::kv::ClassTraits<std::decay<decltype(obj)>::type>::decl_props[flexis::persistence::kv::ClassTraits<std::decay<decltype(obj)>::type>::PropertyIds::name-1]->initMember(&obj)
 
 #define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
   var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
@@ -339,9 +341,6 @@ struct CollectionInfo
   //unique collection id
   ObjectId collectionId = 0;
 
-  //used if this is an attached collection. Non-persisted
-  StorageKey sk;
-
   //collection chunks
   std::vector <ChunkInfo> chunkInfos;
 
@@ -350,8 +349,6 @@ struct CollectionInfo
 
   CollectionInfo() {}
   CollectionInfo(ObjectId collectionId) : collectionId(collectionId) {}
-  CollectionInfo(ObjectId collectionId, ClassId classId, ObjectId objectId, PropertyId propertyId)
-      : collectionId(collectionId), sk(classId, objectId, propertyId) {}
 
   void init() {
     for(auto &ci : chunkInfos) {
@@ -828,17 +825,6 @@ protected:
   CollectionInfo *getCollectionInfo(ObjectId collectionId);
 
   /**
-   * retrieve info about a top-level, attached collection
-   *
-   * @param classId the classId of the attached-to object
-   * @param objectId the objectId of the attached-to object
-   * @param propertyId the propertyId of the attached-to object
-   *
-   * @return the collection info or nullptr
-   */
-  CollectionInfo *getCollectionInfo(ClassId classId, ObjectId ObjectId, PropertyId propertyId);
-
-  /**
    * @return a cursor ofer a chunked object (e.g., collection)
    */
   virtual ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd=false) = 0;
@@ -935,27 +921,6 @@ public:
           throw persistence_error("collection object not found");
       }
     }
-  }
-
-  /**
-   * retrieve an attached member collection. Attached mebers are stored under a key that is derived from
-   * the object they are attached to. The key is the same as if the member was a property member of the
-   * attached-to object, but the property does not exist. Instead, the attached member must be loaded and saved
-   * explicitly using the given API
-   *
-   * @param obj the object this property is attached to
-   * @param propertyId a property Id which must not be one of the mapped property's id
-   * @return the contents of the attached collection.
-   */
-  template <typename T, typename V>
-  std::vector<std::shared_ptr<V>> getChunkedCollection(std::shared_ptr<T> &obj, PropertyId propertyId)
-  {
-    ClassId objClassId = getClassId(typeid(*obj));
-    ObjectId objectId = 0;
-    if(!ClassTraits<T>::get_id(obj, objectId)) throw invalid_pointer_error();
-
-    CollectionInfo *ci = getCollectionInfo(objClassId, objectId, propertyId);
-    return loadChunkedCollection<V, std::shared_ptr>(ci);
   }
 
   /**
@@ -1678,29 +1643,6 @@ public:
       writeBuf().append(buf.data(), buf.size());
       writeBuf().append(valueClassId, valueId, 0);
     }
-  }
-
-  /**
-   * insert an attached object collection (for meaning of 'attached' see accompanying get function)
-   *
-   * @param obj the object this collection is attached to
-   * @param propertyId a property Id outside the Id space of obj's class
-   * @param vect the contents of the collection
-   */
-  template <typename T, typename V>
-  void putChunkedCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect,
-                     bool saveMembers=true)
-  {
-    bool poly = !ClassTraits<T>::info->isPoly();
-
-    ClassId cid = poly ? getClassId(typeid(*obj)) : ClassTraits<T>::info->classId;
-    ObjectId oid = 0;
-    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
-
-    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId, cid, oid, propertyId);
-    m_collectionInfos[ci->collectionId] = ci;
-
-    saveChunk(vect, ci, poly);
   }
 
   /**
