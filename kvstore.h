@@ -935,6 +935,22 @@ public:
   }
 
   /**
+   * load a top-level (chunked) member collection.
+   *
+   * @param o the object that holds the member
+   * @param p pointer to the the member variable
+   * @return the collection contents
+   */
+  template <typename O, typename T, template <typename> class Iter>
+  std::vector<std::shared_ptr<T>> getCollection(O &o, std::shared_ptr<Iter<T>> O::*p)
+  {
+    IterPropertyBackend<T> &ib = dynamic_cast<IterPropertyBackend<T> &>(*(o.*p));
+
+    CollectionInfo *ci = getCollectionInfo(ib.getCollectionId());
+    return loadChunkedCollection<T, std::shared_ptr>(ci);
+  }
+
+  /**
    * load a top-level (chunked) scalar collection
    *
    * @param collectionId an id returned from a previous #putCollection call

@@ -137,7 +137,7 @@ void ReadTransaction::abort()
 CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
 {
   CollectionInfo *info = new CollectionInfo();
-  ClassId collectionId = readBuf.readRaw<ClassId>();
+  info->collectionId = readBuf.readRaw<ObjectId>();
   size_t sz = readBuf.readRaw<size_t>();
   for(size_t i=0; i<sz; i++) {
     PropertyId chunkId = readBuf.readRaw<PropertyId>();
@@ -147,7 +147,7 @@ CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
     info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
   }
   //put into transaction cache
-  m_collectionInfos[collectionId] = info;
+  m_collectionInfos[info->collectionId] = info;
 
   info->init();
   return info;

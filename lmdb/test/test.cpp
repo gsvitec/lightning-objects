@@ -658,8 +658,12 @@ void testObjectIterProperty(KeyValueStore *kv)
   }
   {
     auto rtxn = kv->beginRead();
+
     SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(objectId);
-    auto value = soi->history->getHistoryValue(2);
+    vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
+
+    assert(hist.size() == 20);
+    //auto value = soi->history->getHistoryValue(2);
   }
 }
 
@@ -670,7 +674,7 @@ int main()
   kv->registerType<SomethingWithAnEmbbededObjectVector>();
   kv->registerType<SomethingWithAnObjectIter>();
 
-#if 0
+#if 1
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
