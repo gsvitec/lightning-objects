@@ -17,6 +17,7 @@
 
 #define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
 #define PROPERTY(cls, name) flexis::persistence::kv::ClassTraits<cls>::decl_props[flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name-1]
+#define PROPERTY_INIT(obj, name) flexis::persistence::kv::ClassTraits<decltype(obj)>::decl_props[flexis::persistence::kv::ClassTraits<decltype(obj)>::PropertyIds::name-1]->initMember(&obj)
 
 #define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
   var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
@@ -223,6 +224,15 @@ namespace kv {
 void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size);
+
+template <typename T> class IterPropertyBackend
+{
+  ObjectId collectionId = 0;
+public:
+  ObjectId getCollectionId() {return collectionId;}
+  void setCollectionId(ObjectId _collectionId) {collectionId = _collectionId;}
+};
+template <typename T> using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend<T>>;
 
 /**
  * Helper interface used by cursor, to be extended by implementors
@@ -434,7 +444,7 @@ public:
 /**
  * polymorphic collection cursor
  */
-template<typename T> struct PolyCollectionCursor :public ObjectCollectionCursor<T, PolyFact> {
+template<typename T> struct PolyCollectionCursor : public ObjectCollectionCursor<T, PolyFact> {
   PolyCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr cc,
                        ObjectFactories *factories, ObjectProperties *properties)
       : ObjectCollectionCursor<T, PolyFact>(collectionId, tr, cc, PolyFact<T>(factories, properties)) {}
@@ -632,6 +642,7 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
+  template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
   friend class CollectionCursorBase;
   friend class CollectionAppenderBase;
 
@@ -1063,6 +1074,7 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
+  template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
   friend class CollectionAppenderBase;
 
   /**
@@ -1619,6 +1631,26 @@ public:
     saveChunk(vect, ci, poly);
 
     return ci->collectionId;
+  }
+
+  /**
+   * save a top-level (chunked) member collection.
+   *
+   * @param o the object that holds the member
+   * @param p pointer to the the member variable
+   * @param vect the collection contents
+   */
+  template <typename O, typename T, template <typename> class Iter>
+  void putCollection(O &o, std::shared_ptr<Iter<T>> O::*p, const std::vector<std::shared_ptr<T>> &vect)
+  {
+    IterPropertyBackend<T> &ib = dynamic_cast<IterPropertyBackend<T> &>(*(o.*p));
+
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
+
+    saveChunk(vect, ci, true);
+
+    ib.setCollectionId(ci->collectionId);
   }
 
   /**
@@ -2466,6 +2498,43 @@ public:
   }
 };
 
+template<typename T, typename V, typename KVIter, typename Iter>
+struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
+{
+  static_assert(std::is_base_of<IterPropertyBackend<V>, KVIter>::value, "KVIter must subclass IterPropertyBackend<V>");
+  static_assert(std::is_base_of<Iter, KVIter>::value, "KVIter must subclass Iter");
+
+  void initMember(void *obj, const PropertyAccessBase *pa) override
+  {
+    T *tp = reinterpret_cast<T *>(obj);
+    auto ib = std::make_shared<KVIter>();
+    ClassTraits<T>::get(*tp, pa, ib);
+  }
+
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::shared_ptr<Iter> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    IterPropertyBackendPtr<V> ib = std::dynamic_pointer_cast<IterPropertyBackend<V>>(val);
+    tr->writeBuf().appendRaw(ib ? ib->getCollectionId() : 0);
+  }
+
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    T *tp = reinterpret_cast<T *>(obj);
+    ObjectId collectionId = buf.readRaw<ObjectId>();
+
+    std::shared_ptr<KVIter> it = std::make_shared<KVIter>();
+    it->setCollectionId(collectionId);
+
+    ClassTraits<T>::get(*tp, pa, it);
+  }
+};
+
 template<typename T> struct PropertyStorage<T, short> : public BasePropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, unsigned short> : public BasePropertyStorage<T, unsigned short>{};
 template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, long>{};
@@ -2541,8 +2610,13 @@ struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std:
       : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
 };
 
-} //kv
+template <typename O, typename P, template <typename> class KVIter, template <typename> class Iter, std::shared_ptr<Iter<P>> O::*p>
+struct ObjectIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter<P>>, p> {
+  ObjectIterPropertyAssign(const char * name)
+      : PropertyAssign<O, std::shared_ptr<Iter<P>>, p>(name, new ObjectIterPropertyStorage<O, P, KVIter<P>, Iter<P>>(), object_vector_t<P>()) {}
+};
 
+} //kv
 } //persistence
 } //flexis
 

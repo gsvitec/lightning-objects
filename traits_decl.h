@@ -28,6 +28,7 @@
 #define END_MAPPING_SUB(cls, sub, nm)
 
 #define MAPPED_PROP(cls, propkind, proptype, propname)
+#define MAPPED_PROP_ITER(cls, propkind, proptype, proptype2, proptype3, propname)
 #define MAPPED_PROP2(cls, propkind, proptype, prop, name)
 #define MAPPED_PROP3(cls, propkind, proptype, propname, parm)
 #define OBJECT_ID(cls, prop)

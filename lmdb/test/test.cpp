@@ -637,13 +637,40 @@ void testGrowDatabase(KeyValueStore *kv)
   }
 }
 
+void testObjectIterProperty(KeyValueStore *kv)
+{
+  ObjectId objectId;
+
+  {
+    auto wtxn = kv->beginWrite();
+
+    SomethingWithAnObjectIter soi;
+    PROPERTY_INIT(soi, history);
+             
+    vector<FixedSizeObjectPtr> hist;
+    for(int i=0; i<20; i++) hist.push_back(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
+
+    wtxn->putCollection(soi, &SomethingWithAnObjectIter::history, hist);
+
+    objectId = wtxn->putObject(soi);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+    SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(objectId);
+    auto value = soi->history->getHistoryValue(2);
+  }
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
   kv->registerType<FixedSizeObject>();
   kv->registerType<SomethingWithAnEmbbededObjectVector>();
+  kv->registerType<SomethingWithAnObjectIter>();
 
-#if 1
+#if 0
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
 
@@ -672,8 +699,10 @@ int main()
   testObjectVectorPropertyStorageEmbedded(kv);
   testValueCollectionData(kv);
   testValueCollectionData2(kv);
-#endif
   testGrowDatabase(kv);
+#endif
+
+  testObjectIterProperty(kv);
 
   delete kv;
   return 0;
