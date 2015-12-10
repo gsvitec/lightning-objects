@@ -129,11 +129,12 @@ namespace kv {
 template<typename T>
 struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend<T>
 {
+  T t;
   T& getHistoryValue(uint64_t bufferPos) override {
-
+    return t;
   }
   ObjectHistory<T>* clone() override {
-
+    return nullptr;
   }
 };
 

@@ -2637,10 +2637,10 @@ struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std:
       : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
 };
 
-template <typename O, typename P, template <typename> class KVIter, template <typename> class Iter, std::shared_ptr<Iter<P>> O::*p>
-struct ObjectIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter<P>>, p> {
+template <typename O, typename P, typename KVIter, typename Iter, std::shared_ptr<Iter> O::*p>
+struct ObjectIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter>, p> {
   ObjectIterPropertyAssign(const char * name)
-      : PropertyAssign<O, std::shared_ptr<Iter<P>>, p>(name, new ObjectIterPropertyStorage<O, P, KVIter<P>, Iter<P>>(), object_vector_t<P>()) {}
+      : PropertyAssign<O, std::shared_ptr<Iter>, p>(name, new ObjectIterPropertyStorage<O, P, KVIter, Iter>(), object_vector_t<P>()) {}
 };
 
 } //kv

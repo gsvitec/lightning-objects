@@ -67,7 +67,7 @@ template<> Properties * nm##_traits::properties(Properties::mk<cls, sup>());
  */
 #define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname),
 #define MAPPED_PROP_ITER(cls, propkind, proptype, proptype2, proptype3, propname) \
-new propkind<cls, proptype, proptype2, proptype3, &cls::propname>(#propname),
+new propkind<cls, proptype, proptype2<proptype>, proptype3<proptype>, &cls::propname>(#propname),
 
 /**
  * define mapping for one property. Same as MAPPED_PROP, but with different names for property and field
