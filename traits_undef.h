@@ -10,6 +10,7 @@
 #undef END_MAPPING_SUB
 
 #undef MAPPED_PROP
+#undef MAPPED_PROP_ITER
 #undef MAPPED_PROP2
 #undef MAPPED_PROP3
 #undef OBJECT_ID

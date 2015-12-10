@@ -109,15 +109,33 @@ struct FixedSizeObject {
   FixedSizeObject() {}
   FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
 };
+using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
 struct SomethingWithAnEmbbededObjectVector
 {
   std::string name;
   std::vector<FixedSizeObject> objects;
 };
 
+struct SomethingWithAnObjectIter
+{
+  std::string name;
+  flexis::ObjectHistoryPtr<FixedSizeObject> history;
+};
+
 namespace flexis {
 namespace persistence {
 namespace kv {
+
+template<typename T>
+struct KVObjectHistory : public ObjectHistory<T>, public IterPropertyBackend<T>
+{
+  T& getHistoryValue(uint64_t bufferPos) override {
+
+  }
+  ObjectHistory<T>* clone() override {
+
+  }
+};
 
 START_MAPPINGHDR(OtherThing)
   enum PropertyIds {name=1, dvalue};
@@ -181,6 +199,12 @@ END_MAPPINGHDR(flexis::player::SourceInfo)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::IFlexisOverlay, userOverlays)
 END_MAPPING(flexis::player::SourceInfo)
+
+START_MAPPINGHDR(SomethingWithAnObjectIter)
+  enum PropertyIds {history=1};
+END_MAPPINGHDR(SomethingWithAnObjectIter)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, ObjectIterPropertyAssign, FixedSizeObject, KVObjectHistory, ObjectHistory, history)
+END_MAPPING(SomethingWithAnObjectIter)
 
 }
 }

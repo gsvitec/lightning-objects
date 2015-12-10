@@ -134,6 +134,8 @@ struct StoreAccessBase
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
+
+  virtual void initMember(void *obj, const PropertyAccessBase *pa) {}
 };
 
 /**
@@ -332,6 +334,10 @@ struct PropertyAccessBase
       : name(name), storage(storage), type(type) {}
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
+
+  void initMember(void *obj) {
+    storage->initMember(obj, this);
+  }
 };
 
 /**
