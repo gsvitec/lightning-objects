@@ -387,7 +387,7 @@ private:
   const ::lmdb::env &m_env;
 
   ::lmdb::txn m_txn;
-  ::lmdb::dbi m_dbi;
+  ::lmdb::dbi &m_dbi;
 
   Mode m_mode;
   bool m_closed = false;
@@ -411,18 +411,15 @@ protected:
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
 public:
-  Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, bool blockWrites=false)
+  Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
       : flexis::persistence::kv::ReadTransaction(store),
         flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
         flexis::persistence::kv::ExclusiveReadTransaction(store),
         m_mode(mode),
         m_env(env),
-        m_txn(::lmdb::txn::begin(env, nullptr, mode == Mode::read ? MDB_RDONLY : 0)),
-        m_dbi(::lmdb::dbi::open(m_txn, CLASSDATA))
+        m_dbi(dbi),
+        m_txn(::lmdb::txn::begin(env, nullptr, mode == Mode::read ? MDB_RDONLY : 0))
   {
-    //important!!
-    m_dbi.set_compare(m_txn, key_compare);
-
     setBlockWrites(blockWrites);
   }
 
@@ -430,6 +427,8 @@ public:
 
   void doCommit() override;
   void doAbort() override;
+  void doReset() override;
+  void doRenew() override;
 };
 
 /**
@@ -438,6 +437,9 @@ public:
 class KeyValueStoreImpl : public KeyValueStore
 {
   ::lmdb::env m_env;
+  ::lmdb::dbi m_dbi_meta = 0;
+  ::lmdb::dbi m_dbi_data = 0;
+
   unsigned m_flags;
   weak_ptr<Transaction> writeTxn;
   string m_dbpath;
@@ -532,25 +534,30 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
 
   m_reuseChunkspace = options.writeMap;
 
-  //create the classmeta database
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
-  auto dbi = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT | MDB_CREATE);
-  dbi.set_dupsort(txn, meta_dup_compare);
+
+  //open/create the classmeta database
+  m_dbi_meta = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT | MDB_CREATE);
+  m_dbi_meta.set_dupsort(txn, meta_dup_compare);
 
   //find the maximum classId
   ::lmdb::val key, val;
 
   key.assign((byte_t *)0, 0);
   val.assign((byte_t *)0, 0);
-  auto cursor = ::lmdb::cursor::open(txn, dbi);
+  auto cursor = ::lmdb::cursor::open(txn, m_dbi_meta);
   while (cursor.get(key, val, MDB_NEXT_NODUP)) {
     ClassId cid = read_integer<ClassId>(val.data<byte_t>()+2, 2);
     if(cid > m_maxClassId) m_maxClassId = cid;
   }
   cursor.close();
 
-  //create the classdata database and find the max objectid
+  //open/create the classdata database
+  m_dbi_data = ::lmdb::dbi::open(txn, CLASSDATA, MDB_CREATE);
+  m_dbi_data.set_compare(txn, key_compare);
+
   m_maxCollectionId = findMaxObjectId(txn, COLLECTION_CLSID);
+
   txn.commit();
 }
 
@@ -588,7 +595,7 @@ void KeyValueStoreImpl::transactionCompleted(Transaction::Mode mode, bool blockW
 
 ps::ReadTransactionPtr KeyValueStoreImpl::beginRead()
 {
-  return ps::ReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, false));
+  return ps::ReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, false));
 }
 
 ps::ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
@@ -597,7 +604,7 @@ ps::ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
   if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
   m_writeBlocks++;
 
-  return ps::ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, true));
+  return ps::ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, true));
 }
 
 ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs)
@@ -610,7 +617,7 @@ ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned need
 
   checkAvailableSpace(needsKBs);
   Transaction::Mode mode = append ? Transaction::Mode::append : Transaction::Mode::write;
-  auto tptr = shared_ptr<Transaction>(new Transaction(*this, mode, m_env));
+  auto tptr = shared_ptr<Transaction>(new Transaction(*this, mode, m_env, m_dbi_data));
   writeTxn = tptr;
 
   return tptr;
@@ -628,6 +635,16 @@ void Transaction::doAbort()
   m_txn.abort();
   m_closed = true;
   ((KeyValueStoreImpl *)&store)->transactionCompleted(m_mode, m_blockWrites);
+}
+
+void Transaction::doReset()
+{
+  m_txn.reset();
+}
+
+void Transaction::doRenew()
+{
+  m_txn.renew();
 }
 
 bool Transaction::putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf)
@@ -815,13 +832,9 @@ CollectionCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId coll
 
 ObjectId KeyValueStoreImpl::findMaxObjectId(::lmdb::txn &txn, ClassId classId)
 {
-  //create the classdata database if needed
-  auto dbi = ::lmdb::dbi::open(txn, CLASSDATA, MDB_CREATE);
-  dbi.set_compare(txn, key_compare); //important!!
-
   ObjectId maxId = 0;
 
-  auto cursor = ::lmdb::cursor::open(txn, dbi);
+  auto cursor = ::lmdb::cursor::open(txn, m_dbi_data);
 
   //first try to position on next class and go one back
   SK_CONSTR(k, classId+1, 0, 0);
@@ -905,12 +918,10 @@ void KeyValueStoreImpl::loadSaveClassMeta(
   using MetaInfo = KeyValueStoreBase::PropertyMetaInfoPtr;
 
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
-  auto dbi = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT);
-  dbi.set_dupsort(txn, meta_dup_compare);
 
   ::lmdb::val key, val;
   key.assign(classInfo->name);
-  auto cursor = ::lmdb::cursor::open(txn, dbi);
+  auto cursor = ::lmdb::cursor::open(txn, m_dbi_meta);
   if(cursor.get(key, val, MDB_SET)) {
     //class already exists
     bool first = true;
@@ -941,13 +952,13 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     write_integer<ClassId>(buf+2, classInfo->classId, 2);
     key.assign(classInfo->name);
     val.assign(buf, 4);
-    dbi.put(txn, key, val);
+    m_dbi_meta.put(txn, key, val);
 
     //Save properties
     for(unsigned i=0; i < numProps; i++) {
       const PropertyAccessBase *prop = currentProps[i];
       MDB_val val = make_val(i+1, prop);
-      ::lmdb::dbi_put(txn, dbi.handle(), (MDB_val *)key, &val, 0);
+      ::lmdb::dbi_put(txn, m_dbi_meta.handle(), (MDB_val *)key, &val, 0);
       free(val.mv_data);
     }
     txn.commit();

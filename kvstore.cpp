@@ -132,7 +132,18 @@ void ReadTransaction::abort()
   for(auto &it : m_collectionInfos) delete it.second;
   m_collectionInfos.clear();
   doAbort();
-};
+}
+
+void ReadTransaction::reset()
+{
+  //keep collection infos alive
+  doReset();
+}
+
+void ReadTransaction::renew()
+{
+  doRenew();
+}
 
 CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
 {
@@ -141,15 +152,20 @@ CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
   size_t sz = readBuf.readRaw<size_t>();
   for(size_t i=0; i<sz; i++) {
     PropertyId chunkId = readBuf.readRaw<PropertyId>();
+    if(chunkId >= info->nextChunkId)
+      info->nextChunkId = chunkId + PropertyId(1);
+
     size_t startIndex = readBuf.readRaw<size_t>();
     size_t elementCount = readBuf.readRaw<size_t>();
+    if(startIndex + elementCount > info->nextStartIndex)
+      info->nextStartIndex = startIndex + elementCount;
+
     size_t dataSize = readBuf.readRaw<size_t>();
     info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
   }
   //put into transaction cache
   m_collectionInfos[info->collectionId] = info;
 
-  info->init();
   return info;
 }
 

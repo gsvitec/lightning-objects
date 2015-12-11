@@ -236,10 +236,13 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
 
 template <typename T> class IterPropertyBackend
 {
-  ObjectId collectionId = 0;
+  ObjectId m_collectionId = 0;
+  KeyValueStore *m_store;
+
 public:
-  ObjectId getCollectionId() {return collectionId;}
-  void setCollectionId(ObjectId _collectionId) {collectionId = _collectionId;}
+  ObjectId getCollectionId() {return m_collectionId;}
+  void setCollectionId(ObjectId collectionId) {m_collectionId = collectionId;}
+  void setKVStore(KeyValueStore *store) {m_store = store;}
 };
 template <typename T> using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend<T>>;
 
@@ -349,15 +352,6 @@ struct CollectionInfo
 
   CollectionInfo() {}
   CollectionInfo(ObjectId collectionId) : collectionId(collectionId) {}
-
-  void init() {
-    for(auto &ci : chunkInfos) {
-      if(ci.chunkId >= nextChunkId)
-        nextChunkId = ci.chunkId + PropertyId(1);
-      if(ci.startIndex + ci.elementCount > nextStartIndex)
-        nextStartIndex = ci.startIndex + ci.elementCount;
-    }
-  }
 };
 
 class ChunkCursor
@@ -807,6 +801,9 @@ protected:
   virtual CursorHelper * _openCursor(ClassId classId) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId collectionId) = 0;
+
+  virtual void doReset() = 0;
+  virtual void doRenew() = 0;
   virtual void doAbort() = 0;
 
   /**
@@ -1043,6 +1040,17 @@ public:
     return store.typeInfos[ti];
   }
 
+  /**
+   * same as abort, but (possibly) keeps resources allocated for a later renew()
+   */
+  void reset();
+  /**
+   * renew a bewviously reset() transaction
+   */
+  void renew();
+  /**
+   * abort (close) this transaction, The transaction must not be used afterward
+   */
   void abort();
 };
 
@@ -1694,6 +1702,7 @@ public:
     saveChunk(vect, ci, true);
 
     ib.setCollectionId(ci->collectionId);
+    ib.setKVStore(&store);
   }
 
   /**
