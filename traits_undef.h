@@ -2,7 +2,9 @@
 // Created by cse on 12/3/15.
 //
 #undef START_MAPPINGHDR
+#undef START_MAPPINGHDR_A
 #undef START_MAPPINGHDR_SUB
+#undef START_MAPPINGHDR_SUB_A
 
 #undef END_MAPPINGHDR
 #undef END_MAPPINGHDR_SUB

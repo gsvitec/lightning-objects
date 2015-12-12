@@ -138,7 +138,7 @@ struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend<T>
   }
 };
 
-START_MAPPINGHDR(OtherThing)
+START_MAPPINGHDR_A(OtherThing)
   enum PropertyIds {name=1, dvalue};
 END_MAPPINGHDR(OtherThing)
   MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)

@@ -17,14 +17,33 @@
  * start the mapping header.
  * @param cls the fully qualified class name
  */
-#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : public ClassTraitsBase<cls>{
+#define START_MAPPINGHDR(cls) template <> struct ClassTraits<cls> : \
+public ClassTraitsBase<cls>, public ClassTraitsConcrete<cls>{
 
 /**
- * start the mapping header.
+ * start the mapping header for an abstract class
  * @param cls the fully qualified class name
  */
+#define START_MAPPINGHDR_A(cls) template <> struct ClassTraits<cls> : \
+public ClassTraitsBase<cls>, public ClassTraitsAbstract<cls>{
+
+/**
+ * start the mapping header for a subclass
+ * @param cls the fully qualified class name
+ * @param sup the fully qualified name of the superclass
+ * @param nm a name that is unique within the current compilation context, used internally
+ */
 #define START_MAPPINGHDR_SUB(cls, sup, nm) using nm##_traits = ClassTraitsBase<cls, sup>; \
-template <> struct ClassTraits<cls> : public nm##_traits {
+template <> struct ClassTraits<cls> : public nm##_traits, public ClassTraitsConcrete<cls> {
+
+/**
+ * start the mapping header for an abstract subclass
+ * @param cls the fully qualified class name
+ * @param sup the fully qualified name of the superclass
+ * @param nm a name that is unique within the current compilation context, used internally
+ */
+#define START_MAPPINGHDR_SUB_A(cls, sup, nm) using nm##_traits = ClassTraitsBase<cls, sup>; \
+template <> struct ClassTraits<cls> : public nm##_traits, public ClassTraitsAbstract<cls> {
 
 /**
  * end the mapping header

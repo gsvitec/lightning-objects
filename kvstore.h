@@ -236,6 +236,7 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
 
 template <typename T> class IterPropertyBackend
 {
+protected:
   ObjectId m_collectionId = 0;
   KeyValueStore *m_store;
 
@@ -250,7 +251,7 @@ template <typename T> using IterPropertyBackendPtr = std::shared_ptr<IterPropert
  * Helper interface used by cursor, to be extended by implementors
  */
 class FlexisPersistence_EXPORT CursorHelper {
-  template <typename T, template <typename T> class Fact> friend class ClassCursor;
+  template <typename T> friend class ClassCursor;
 
 protected:
   virtual ~CursorHelper() {}
@@ -291,34 +292,6 @@ protected:
    * @return the data at the current cursor position
    */
   virtual const byte_t *getObjectData() = 0;
-};
-
-//non-polymorphic cursor object factory
-template<typename T> struct SimpleFact
-{
-  T *makeObj(ClassId classId) {
-    return new T();
-  }
-  Properties *properties(ClassId classId) {
-    return ClassTraits<T>::properties;
-  }
-};
-
-//polymorphic cursor object factory
-template<typename T> class PolyFact
-{
-  ObjectFactories * const m_factories;
-  ObjectProperties * const m_properties;
-
-public:
-  PolyFact(ObjectFactories *factories, ObjectProperties *properties) : m_factories(factories), m_properties(properties) {}
-
-  T *makeObj(ClassId classId) {
-    return (T *)m_factories->at(classId)();
-  }
-  Properties *properties(ClassId classId) {
-    return m_properties->at(classId);
-  }
 };
 
 struct ChunkInfo {
@@ -391,11 +364,10 @@ public:
 /**
  * cursor for iterating over top-level object collections
  */
-template <typename T, template <typename T> class Fact>
+template <typename T>
 class ObjectCollectionCursor : public CollectionCursorBase
 {
   const ClassId m_declClass;
-  Fact<T> m_fact;
 
 protected:
   bool isValid() override
@@ -404,10 +376,10 @@ protected:
   }
 
 public:
-  using Ptr = std::shared_ptr<ObjectCollectionCursor<T, Fact>>;
+  using Ptr = std::shared_ptr<ObjectCollectionCursor<T>>;
 
-  ObjectCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor, Fact<T> fact)
-      : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::info->classId), m_fact(fact)
+  ObjectCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+      : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::info->classId)
   {}
 
   T *get()
@@ -416,8 +388,8 @@ public:
     ObjectId objectId;
     readObjectHeader(m_readBuf, &classId, &objectId);
 
-    T *obj = m_fact.makeObj(classId);
-    Properties *properties = m_fact.properties(classId);
+    T *obj = (T *)ClassTraits<T>::makeObject(classId);
+    Properties *properties = ClassTraits<T>::getProperties(classId);
 
     PropertyId propertyId = 0;
     for(unsigned px=0, sz=properties->full_size(); px < sz; px++) {
@@ -455,40 +427,24 @@ public:
 };
 
 /**
- * polymorphic collection cursor
- */
-template<typename T> struct PolyCollectionCursor : public ObjectCollectionCursor<T, PolyFact> {
-  PolyCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr cc,
-                       ObjectFactories *factories, ObjectProperties *properties)
-      : ObjectCollectionCursor<T, PolyFact>(collectionId, tr, cc, PolyFact<T>(factories, properties)) {}
-};
-/**
- * non-polymorphic collection cursor
- */
-template<typename T> struct SimpleCollectionCursor : public ObjectCollectionCursor<T, SimpleFact> {
-  SimpleCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr cc)
-      : ObjectCollectionCursor<T, SimpleFact>(collectionId, tr, cc, SimpleFact<T>()) {}
-};
-
-/**
  * cursor for iterating over class objects (each with its own key)
  */
-template <typename T, template <typename T> class Fact>
+template <typename T>
 class ClassCursor
 {
-  ClassCursor(ClassCursor<T, Fact> &other) = delete;
+  ClassCursor(ClassCursor<T> &other) = delete;
 
   const ClassId m_classId;
+
   CursorHelper * const m_helper;
   ReadTransaction * const m_tr;
-  Fact<T> m_fact;
   bool m_hasData;
 
 public:
-  using Ptr = std::shared_ptr<ClassCursor<T, Fact>>;
+  using Ptr = std::shared_ptr<ClassCursor<T>>;
 
-  ClassCursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr, Fact<T> fact)
-      : m_classId(classId), m_helper(helper), m_tr(tr), m_fact(fact)
+  ClassCursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr)
+      : m_classId(classId), m_helper(helper), m_tr(tr)
   {
     m_hasData = helper->start();
   }
@@ -560,8 +516,8 @@ public:
     //nothing here
     if(readBuf.null()) return nullptr;
 
-    T *obj = m_fact.makeObj(key.classId);
-    Properties *properties = m_fact.properties(key.classId);
+    T *obj = ClassTraits<T>::makeObject(key.classId);
+    Properties *properties = ClassTraits<T>::getProperties(key.classId);
 
     if(objId) *objId = key.objectId;
 
@@ -606,23 +562,6 @@ public:
   void close() {
     m_helper->close();
   }
-};
-
-/**
- * polymorphic cursor
- */
-template<typename T> struct PolyClassCursor :public ClassCursor<T, PolyFact> {
-  PolyClassCursor(ClassId classId,
-             CursorHelper *helper,
-             ReadTransaction *tr, ObjectFactories *factories, ObjectProperties *properties)
-      : ClassCursor<T, PolyFact>(classId, helper, tr, PolyFact<T>(factories, properties)) {}
-};
-/**
- * non-polymorphic cursor
- */
-template<typename T> struct SimpleClassCursor : public ClassCursor<T, SimpleFact> {
-  SimpleClassCursor(ClassId classId, CursorHelper *helper, ReadTransaction *tr)
-      : ClassCursor<T, SimpleFact>(classId, helper, tr, SimpleFact<T>()) {}
 };
 
 /**
@@ -766,6 +705,9 @@ protected:
     return true;
   }
 
+  /**
+   * completely load the contents of a chunked collection
+   */
   template <typename T, template <typename> class Ptr=std::shared_ptr> std::vector<Ptr<T>> loadChunkedCollection(
       CollectionInfo *ci)
   {
@@ -830,48 +772,35 @@ public:
   virtual ~ReadTransaction() {}
 
   /**
-   * @return a cursor over all instances of the given class. The returned cursor is non-polymorphic
+   * @return a cursor over all instances of the given class
    */
-  template <typename T> typename SimpleClassCursor<T>::Ptr openCursor() {
+  template <typename T> typename ClassCursor<T>::Ptr openCursor() {
     using Traits = ClassTraits<T>;
     ClassId classId = Traits::info->classId;
 
-    return typename SimpleClassCursor<T>::Ptr(new SimpleClassCursor<T>(classId, _openCursor(classId), this));
+    return typename ClassCursor<T>::Ptr(new ClassCursor<T>(classId, _openCursor(classId), this));
   }
 
   /**
    * @param obj a loaded object
    * @param propertyId the propertyId (1-based index into declared properties)
    * @return a cursor over the contents of a vector-valued, lazy-loading object property. The cursor will be empty if the
-   * given property is not vector-valued. The cursor is polymorphic
+   * given property is not vector-valued
    */
-  template <typename T, typename V> typename PolyClassCursor<V>::Ptr openCursor(ObjectId objectId, T *obj, PropertyId propertyId) {
+  template <typename T, typename V> typename ClassCursor<V>::Ptr openCursor(ObjectId objectId, T *obj, PropertyId propertyId) {
     ClassId t_classId = ClassTraits<T>::info->classId;
     ClassId v_classId = ClassTraits<V>::info->classId;
 
-    return typename PolyClassCursor<V>::Ptr(
-        new PolyClassCursor<V>(v_classId,
-                          _openCursor(t_classId, objectId, propertyId),
-                          this, &store.objectFactories, &store.objectProperties));
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(v_classId, _openCursor(t_classId, objectId, propertyId), this));
   }
 
   /**
    * @param collectionId the id of a top-level object collection
-   * @return a cursor over the contents of the collection. The cursor is polymorphic
+   * @return a cursor over the contents of the collection
    */
-  template <typename V> typename PolyCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
-    return typename PolyCollectionCursor<V>::Ptr(
-        new PolyCollectionCursor<V>(collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId),
-                                    &store.objectFactories, &store.objectProperties));
-  }
-
-  /**
-   * @param collectionId the id of a top-level collection
-   * @return a cursor over the contents of the collection. The cursor is non-polymorphic
-   */
-  template <typename V> typename SimpleCollectionCursor<V>::Ptr openSimpleCursor(ObjectId collectionId) {
-    return typename SimpleCollectionCursor<V>::Ptr(
-        new SimpleCollectionCursor<V>(collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId)));
+  template <typename V> typename ObjectCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
+    return typename ObjectCollectionCursor<V>::Ptr(new ObjectCollectionCursor<V>( collectionId, this,
+                                                                                  _openChunkCursor(COLLECTION_CLSID, collectionId)));
   }
 
   /**
@@ -1699,7 +1628,7 @@ public:
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
-    saveChunk(vect, ci, true);
+    saveChunk(vect, ci, ClassTraits<T>::info->isPoly());
 
     ib.setCollectionId(ci->collectionId);
     ib.setKVStore(&store);
@@ -1746,15 +1675,14 @@ public:
    *
    * @param vect the collection contents
    * @param chunkSize size of chunk
-   * @param poly emply polymorphic type resolution.
    */
   template <typename T, template <typename T> class Ptr>
-  void appendCollection(ObjectId collectionId, const std::vector<Ptr<T>> &vect, bool poly = true)
+  void appendCollection(ObjectId collectionId, const std::vector<Ptr<T>> &vect)
   {
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) throw persistence_error("collection not found");
 
-    saveChunk(vect, ci, poly);
+    saveChunk(vect, ci, ClassTraits<T>::info->isPoly());
   }
 
   /**
@@ -1925,14 +1853,13 @@ public:
    *
    * @param collectionId the id of a top-level collection
    * @param chunkSize the chunk size
-   * @param bool poly whether polymorphic type resolution should be employed
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
-      ObjectId collectionId, size_t chunkSize = CHUNKSIZE, bool poly = true)
+      ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
   {
     return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
-        this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, poly));
+        this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, ClassTraits<V>::info->isPoly()));
   }
 
   /**
@@ -2174,7 +2101,7 @@ struct SetPropertyStorage : public StoreAccessPropertyKey
 
 /**
  * storage template for mapped non-pointer object references. Since the object is referenced by value value in the enclosing
- * class, storage can only be non-polymorphic. THe object is serialized into a separate buffer, but the key is written to the
+ * class, storage can only be non-polymorphic. The object is serialized into a separate buffer, but the key is written to the
  * enclosing object's buffer
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey

@@ -12,7 +12,7 @@
 #include <typeinfo>
 #include <stdexcept>
 #include <stdint.h>
-#include <typeinfo>
+#include <type_traits>
 #include "kvbuf.h"
 #include "FlexisPersistence_Export.h"
 
@@ -547,6 +547,8 @@ struct resolve<T>
 template <typename T, typename ... Sup>
 struct ClassInfo : public AbstractClassInfo
 {
+  T * (* const makeObject)(ClassId classId);
+  Properties * (* const getProperties)(ClassId classId);
   bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_id)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
@@ -556,6 +558,8 @@ struct ClassInfo : public AbstractClassInfo
 
   ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
       : AbstractClassInfo(name, typeinfo, classId),
+        makeObject(&ClassTraits<T>::makeObject),
+        getProperties(&ClassTraits<T>::getProperties),
         add(&ClassTraits<T>::add),
         get_id(&ClassTraits<T>::get_id),
         save(&ClassTraits<T>::save),
@@ -613,6 +617,15 @@ struct ClassTraitsBase
     //TODO: this is not polymorphic!
     ObjectId oid = get_objectid(val);
     return decl_props[id-1]->same(&t, oid);
+  }
+
+  static Properties * getProperties(ClassId classId)
+  {
+    if(classId == info->classId)
+      return properties;
+    else if(classId)
+      return RESOLVE_SUB(classId)->getProperties(classId);
+    return nullptr;
   }
 
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
@@ -703,6 +716,38 @@ struct ClassTraitsBase
 };
 
 /**
+ * ClassTraits extension for concrete classes
+ */
+template <typename T> struct ClassTraitsAbstract
+{
+  static T *makeObject(ClassId classId)
+  {
+    if(classId == ClassTraits<T>::info->classId) {
+      throw persistence_error("abstract class cannot be instantiated");
+    }
+    else if(classId)
+      return RESOLVE_SUB(classId)->makeObject(classId);
+    return nullptr;
+  }
+};
+
+/**
+ * ClassTraits extension for abstract classes
+ */
+template <typename T> struct ClassTraitsConcrete
+{
+  static T *makeObject(ClassId classId)
+  {
+    if(classId == ClassTraits<T>::info->classId) {
+      return new T();
+    }
+    else if(classId)
+      return RESOLVE_SUB(classId)->makeObject(classId);
+    return nullptr;
+  }
+};
+
+/**
  * represents a non-class, e.g. where a mapped superclass must be defined but does not exist
  */
 template <>
@@ -712,6 +757,9 @@ struct ClassTraits<EmptyClass>
   static Properties * properties;
   static const unsigned decl_props_sz = 0;
   static PropertyAccessBase * decl_props[0];
+
+  static EmptyClass *makeObject(ClassId classId) {return nullptr;}
+  static Properties * getProperties(ClassId classId) {return nullptr;}
 
   template <typename T>
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
