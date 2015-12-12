@@ -135,7 +135,9 @@ struct StoreAccessBase
                     void *obj, const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
 
-  virtual void initMember(void *obj, const PropertyAccessBase *pa) {}
+  virtual void * initMember(void *obj, const PropertyAccessBase *pa) {
+    return nullptr;
+  }
 };
 
 /**
@@ -335,8 +337,8 @@ struct PropertyAccessBase
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 
-  void initMember(void *obj) {
-    storage->initMember(obj, this);
+  void *initMember(void *obj) {
+    return storage->initMember(obj, this);
   }
 };
 
@@ -547,6 +549,7 @@ struct resolve<T>
 template <typename T, typename ... Sup>
 struct ClassInfo : public AbstractClassInfo
 {
+  void * (* const initMember)(T *obj, PropertyAccessBase *pa);
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
   bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
@@ -558,6 +561,7 @@ struct ClassInfo : public AbstractClassInfo
 
   ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
       : AbstractClassInfo(name, typeinfo, classId),
+        initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         add(&ClassTraits<T>::add),
@@ -611,12 +615,13 @@ struct ClassTraitsBase
     return properties->objectIdAccess<T>();
   }
 
-  template <typename V>
-  static bool same(T &t, ObjectId id, std::shared_ptr<V> &val)
+  static void * initMember(T *obj, PropertyAccessBase *pa)
   {
-    //TODO: this is not polymorphic!
-    ObjectId oid = get_objectid(val);
-    return decl_props[id-1]->same(&t, oid);
+    if(pa->classId == info->classId)
+      return pa->initMember(obj);
+    else if(pa->classId)
+      return RESOLVE_SUB(pa->classId)->initMember(obj, pa);
+    return nullptr;
   }
 
   static Properties * getProperties(ClassId classId)
@@ -691,7 +696,8 @@ struct ClassTraitsBase
   }
 
   /**
-   * put (copy) the value of the given property into value
+   * put (copy) the value of the given property into value. Must only be called after type resolution, such
+   * that pa->classId == info->classId
    */
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
@@ -703,7 +709,8 @@ struct ClassTraitsBase
   }
 
   /**
-   * update the given property using value
+   * update the given property using value. Must only be called after type resolution, such
+   * that pa->classId == info->classId
    */
   template <typename TV>
   static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
@@ -761,6 +768,10 @@ struct ClassTraits<EmptyClass>
   static EmptyClass *makeObject(ClassId classId) {return nullptr;}
   static Properties * getProperties(ClassId classId) {return nullptr;}
 
+  template <typename T>
+  static void * initMember(T *obj, PropertyAccessBase *pa) {
+    return nullptr;
+  }
   template <typename T>
   static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;

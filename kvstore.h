@@ -19,7 +19,6 @@
 
 #define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
 #define PROPERTY(cls, name) flexis::persistence::kv::ClassTraits<cls>::decl_props[flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name-1]
-#define PROPERTY_INIT(obj, name) flexis::persistence::kv::ClassTraits<std::decay<decltype(obj)>::type>::decl_props[flexis::persistence::kv::ClassTraits<std::decay<decltype(obj)>::type>::PropertyIds::name-1]->initMember(&obj)
 
 #define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
   var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
@@ -1614,24 +1613,30 @@ public:
   }
 
   /**
-   * save a top-level (chunked) member collection.
+   * save a top-level (chunked) member collection. After saving the collection, the member object
+   * will be initialized with the collectionId and a pointer to the KV store
    *
    * @param o the object that holds the member
-   * @param p pointer to the the member variable
+   * @param pa the property accessor, usually obtained via PROPERTY macro
    * @param vect the collection contents
    */
-  template <typename O, typename T, template <typename> class Iter>
-  void putCollection(O &o, std::shared_ptr<Iter<T>> O::*p, const std::vector<std::shared_ptr<T>> &vect)
+  template <typename O, typename T>
+  ObjectId putCollection(O &o, PropertyAccessBase *pa, const std::vector<std::shared_ptr<T>> &vect)
   {
-    IterPropertyBackend<T> &ib = dynamic_cast<IterPropertyBackend<T> &>(*(o.*p));
-
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
     saveChunk(vect, ci, ClassTraits<T>::info->isPoly());
 
-    ib.setCollectionId(ci->collectionId);
-    ib.setKVStore(&store);
+    void * ib = ClassTraits<O>::initMember(&o, pa);
+    if(!ib)
+      throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
+
+    //bad luck if pa->storage was not an ObjectIterPropertyStorage
+    ((IterPropertyBackend<T> *)ib)->setCollectionId(ci->collectionId);
+    ((IterPropertyBackend<T> *)ib)->setKVStore(&store);
+
+    return ci->collectionId;
   }
 
   /**
@@ -2483,11 +2488,14 @@ struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
   static_assert(std::is_base_of<IterPropertyBackend<V>, KVIter>::value, "KVIter must subclass IterPropertyBackend<V>");
   static_assert(std::is_base_of<Iter, KVIter>::value, "KVIter must subclass Iter");
 
-  void initMember(void *obj, const PropertyAccessBase *pa) override
+  void *initMember(void *obj, const PropertyAccessBase *pa) override
   {
     T *tp = reinterpret_cast<T *>(obj);
-    auto ib = std::make_shared<KVIter>();
+    KVIter *it = new KVIter();
+    auto ib = std::shared_ptr<KVIter>(it);
     ClassTraits<T>::get(*tp, pa, ib);
+
+    return static_cast<IterPropertyBackend<V> *>(it);
   }
 
   void save(WriteTransaction *tr,

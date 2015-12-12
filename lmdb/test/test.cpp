@@ -645,12 +645,11 @@ void testObjectIterProperty(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     SomethingWithAnObjectIter soi;
-    PROPERTY_INIT(soi, history);
              
     vector<FixedSizeObjectPtr> hist;
     for(int i=0; i<20; i++) hist.push_back(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
 
-    wtxn->putCollection(soi, &SomethingWithAnObjectIter::history, hist);
+    wtxn->putCollection(soi, PROPERTY(SomethingWithAnObjectIter, history), hist);
 
     objectId = wtxn->putObject(soi);
 
