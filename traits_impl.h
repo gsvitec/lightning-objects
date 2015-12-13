@@ -69,11 +69,11 @@ template<> PropertyAccessBase * nm##_traits::decl_props[] = {
  * @param cls the fully qualified class name
  */
 #define END_MAPPING(cls) }; \
-template<> const unsigned ClassTraitsBase<cls>::decl_props_sz = ARRAY_SZ(ClassTraitsBase<cls>::decl_props); \
+template<> const unsigned ClassTraitsBase<cls>::num_decl_props = ARRAY_SZ(ClassTraitsBase<cls>::decl_props); \
 template<> Properties * ClassTraitsBase<cls>::properties(Properties::mk<cls>());
 
 #define END_MAPPING_SUB(cls, sup, nm) }; \
-template<> const unsigned nm##_traits::decl_props_sz = ARRAY_SZ(nm##_traits::decl_props); \
+template<> const unsigned nm##_traits::num_decl_props = ARRAY_SZ(nm##_traits::decl_props); \
 template<> Properties * nm##_traits::properties(Properties::mk<cls, sup>());
 
 /**
@@ -85,6 +85,17 @@ template<> Properties * nm##_traits::properties(Properties::mk<cls, sup>());
  * @param propname the property name
  */
 #define MAPPED_PROP(cls, propkind, proptype, propname) new propkind<cls, proptype, &cls::propname>(#propname),
+
+/**
+ * define mapping for one iterator-type property
+ *
+ * @param cls the fully qualified class name
+ * @param propkind the mapping class name
+ * @param proptype the iterated-over data type
+ * @param proptype2 the declared type of the iterator property (object that implements the iterator)
+ * @param proptype3 the KV-store-aware replacement type for the iterator property (subclasses proptype2)
+ * @param propname the property name
+ */
 #define MAPPED_PROP_ITER(cls, propkind, proptype, proptype2, proptype3, propname) \
 new propkind<cls, proptype, proptype2<proptype>, proptype3<proptype>, &cls::propname>(#propname),
 
@@ -93,6 +104,10 @@ new propkind<cls, proptype, proptype2<proptype>, proptype3<proptype>, &cls::prop
  */
 #define MAPPED_PROP2(cls, propkind, proptype, prop, name) new propkind<cls, proptype, &cls::prop>(#name),
 
+/**
+ * define mapping for one property. Same as MAPPED_PROP, but with an additional parameter that is pased to the
+ * property accessor
+ */
 #define MAPPED_PROP3(cls, propkind, proptype, propname, parm) new propkind<cls, proptype, &cls::propname>(#propname, parm),
 
 /**

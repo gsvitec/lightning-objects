@@ -110,10 +110,20 @@ struct FixedSizeObject {
   FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
 };
 using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
+
+struct VariableSizeObject {
+  unsigned number;
+  std::string name;
+
+  VariableSizeObject() {}
+  VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
+};
+
 struct SomethingWithAnEmbbededObjectVector
 {
   std::string name;
   std::vector<FixedSizeObject> objects;
+  std::vector<VariableSizeObject> objects2;
 };
 
 struct SomethingWithAnObjectIter
@@ -174,11 +184,19 @@ END_MAPPINGHDR(FixedSizeObject)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
+START_MAPPINGHDR(VariableSizeObject)
+  enum PropertyIds {number=1, name};
+END_MAPPINGHDR(VariableSizeObject)
+  MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
+  MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
+END_MAPPING(VariableSizeObject)
+
 START_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
   enum PropertyIds {name=1, objects};
 END_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, BasePropertyAssign, std::string, name)
-  MAPPED_PROP3(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, objects, 8)
+  MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, objects)
+  MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, objects2)
 END_MAPPING(SomethingWithAnEmbbededObjectVector)
 
 START_MAPPINGHDR(flexis::player::SourceDisplayConfig)

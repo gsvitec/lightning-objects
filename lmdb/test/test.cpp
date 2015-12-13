@@ -575,6 +575,11 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
     sweov.objects.push_back(FixedSizeObject(5, 6));
     sweov.objects.push_back(FixedSizeObject(7, 8));
 
+    size_t s = TypeTraits<unsigned int>::byteSize;
+    sweov.objects2.push_back(VariableSizeObject(1, "Frankfurt"));
+    sweov.objects2.push_back(VariableSizeObject(3, "München"));
+    sweov.objects2.push_back(VariableSizeObject(5, "Regensburg"));
+
     auto wtxn = kv->beginWrite();
     objectId = wtxn->putObject(sweov);
     wtxn->commit();
@@ -590,6 +595,7 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
            && loaded->objects[1].number1 == 3 \
            && loaded->objects[3].number1 == 7 \
            && loaded->objects[3].number2 == 8);
+    assert(loaded->objects2.size() ==  3 && loaded->objects2[0].name == "Frankfurt" && loaded->objects2[2].name == "Regensburg");
     delete loaded;
   }
 }
@@ -663,6 +669,7 @@ void testObjectIterProperty(KeyValueStore *kv)
 
     assert(hist.size() == 20);
     //auto value = soi->history->getHistoryValue(2);
+    delete soi;
   }
 }
 
@@ -670,6 +677,7 @@ int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
   kv->registerType<FixedSizeObject>();
+  kv->registerType<VariableSizeObject>();
   kv->registerType<SomethingWithAnEmbbededObjectVector>();
   kv->registerType<SomethingWithAnObjectIter>();
 
@@ -699,12 +707,11 @@ int main()
   testValueCollection(kv);
   testObjectPtrPropertyStorage(kv);
   testValueVectorProperty(kv);
-  testObjectVectorPropertyStorageEmbedded(kv);
   testValueCollectionData(kv);
   testValueCollectionData2(kv);
   testGrowDatabase(kv);
 #endif
-
+  testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
 
   delete kv;

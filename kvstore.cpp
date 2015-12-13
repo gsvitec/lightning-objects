@@ -127,6 +127,12 @@ void WriteTransaction::commit()
   doCommit();
 }
 
+ReadTransaction::~ReadTransaction()
+{
+  for(auto &it : m_collectionInfos) delete it.second;
+  m_collectionInfos.clear();
+}
+
 void ReadTransaction::abort()
 {
   for(auto &it : m_collectionInfos) delete it.second;

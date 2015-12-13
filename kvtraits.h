@@ -260,7 +260,7 @@ struct ValueTraits<std::string> : public ValueTraitsFixed<false>
     buf.read(val.length() +1); //move the pointer
   }
   static void putBytes(WriteBuf &buf, std::string val) {
-    buf.append(val.c_str(), val.length()+1);
+    buf.append(val.data(), val.length()+1);
   }
 };
 
@@ -399,10 +399,26 @@ class Properties
         superIter(superIter),
         startPos(superIter ? superIter->full_size() : 0),
         keyStorageId(keyStorageId)
-  {}
+  {
+    fixedSize = 0;
+    if(superIter) {
+      fixedSize = superIter->fixedSize;
+      if(!fixedSize) return;
+    }
+    for(unsigned i=0; i<numProps; i++) {
+      size_t bs = properties[i]->type.byteSize;
+      if(!bs) {
+        fixedSize = 0;
+        return;
+      }
+      fixedSize += bs;
+    }
+  }
 
   Properties(const Properties& mit) = delete;
 public:
+  size_t fixedSize;
+
   template <typename T, typename S=EmptyClass>
   static Properties *mk()
   {
@@ -606,7 +622,7 @@ struct ClassTraitsBase
   static ClassInfo<T, SUP> *info;
   static Properties * properties;
   static PropertyAccessBase * decl_props[];
-  static const unsigned decl_props_sz;
+  static const unsigned num_decl_props;
 
   /**
    * @return the objectid accessor for this class
@@ -762,7 +778,7 @@ struct ClassTraits<EmptyClass>
 {
   static ClassInfo<EmptyClass> *info;
   static Properties * properties;
-  static const unsigned decl_props_sz = 0;
+  static const unsigned num_decl_props = 0;
   static PropertyAccessBase * decl_props[0];
 
   static EmptyClass *makeObject(ClassId classId) {return nullptr;}

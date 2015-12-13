@@ -153,7 +153,7 @@ public:
     using Traits = ClassTraits<T>;
 
     Traits::info->classId = --minAbstractClassId;
-    for(int i=0; i<Traits::decl_props_sz; i++)
+    for(int i=0; i<Traits::num_decl_props; i++)
       Traits::decl_props[i]->classId = minAbstractClassId;
 
     Traits::info->publish();
@@ -171,9 +171,9 @@ public:
     using Traits = ClassTraits<T>;
 
     unsigned index = 0;
-    updateClassSchema(Traits::info, Traits::decl_props, Traits::decl_props_sz);
+    updateClassSchema(Traits::info, Traits::decl_props, Traits::num_decl_props);
 
-    for(int i=0; i<Traits::decl_props_sz; i++)
+    for(int i=0; i<Traits::num_decl_props; i++)
       Traits::decl_props[i]->classId = Traits::info->classId;
 
     objectFactories[Traits::info->classId] = []() {return new T();};
@@ -768,7 +768,7 @@ protected:
   virtual ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd=false) = 0;
 
 public:
-  virtual ~ReadTransaction() {}
+  virtual ~ReadTransaction();
 
   /**
    * @return a cursor over all instances of the given class
@@ -1041,6 +1041,25 @@ public:
 };
 
 /**
+ * calculate shallow byte size, i.e. the size of the buffer required for properties that dont't get saved under
+ * an individual key
+ */
+template<typename T>
+static size_t calculateBuffer(T *obj, Properties *properties)
+{
+  size_t size = 0;
+  for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
+    auto info = properties->get(i);
+
+    if(!info->enabled) continue;
+
+    //calculate variable size
+    ClassTraits<T>::add(obj, info, size);
+  }
+  return size;
+}
+
+/**
  * Transaction for read and write operations. Only one write transaction can be active at a time, and it should
  * be accessed from one thread only
  */
@@ -1058,24 +1077,6 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
   friend class CollectionAppenderBase;
 
-  /**
-   * calculate shallow byte size, i.e. the size of the buffer required for properties that dont't get saved under
-   * an individual key
-   */
-  template<typename T>
-  static size_t calculateBuffer(T *obj, Properties *properties)
-  {
-    size_t size = 0;
-    for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
-      auto info = properties->get(i);
-
-      if(!info->enabled) continue;
-
-      //calculate variable size
-      ClassTraits<T>::add(obj, info, size);
-    }
-    return size;
-  }
   WriteBuf writeBufStart;
   WriteBuf  *curBuf;
 
@@ -1602,7 +1603,7 @@ public:
    *
    * @param vect the collection contents
    */
-  template <typename T, template <typename T> class Ptr> ObjectId putCollection(const std::vector<Ptr<T>> &vect)
+  template <typename T, template <typename> class Ptr> ObjectId putCollection(const std::vector<Ptr<T>> &vect)
   {
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
@@ -1613,7 +1614,7 @@ public:
   }
 
   /**
-   * save a top-level (chunked) member collection. After saving the collection, the member object
+   * save a top-level (chunked) member object collection. After saving the collection, the member object
    * will be initialized with the collectionId and a pointer to the KV store
    *
    * @param o the object that holds the member
@@ -2355,25 +2356,41 @@ public:
 
 /**
  * storage trait for vectors of mapped objects where the objects are directly serialized into the enclosing object's buffer.
- * Value-based, therefore not polymorphic
+ * Value-based, therefore not polymorphic. Non-embeddable members are ignored during serialization
  */
 template<typename T, typename V> class ObjectVectorPropertyStorageEmbedded : public StoreAccessBase
 {
-  const unsigned m_objectSize;
-
 public:
-  ObjectVectorPropertyStorageEmbedded(unsigned objectSize) : m_objectSize(objectSize) {}
+  ObjectVectorPropertyStorageEmbedded() {}
 
   size_t size(const byte_t *buf) const override {
     unsigned vectSize = read_integer<unsigned>(buf, 4);
-    unsigned objSize = read_integer<unsigned>(buf, 4);
-    return vectSize * (objSize + 4) + 4;
+    size_t sz = ClassTraits<V>::properties->fixedSize;
+    if(sz) {
+      unsigned objSize = read_integer<unsigned>(buf, 4);
+      if(objSize != sz) throw persistence_error("invalid object buffer");
+      return vectSize * (objSize + 4) + 4;
+    }
+    else {
+      for(unsigned i=0; i<vectSize; i++) {
+        unsigned objSize = read_integer<unsigned>(buf, 4);
+        buf += 4 + objSize;
+        sz += 4 + objSize;
+      }
+      return sz + 4;
+    }
   }
   size_t size(void *obj, const PropertyAccessBase *pa) override {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
-    return val.size() * (m_objectSize + 4) + 4;
+
+    size_t sz = ClassTraits<V>::properties->fixedSize;
+    if(sz) return val.size() * (sz + 4) + 4;
+
+    for(V &v : val)
+      sz += calculateBuffer(&v, ClassTraits<V>::properties) + 4;
+    return sz + 4;
   }
 
   void save(WriteTransaction *tr,
@@ -2386,9 +2403,12 @@ public:
     tr->writeBuf().appendInteger((unsigned)val.size(), 4);
     ClassId childClassId = ClassTraits<V>::info->classId;
     PropertyId childObjectId = 0;
+    size_t fsz = ClassTraits<V>::properties->fixedSize;
     for(V &v : val) {
-      tr->writeBuf().appendInteger(m_objectSize, 4);
-      tr->writeObject(childClassId, ++childObjectId, v, ClassTraits<V>::properties, false);
+      size_t sz = fsz ? fsz : calculateBuffer(&v, ClassTraits<V>::properties);
+
+      tr->writeBuf().appendInteger(sz, 4);
+      tr->writeObject(childClassId, ++childObjectId, v, ClassTraits<V>::properties, true);
     }
   }
 
@@ -2524,8 +2544,8 @@ struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
 
 template<typename T> struct PropertyStorage<T, short> : public BasePropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, unsigned short> : public BasePropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, unsigned int> : public BasePropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, int>{};
+template<typename T> struct PropertyStorage<T, unsigned int> : public BasePropertyStorage<T, unsigned int>{};
 template<typename T> struct PropertyStorage<T, long> : public BasePropertyStorage<T, long>{};
 template<typename T> struct PropertyStorage<T, unsigned long> : public BasePropertyStorage<T, unsigned long>{};
 template<typename T> struct PropertyStorage<T, long long> : public BasePropertyStorage<T, long long>{};
@@ -2538,6 +2558,8 @@ template<typename T> struct PropertyStorage<T, std::string> : public BasePropert
 
 template<typename T> struct PropertyStorage<T, std::vector<short>> : public VectorPropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, std::vector<unsigned short>> : public VectorPropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, std::vector<int>> : public VectorPropertyStorage<T, int>{};
+template<typename T> struct PropertyStorage<T, std::vector<unsigned int>> : public VectorPropertyStorage<T, unsigned int>{};
 template<typename T> struct PropertyStorage<T, std::vector<long>> : public VectorPropertyStorage<T, long>{};
 template<typename T> struct PropertyStorage<T, std::vector<unsigned long>> : public VectorPropertyStorage<T, unsigned long>{};
 template<typename T> struct PropertyStorage<T, std::vector<long long>> : public VectorPropertyStorage<T, long long>{};
@@ -2550,6 +2572,8 @@ template<typename T> struct PropertyStorage<T, std::vector<std::string>> : publi
 
 template<typename T> struct PropertyStorage<T, std::set<short>> : public SetPropertyStorage<T, short>{};
 template<typename T> struct PropertyStorage<T, std::set<unsigned short>> : public SetPropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, std::set<int>> : public SetPropertyStorage<T, int>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned int>> : public SetPropertyStorage<T, unsigned int>{};
 template<typename T> struct PropertyStorage<T, std::set<long>> : public SetPropertyStorage<T, long>{};
 template<typename T> struct PropertyStorage<T, std::set<unsigned long>> : public SetPropertyStorage<T, unsigned long>{};
 template<typename T> struct PropertyStorage<T, std::set<long long>> : public SetPropertyStorage<T, long long>{};
@@ -2588,8 +2612,8 @@ struct ObjectVectorPropertyAssign : public PropertyAssign<O, std::vector<P>, p> 
 };
 template <typename O, typename P, std::vector<P> O::*p>
 struct ObjectVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<P>, p> {
-  ObjectVectorPropertyEmbeddedAssign(const char * name, unsigned objectSize)
-      : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorageEmbedded<O, P>(objectSize), object_vector_t<P>()) {}
+  ObjectVectorPropertyEmbeddedAssign(const char * name)
+      : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorageEmbedded<O, P>(), object_vector_t<P>()) {}
 };
 template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
 struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
