@@ -584,8 +584,8 @@ public:
  */
 class FlexisPersistence_EXPORT ReadTransaction
 {
-  template<typename T, typename V> friend class VectorPropertyStorage;
-  template<typename T, typename V> friend class SetPropertyStorage;
+  template<typename T, typename V> friend class ValueVectorPropertyStorage;
+  template<typename T, typename V> friend class ValueSetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
@@ -1069,8 +1069,8 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
 {
   template<typename T, typename V> friend class BasePropertyStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
-  template<typename T, typename V> friend class VectorPropertyStorage;
-  template<typename T, typename V> friend class SetPropertyStorage;
+  template<typename T, typename V> friend class ValueVectorPropertyStorage;
+  template<typename T, typename V> friend class ValueSetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
@@ -2024,11 +2024,11 @@ struct ObjectIdStorage : public StoreAccessBase
 };
 
 /**
- * storage template for std::vector of values. All values are serialized into one consecutive buffer which is stored under
- * a property key for the given object.
+ * storage template for std::vector of simple values. All values are serialized into one consecutive buffer which is
+ * stored under a property key for the given object.
  */
 template<typename T, typename V>
-struct VectorPropertyStorage : public StoreAccessPropertyKey
+struct ValueVectorPropertyStorage : public StoreAccessPropertyKey
 {
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2067,10 +2067,10 @@ struct VectorPropertyStorage : public StoreAccessPropertyKey
 };
 
 /**
- * storage template for value set. Similar to value vector, but based on a std::set
+ * storage template for sets of simnple vvalues. Similar to value vector, but based on a std::set
  */
 template<typename T, typename V>
-struct SetPropertyStorage : public StoreAccessPropertyKey
+struct ValueSetPropertyStorage : public StoreAccessPropertyKey
 {
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2111,7 +2111,8 @@ struct SetPropertyStorage : public StoreAccessPropertyKey
 /**
  * storage template for mapped non-pointer object references. Since the object is referenced by value value in the enclosing
  * class, storage can only be non-polymorphic. The object is serialized into a separate buffer, but the key is written to the
- * enclosing object's buffer
+ * enclosing object's buffer. the referenced object is required to hold an ObjectId-typed member variable which is referenced
+ * through the keyPropertyId
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
 {
@@ -2195,7 +2196,7 @@ template <typename V> struct OidAccess<V, std::shared_ptr>
 };
 
 /**
- * storage trait for mapped object references. Pointer-based, polymorphic
+ * storage template for mapped object references. Pointer-based, fully polymorphic
  */
 template<typename T, typename V, template<typename> class Ptr>
 class ObjectPtrPropertyStorage : public StoreAccessEmbeddedKey
@@ -2291,7 +2292,8 @@ public:
 };
 
 /**
- * storage trait for mapped object vectors. Value-based, therefore not polymorphic
+ * storage template for mapped object vectors. Value-based, therefore not polymorphic. Vector element objects are required
+ * to hold an ObjectId-typed member variable which is referenced through the keyPropertyId
  */
 template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessPropertyKey
 {
@@ -2358,9 +2360,10 @@ public:
 };
 
 /**
- * storage trait for vectors of mapped objects where the objects are directly serialized into the enclosing object's buffer.
+ * storage template for vectors of mapped objects where the objects are directly serialized into the enclosing object's buffer.
  * The vector elements receive an object Id that is equal vector index + 1. This ID is thus not valid outside the vector.
- * Value-based, therefore not polymorphic. Non-embeddable members are ignored during serialization
+ * Value-based, therefore not polymorphic. Only the shallow object buffer is saved, non-embeddable members are ignored
+ * during serialization
  */
 template<typename T, typename V> class ObjectVectorPropertyStorageEmbedded : public StoreAccessBase
 {
@@ -2435,7 +2438,7 @@ public:
 };
 
 /**
- * storage trait for vectors of pointers to mapped objects where the objects are directly serialized into the enclosing object's
+ * storage template for vectors of pointers to mapped objects where the objects are directly serialized into the enclosing object's
  * buffer. The vector elements receive an object Id that is equal vector index + 1. This ID is thus not valid outside the vector.
  * Polymorphic at the price of some overhead (runtime and storage) over ObjectVectorPropertyStorageEmbedded.
  *
@@ -2518,7 +2521,8 @@ public:
 };
 
 /**
- * storage trait for mapped object pointer vectors. Collection objects are saved under individual top-level keys. Polymorphic
+ * storage template for vectors of mapped object pointers. Collection objects are saved under individual top-level keys.
+ * Fully polymorphic
  */
 template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
 {
@@ -2587,6 +2591,10 @@ public:
   }
 };
 
+/**
+ * storage template for collection iterator members. The collection id is saved within the enclosing object's buffer.
+ * Storing the collection proper is done externally, or through the iterator object
+ */
 template<typename T, typename V, typename KVIter, typename Iter>
 struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
 {
@@ -2641,33 +2649,33 @@ template<typename T> struct PropertyStorage<T, bool> : public BasePropertyStorag
 template<typename T> struct PropertyStorage<T, const char *> : public BasePropertyStorage<T, const char *>{};
 template<typename T> struct PropertyStorage<T, std::string> : public BasePropertyStorage<T, std::string>{};
 
-template<typename T> struct PropertyStorage<T, std::vector<short>> : public VectorPropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned short>> : public VectorPropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, std::vector<int>> : public VectorPropertyStorage<T, int>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned int>> : public VectorPropertyStorage<T, unsigned int>{};
-template<typename T> struct PropertyStorage<T, std::vector<long>> : public VectorPropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned long>> : public VectorPropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, std::vector<long long>> : public VectorPropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned long long>> : public VectorPropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, std::vector<float>> : public VectorPropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, std::vector<double>> : public VectorPropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, std::vector<bool>> : public VectorPropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public VectorPropertyStorage<T, const char *>{};
-template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public VectorPropertyStorage<T, std::string>{};
+template<typename T> struct PropertyStorage<T, std::vector<short>> : public ValueVectorPropertyStorage<T, short>{};
+template<typename T> struct PropertyStorage<T, std::vector<unsigned short>> : public ValueVectorPropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, std::vector<int>> : public ValueVectorPropertyStorage<T, int>{};
+template<typename T> struct PropertyStorage<T, std::vector<unsigned int>> : public ValueVectorPropertyStorage<T, unsigned int>{};
+template<typename T> struct PropertyStorage<T, std::vector<long>> : public ValueVectorPropertyStorage<T, long>{};
+template<typename T> struct PropertyStorage<T, std::vector<unsigned long>> : public ValueVectorPropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, std::vector<long long>> : public ValueVectorPropertyStorage<T, long long>{};
+template<typename T> struct PropertyStorage<T, std::vector<unsigned long long>> : public ValueVectorPropertyStorage<T, unsigned long long>{};
+template<typename T> struct PropertyStorage<T, std::vector<float>> : public ValueVectorPropertyStorage<T, float>{};
+template<typename T> struct PropertyStorage<T, std::vector<double>> : public ValueVectorPropertyStorage<T, double>{};
+template<typename T> struct PropertyStorage<T, std::vector<bool>> : public ValueVectorPropertyStorage<T, bool>{};
+template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public ValueVectorPropertyStorage<T, const char *>{};
+template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public ValueVectorPropertyStorage<T, std::string>{};
 
-template<typename T> struct PropertyStorage<T, std::set<short>> : public SetPropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned short>> : public SetPropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, std::set<int>> : public SetPropertyStorage<T, int>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned int>> : public SetPropertyStorage<T, unsigned int>{};
-template<typename T> struct PropertyStorage<T, std::set<long>> : public SetPropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned long>> : public SetPropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, std::set<long long>> : public SetPropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned long long>> : public SetPropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, std::set<float>> : public SetPropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, std::set<double>> : public SetPropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, std::set<bool>> : public SetPropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, std::set<const char *>> : public SetPropertyStorage<T, const char *>{};
-template<typename T> struct PropertyStorage<T, std::set<std::string>> : public SetPropertyStorage<T, std::string>{};
+template<typename T> struct PropertyStorage<T, std::set<short>> : public ValueSetPropertyStorage<T, short>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned short>> : public ValueSetPropertyStorage<T, unsigned short>{};
+template<typename T> struct PropertyStorage<T, std::set<int>> : public ValueSetPropertyStorage<T, int>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned int>> : public ValueSetPropertyStorage<T, unsigned int>{};
+template<typename T> struct PropertyStorage<T, std::set<long>> : public ValueSetPropertyStorage<T, long>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned long>> : public ValueSetPropertyStorage<T, unsigned long>{};
+template<typename T> struct PropertyStorage<T, std::set<long long>> : public ValueSetPropertyStorage<T, long long>{};
+template<typename T> struct PropertyStorage<T, std::set<unsigned long long>> : public ValueSetPropertyStorage<T, unsigned long long>{};
+template<typename T> struct PropertyStorage<T, std::set<float>> : public ValueSetPropertyStorage<T, float>{};
+template<typename T> struct PropertyStorage<T, std::set<double>> : public ValueSetPropertyStorage<T, double>{};
+template<typename T> struct PropertyStorage<T, std::set<bool>> : public ValueSetPropertyStorage<T, bool>{};
+template<typename T> struct PropertyStorage<T, std::set<const char *>> : public ValueSetPropertyStorage<T, const char *>{};
+template<typename T> struct PropertyStorage<T, std::set<std::string>> : public ValueSetPropertyStorage<T, std::string>{};
 
 template <typename O, ObjectId O::*p>
 struct ObjectIdAssign : public PropertyAssign<O, ObjectId, p> {
