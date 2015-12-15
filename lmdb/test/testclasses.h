@@ -153,8 +153,9 @@ struct SomethingConcrete2 : public SomethingAbstract {
   void sayhello() override {cout << "hello, my name is " << name << " and I am " << age << endl;};
 };
 struct SomethingVirtual {
+  bool unknown;
   std::string name;
-  SomethingVirtual(string n) : name(n) {}
+  SomethingVirtual(string n, bool unknown=false) : name(n), unknown(unknown) {}
   SomethingVirtual() {}
 
   virtual void sayhello() {cout << "hello, I'm " << name << endl;}
@@ -174,7 +175,7 @@ struct SomethingVirtual2 : public SomethingVirtual {
   virtual void sayhello() { SomethingVirtual::sayhello(); cout << " my hobby is " << hobby << endl;}
 };
 struct UnknownVirtual : public SomethingVirtual {
-  UnknownVirtual() : SomethingVirtual("unknown") {}
+  UnknownVirtual() : SomethingVirtual("unknown", true) {}
   virtual void sayhello() { SomethingVirtual::sayhello(); cout << "I am only a substitute" << endl;}
 };
 struct Wonderful {

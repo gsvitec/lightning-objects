@@ -139,6 +139,7 @@ class ReadBuf
 protected:
   byte_t *m_data = nullptr;
   byte_t *m_readptr = nullptr;
+  byte_t *m_mark = nullptr;
   size_t m_size = 0;
 
 public:
@@ -155,6 +156,14 @@ public:
   size_t size() {return m_size;}
   bool empty() {return m_size == 0;}
   bool null() {return m_data == nullptr;}
+
+  void mark() {
+    m_mark = m_readptr;
+  }
+
+  void unmark(size_t offs=0) {
+    m_readptr = m_mark+offs;
+  }
 
   /**
    * @return a read-only pointer into the store-owned memory

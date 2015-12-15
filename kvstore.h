@@ -628,7 +628,8 @@ protected:
     return obj;
   }
 
-  template<typename T> void readObject(ReadBuf &buf, T &obj, ClassId classId, ObjectId objectId)
+  template<typename T> void readObject(ReadBuf &buf, T &obj,
+                                       ClassId classId, ObjectId objectId, StoreMode mode = StoreMode::force_none)
   {
     Properties *props = ClassTraits<T>::properties;
 
@@ -640,7 +641,7 @@ protected:
       PropertyAccessBase *p = props->get(px);
       if(!p->enabled) continue;
 
-      ClassTraits<T>::load(this, buf, classId, objectId, &obj, p);
+      ClassTraits<T>::load(this, buf, classId, objectId, &obj, p, mode);
     }
   }
 
@@ -2498,9 +2499,13 @@ public:
 
       ClassInfo<V> *vi = FIND_CLS(V, childClassId);
       if(!vi) {
-        buf.read(sz);
+        buf.mark();
         V *vp = ClassTraits<V>::getSubstitute();
-        if(vp) val.push_back(std::shared_ptr<V>(vp));
+        if(vp) {
+          tr->readObject<V>(buf, *vp, childClassId, ++childObjectId, StoreMode::force_buffer);
+          val.push_back(std::shared_ptr<V>(vp));
+        }
+        buf.unmark(sz);
       }
       else {
         V *vp = tr->readObject<V>(buf, childClassId, ++childObjectId, vi);

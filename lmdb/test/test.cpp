@@ -724,7 +724,7 @@ void testCompatibleDatabase(ObjectId oid)
   auto loaded = rtxn->getObjectPtr<Wonderful>(oid);
 
   assert(loaded->abstracts.empty() && loaded->virtuals.size() == 3 && \
-  loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "unknown" && loaded->virtuals[2]->name == "Maria");
+  loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "Girlande" && loaded->virtuals[2]->name == "Maria");
 
   rtxn->abort();
 
