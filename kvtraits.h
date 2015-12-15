@@ -406,12 +406,14 @@ class Properties
       if(!fixedSize) return;
     }
     for(unsigned i=0; i<numProps; i++) {
-      size_t bs = properties[i]->type.byteSize;
-      if(!bs) {
-        fixedSize = 0;
-        return;
+      if(properties[i]->enabled) {
+        size_t bs = properties[i]->type.byteSize;
+        if(!bs) {
+          fixedSize = 0;
+          return;
+        }
+        fixedSize += bs;
       }
-      fixedSize += bs;
     }
   }
 
@@ -488,8 +490,6 @@ struct AbstractClassInfo {
 
   AbstractClassInfo *resolve(ClassId otherClassId)
   {
-    if(classId == 0) return nullptr; //empty class
-
     if(otherClassId == classId) {
       return this;
     }
@@ -500,11 +500,44 @@ struct AbstractClassInfo {
     return nullptr;
   }
 
+  AbstractClassInfo *resolve(const std::type_info &ti)
+  {
+      const char *n1 = ti.name();
+      const char *n2 = typeinfo.name();
+    if(ti == typeinfo) {
+      return this;
+    }
+    for(auto res : subs) {
+      AbstractClassInfo *r = res->resolve(ti);
+      if(r) return r;
+    }
+    return nullptr;
+  }
+
+  /**
+   * search the inheritance tree rooted in this object for a class info with the given classId
+   * @return the classinfo
+   * @throw persistence_error if not found
+   */
   AbstractClassInfo *doresolve(ClassId otherClassId)
   {
     AbstractClassInfo *resolved = resolve(otherClassId);
     if(!resolved) {
       throw persistence_error("unknow classId. Class missing from registry");
+    }
+    return resolved;
+  }
+
+  /**
+   * search the inheritance tree rooted in this object for a class info with the given typeid
+   * @return the classinfo
+   * @throw persistence_error if not found
+   */
+  AbstractClassInfo *doresolve(const std::type_info &ti)
+  {
+    AbstractClassInfo *resolved = resolve(ti);
+    if(!resolved) {
+      throw persistence_error("unknow typeid. Class missing from registry");
     }
     return resolved;
   }
@@ -517,7 +550,7 @@ namespace sub {
  * the list is expanded and the ClassTraits for each type are notified about the subclass
  */
 
-//this one does the real work by adding the resolver as subtype
+//this one does the real work by adding S as subtype to T
 template<typename T, typename S>
 struct resolve_impl
 {
@@ -557,6 +590,16 @@ struct resolve<T>
   bool publish(AbstractClassInfo *res) {return false;}
 };
 
+template <typename T>
+struct Substitute {
+  virtual T *getPtr() = 0;
+};
+
+template <typename T, typename S>
+struct SubstituteImpl : public Substitute<T> {
+  T *getPtr() override {return new S();}
+};
+
 } //sub
 
 /**
@@ -565,6 +608,8 @@ struct resolve<T>
 template <typename T, typename ... Sup>
 struct ClassInfo : public AbstractClassInfo
 {
+  T *(* const getSubstitute)();
+  size_t (* const size)(T *obj);
   void * (* const initMember)(T *obj, PropertyAccessBase *pa);
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
@@ -575,8 +620,12 @@ struct ClassInfo : public AbstractClassInfo
   bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
                       ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
+  sub::Substitute<T> *substitute;
+
   ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
       : AbstractClassInfo(name, typeinfo, classId),
+        getSubstitute(&ClassTraits<T>::getSubstitute),
+        size(&ClassTraits<T>::size),
         initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
@@ -584,6 +633,13 @@ struct ClassInfo : public AbstractClassInfo
         get_id(&ClassTraits<T>::get_id),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
+
+  ~ClassInfo() {if(substitute) delete substitute;}
+
+  template <typename S>
+  void setSubstitute() {
+    substitute = new sub::SubstituteImpl<T, S>();
+  }
 
   template <typename ... Sup2>
   static ClassInfo<T, Sup...> *subclass(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
@@ -598,7 +654,9 @@ struct ClassInfo : public AbstractClassInfo
   }
 };
 
-#define RESOLVE_SUB(__cid) reinterpret_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__cid))
+#define FIND_CLS(__Tpl, __cid) static_cast<ClassInfo<__Tpl> *>(ClassTraits<__Tpl>::info->resolve(__cid))
+#define RESOLVE_SUB(__cid) static_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__cid))
+#define RESOLVE_SUB_TI(__ti) static_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__ti))
 
 /**
  * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a templated
@@ -606,8 +664,10 @@ struct ClassInfo : public AbstractClassInfo
  * dispatched to the correct location
  */
 template <typename T, typename SUP=EmptyClass>
-struct ClassTraitsBase
+class ClassTraitsBase
 {
+  template <typename, typename ...> friend struct ClassInfo;
+
   static const unsigned FLAG_UP = 0x1;
   static const unsigned FLAG_DN = 0x2;
   static const unsigned FLAG_HR = 0x4;
@@ -616,6 +676,25 @@ struct ClassTraitsBase
 #define DN flags & FLAG_DN
 #define UP flags & FLAG_UP
 
+  /**
+   * determine the buffer size for the given object. Non-polymorpic
+   */
+  static size_t size(T *obj)
+  {
+    if(properties->fixedSize) return properties->fixedSize;
+
+    size_t size = 0;
+    for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
+      auto pa = properties->get(i);
+
+      if(!pa->enabled) continue;
+
+      add(obj, pa, size);
+    }
+    return size;
+  }
+
+public:
   static const unsigned keyPropertyId = 0;
 
   static const char *name;
@@ -629,6 +708,32 @@ struct ClassTraitsBase
    */
   static PropertyAccess<T, ObjectId> *objectIdAccess() {
     return properties->objectIdAccess<T>();
+  }
+
+  static size_t bufferSize(T *obj, ClassId *clsId=nullptr)
+  {
+    const std::type_info &ti = typeid(*obj);
+    if(ti == info->typeinfo) {
+      if(clsId) *clsId = info->classId;
+      return size(obj);
+    }
+    else {
+      ClassInfo<T> *sub = RESOLVE_SUB_TI(ti);
+      if(clsId) *clsId = sub->classId;
+      return sub->size(obj);
+    }
+  }
+
+  static T *getSubstitute()
+  {
+    if(info->substitute) return info->substitute->getPtr();
+
+    for(auto &sub : info->subs) {
+      ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
+      T *subst = si->getSubstitute();
+      if(subst != nullptr) return subst;
+    }
+    return nullptr;
   }
 
   static void * initMember(T *obj, PropertyAccessBase *pa)
@@ -672,7 +777,7 @@ struct ClassTraitsBase
       if(UP && ClassTraits<SUP>::get_id(obj, oid, FLAG_UP)) return true;
       if(DN) {
         for(auto &sub : info->subs) {
-          ClassInfo<T> * si = reinterpret_cast<ClassInfo<T> *>(sub);
+          ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
           if(si->get_id(obj, oid, FLAG_DN)) return true;
         }
       }
@@ -711,10 +816,6 @@ struct ClassTraitsBase
     return false;
   }
 
-  /**
-   * put (copy) the value of the given property into value. Must only be called after type resolution, such
-   * that pa->classId == info->classId
-   */
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
     if(pa->classId != info->classId)
@@ -743,6 +844,8 @@ struct ClassTraitsBase
  */
 template <typename T> struct ClassTraitsAbstract
 {
+  static const bool isAbstract = true;
+
   static T *makeObject(ClassId classId)
   {
     if(classId == ClassTraits<T>::info->classId) {
@@ -759,6 +862,8 @@ template <typename T> struct ClassTraitsAbstract
  */
 template <typename T> struct ClassTraitsConcrete
 {
+  static const bool isAbstract = false;
+
   static T *makeObject(ClassId classId)
   {
     if(classId == ClassTraits<T>::info->classId) {
@@ -776,6 +881,7 @@ template <typename T> struct ClassTraitsConcrete
 template <>
 struct ClassTraits<EmptyClass>
 {
+  static const bool isAbstract = true;
   static ClassInfo<EmptyClass> *info;
   static Properties * properties;
   static const unsigned num_decl_props = 0;
@@ -784,6 +890,18 @@ struct ClassTraits<EmptyClass>
   static EmptyClass *makeObject(ClassId classId) {return nullptr;}
   static Properties * getProperties(ClassId classId) {return nullptr;}
 
+  template <typename T>
+  static T *getSubstitute() {
+    return nullptr;
+  }
+  template <typename T>
+  static size_t bufferSize(T *obj, ClassId *cid=nullptr) {
+    return 0;
+  }
+  template <typename T>
+  static size_t size(T *obj) {
+    return 0;
+  }
   template <typename T>
   static void * initMember(T *obj, PropertyAccessBase *pa) {
     return nullptr;

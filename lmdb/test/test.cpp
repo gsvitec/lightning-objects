@@ -673,6 +673,64 @@ void testObjectIterProperty(KeyValueStore *kv)
   }
 }
 
+ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
+{
+  ObjectId oid;
+  {
+    auto wtxn = kv->beginWrite();
+
+    Wonderful w = Wonderful();
+    w.abstracts.push_back(kv::make_obj<SomethingConcrete1>("Hans", "da oide Hans"));
+    w.abstracts.push_back(kv::make_obj<SomethingConcrete2>("Otto", 33));
+
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual>("Gabi"));
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual1>("Girlande", "Köchin"));
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual2>("Maria", "Stricken"));
+
+    oid = wtxn->putObject(w);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    auto loaded = rtxn->getObjectPtr<Wonderful>(oid);
+
+    assert(loaded->abstracts.size() == 2 && loaded->virtuals.size() == 3);
+
+    rtxn->abort();
+  }
+  return oid;
+}
+
+void testCompatibleDatabase(ObjectId oid)
+{
+  KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
+
+  //need to cleanup static data for test only
+  ClassTraits<SomethingConcrete1>::info->classId = 0;
+  ClassTraits<SomethingConcrete2>::info->classId = 0;
+  ClassTraits<SomethingVirtual>::info->classId = 0;
+  ClassTraits<SomethingVirtual1>::info->classId = 0;
+
+  kv->registerType<SomethingAbstract>(); //abstract => ignore subtypes is implicit
+  kv->registerType<SomethingVirtual>();  //not abstract => ignore subtypes is false by default
+  kv->registerType<SomethingVirtual2>();
+  kv->registerType<Wonderful>();
+  kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
+
+  auto rtxn = kv->beginRead();
+
+  auto loaded = rtxn->getObjectPtr<Wonderful>(oid);
+
+  assert(loaded->abstracts.empty() && loaded->virtuals.size() == 3 && \
+  loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "unknown" && loaded->virtuals[2]->name == "Maria");
+
+  rtxn->abort();
+
+  delete kv;
+}
+
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
@@ -681,6 +739,14 @@ int main()
   kv->registerType<SomethingWithAnEmbbededObjectVector>();
   kv->registerType<SomethingWithAnObjectIter>();
 
+  kv->registerType<SomethingAbstract>();
+  kv->registerType<SomethingConcrete1>();
+  kv->registerType<SomethingConcrete2>();
+  kv->registerType<SomethingVirtual>();
+  kv->registerType<SomethingVirtual1>();
+  kv->registerType<SomethingVirtual2>();
+  kv->registerType<Wonderful>();
+
 #if 1
   kv->registerType<Colored2DPoint>();
   kv->registerType<ColoredPolygon>();
@@ -688,12 +754,12 @@ int main()
   kv->registerType<player::SourceDisplayConfig>();
   kv->registerType<player::SourceInfo>();
 
-  kv->registerAbstractType<flexis::data::recording::StreamProcessor>();
-  kv->registerAbstractType<flexis::IFlexisOverlay>();
+  kv->registerType<flexis::data::recording::StreamProcessor>();
+  kv->registerType<flexis::IFlexisOverlay>();
   kv->registerType<flexis::RectangularOverlay>();
   kv->registerType<flexis::TimeCodeOverlay>();
 
-  kv->registerAbstractType<OtherThing>();
+  kv->registerType<OtherThing>();
   kv->registerType<OtherThingA>();
   kv->registerType<OtherThingB>();
   kv->registerType<SomethingWithALazyVector>();
@@ -710,10 +776,14 @@ int main()
   testValueCollectionData(kv);
   testValueCollectionData2(kv);
   testGrowDatabase(kv);
-#endif
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
+#endif
 
+  ObjectId oid = setupTestCompatibleDatabase(kv);
   delete kv;
+
+  testCompatibleDatabase(oid);
+
   return 0;
 }

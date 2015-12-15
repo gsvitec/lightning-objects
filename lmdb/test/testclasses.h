@@ -132,6 +132,56 @@ struct SomethingWithAnObjectIter
   flexis::ObjectHistoryPtr<FixedSizeObject> history;
 };
 
+struct SomethingAbstract {
+  std::string name;
+  SomethingAbstract(string n) : name(n) {}
+  SomethingAbstract() {}
+  virtual void sayhello() = 0;
+};
+struct SomethingConcrete1 : public SomethingAbstract {
+  std::string description;
+  SomethingConcrete1(string n, string d) : SomethingAbstract(n), description(d) {}
+  SomethingConcrete1() {}
+
+  void sayhello() override {cout << "hello, my name is " << name << " and " << description << endl;};
+};
+struct SomethingConcrete2 : public SomethingAbstract {
+  unsigned age;
+  SomethingConcrete2(string n, unsigned a) : SomethingAbstract(n), age(a) {}
+  SomethingConcrete2() {}
+
+  void sayhello() override {cout << "hello, my name is " << name << " and I am " << age << endl;};
+};
+struct SomethingVirtual {
+  std::string name;
+  SomethingVirtual(string n) : name(n) {}
+  SomethingVirtual() {}
+
+  virtual void sayhello() {cout << "hello, I'm " << name << endl;}
+};
+struct SomethingVirtual1 : public SomethingVirtual {
+  std::string profession;
+  SomethingVirtual1(string n, string p) : SomethingVirtual(n), profession(p) {}
+  SomethingVirtual1() {}
+
+  virtual void sayhello() { SomethingVirtual::sayhello(); cout << " my profession is " << profession << endl;}
+};
+struct SomethingVirtual2 : public SomethingVirtual {
+  std::string hobby;
+  SomethingVirtual2(string n, string h) : SomethingVirtual(n), hobby(h) {}
+  SomethingVirtual2() {}
+
+  virtual void sayhello() { SomethingVirtual::sayhello(); cout << " my hobby is " << hobby << endl;}
+};
+struct UnknownVirtual : public SomethingVirtual {
+  UnknownVirtual() : SomethingVirtual("unknown") {}
+  virtual void sayhello() { SomethingVirtual::sayhello(); cout << "I am only a substitute" << endl;}
+};
+struct Wonderful {
+  vector<shared_ptr<SomethingAbstract>> abstracts;
+  vector<shared_ptr<SomethingVirtual>> virtuals;
+};
+
 namespace flexis {
 namespace persistence {
 namespace kv {
@@ -155,19 +205,19 @@ END_MAPPINGHDR(OtherThing)
   MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
 END_MAPPING(OtherThing)
 
-START_MAPPINGHDR_SUB(OtherThingA, OtherThing, OtherThingA)
+START_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
   enum PropertyIds {lvalue=1, testnames};
-END_MAPPINGHDR_SUB(OtherThingA, OtherThing, OtherThingA)
+END_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
-END_MAPPING_SUB(OtherThingA, OtherThing, OtherThingA)
+END_MAPPING_SUB(OtherThingA, OtherThing, a)
 
 
-START_MAPPINGHDR_SUB(OtherThingB, OtherThing, OtherThingB)
+START_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
   enum PropertyIds {llvalue=1};
-END_MAPPINGHDR_SUB(OtherThingB, OtherThing, OtherThingB)
+END_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
   MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue)
-END_MAPPING_SUB(OtherThingB, OtherThing, OtherThingB)
+END_MAPPING_SUB(OtherThingB, OtherThing, b)
 
 //SomethingWithALazyVector
 START_MAPPINGHDR(SomethingWithALazyVector)
@@ -224,6 +274,49 @@ START_MAPPINGHDR(SomethingWithAnObjectIter)
 END_MAPPINGHDR(SomethingWithAnObjectIter)
   MAPPED_PROP_ITER(SomethingWithAnObjectIter, ObjectIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
+
+START_MAPPINGHDR_A(SomethingAbstract)
+  enum PropertyIds {name=1};
+END_MAPPINGHDR(SomethingAbstract)
+  MAPPED_PROP(SomethingAbstract, BasePropertyAssign, std::string, name)
+END_MAPPING(SomethingAbstract)
+
+START_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
+  enum PropertyIds {description=1};
+END_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
+  MAPPED_PROP(SomethingConcrete1, BasePropertyAssign, std::string, description)
+END_MAPPING_SUB(SomethingConcrete1, SomethingAbstract, c)
+
+START_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
+  enum PropertyIds {age=1};
+END_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
+  MAPPED_PROP(SomethingConcrete2, BasePropertyAssign, unsigned, age)
+END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, d)
+
+START_MAPPINGHDR(SomethingVirtual)
+  enum PropertyIds {name=1};
+END_MAPPINGHDR(SomethingVirtual)
+  MAPPED_PROP(SomethingVirtual, BasePropertyAssign, std::string, name)
+END_MAPPING(SomethingVirtual)
+
+START_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
+  enum PropertyIds {profession=1};
+END_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
+  MAPPED_PROP(SomethingVirtual1, BasePropertyAssign, std::string, profession)
+END_MAPPING_SUB(SomethingVirtual1, SomethingVirtual, e)
+
+START_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
+  enum PropertyIds {hobby=1};
+END_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
+  MAPPED_PROP(SomethingVirtual2, BasePropertyAssign, std::string, hobby)
+END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, f)
+
+START_MAPPINGHDR(Wonderful)
+  enum PropertyIds {abstracts=1, virtuals};
+END_MAPPINGHDR(Wonderful)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstracts)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtuals)
+END_MAPPING(Wonderful)
 
 }
 }

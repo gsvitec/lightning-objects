@@ -532,8 +532,6 @@ KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options optio
   //make sure we've got room to grow
   checkAvailableSpace(0);
 
-  m_reuseChunkspace = options.writeMap;
-
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
 
   //open/create the classmeta database
