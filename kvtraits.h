@@ -541,6 +541,16 @@ struct AbstractClassInfo {
     }
     return resolved;
   }
+
+  std::vector<ClassId> allClassIds() {
+    std::vector<ClassId> ids;
+    addClassIds(ids);
+    return ids;
+  }
+  void addClassIds(std::vector<ClassId> &ids) {
+    ids.push_back(classId);
+    for(auto &sub : subs) sub->addClassIds(ids);
+  }
 };
 
 namespace sub {

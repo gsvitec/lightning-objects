@@ -25,7 +25,7 @@ void testColored2DPoint(KeyValueStore *kv)
 
   Colored2DPoint *p2;
   auto rtxn = kv->beginRead();
-  p2 = rtxn->getObject<Colored2DPoint>(id);
+  p2 = rtxn->loadObject<Colored2DPoint>(id);
   rtxn->abort();
 
   assert(p2 && p2->x == 2.0f && p2->y == 3.0f && p2->r == 4.0f && p2->g == 5.0f && p2->b == 6.0f && p2->a == 7.5f);
@@ -59,7 +59,7 @@ void testColoredPolygon(KeyValueStore *kv)
 
   ColoredPolygon *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->getObject<ColoredPolygon>(id);
+  loaded = rtxn->loadObject<ColoredPolygon>(id);
   rtxn->abort();
 
   assert(loaded && loaded->pts.size() == 3);
@@ -87,6 +87,42 @@ void testColoredPolygonIterator(KeyValueStore *kv)
   rtxn->abort();
 }
 
+void testClassCursor(KeyValueStore *kv)
+{
+  {
+    auto wtxn = kv->beginWrite();
+
+    SomethingVirtual sv1(11, "SomethingVirtual");
+    SomethingVirtual sv2(12, "SomethingVirtualAgain");
+    SomethingVirtual1 sv11(13, "SomethingVirtual1", "Programmer");
+    SomethingVirtual2 sv21(14, "SomethingVirtual2", "Knitting");
+    SomethingVirtual3 sv31(15, "SomethingVirtual3", "Knitting", 22);
+
+    wtxn->putObject(sv1);
+    wtxn->putObject(sv2);
+    wtxn->putObject(sv11);
+    wtxn->putObject(sv21);
+    wtxn->putObject(sv31);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    unsigned count = 0;
+    auto cursor = rtxn->openCursor<SomethingVirtual>();
+    while(!cursor->atEnd()) {
+      count++;
+      auto sv = cursor->get();
+      sv->sayhello(); cout << endl;
+      cursor->next();
+    }
+
+    assert(count == 5);
+    rtxn->abort();
+  }
+}
+
 void testValueVectorProperty(KeyValueStore *kv)
 {
   ObjectId oid;
@@ -104,7 +140,7 @@ void testValueVectorProperty(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    OtherThingA *hans = rtxn->getObject<OtherThingA>(oid);
+    OtherThingA *hans = rtxn->loadObject<OtherThingA>(oid);
     assert(hans && hans->testnames.size() == 2);
     assert(hans->testnames[0] == "Eva");
     assert(hans->testnames[1] == "Rudi");
@@ -140,7 +176,7 @@ void testPolymorphism(KeyValueStore *kv)
 
   player::SourceInfo *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->getObject<player::SourceInfo>(id);
+  loaded = rtxn->loadObject<player::SourceInfo>(id);
   rtxn->abort();
 
   assert(loaded && loaded->userOverlays.size() == 2
@@ -182,7 +218,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
     assert(loaded && loaded->otherThings.empty());
 
     rtxn->loadMember(sv_id, *loaded, PROPERTY(SomethingWithALazyVector, otherThings));
@@ -199,12 +235,11 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
-    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, loaded,
-                                                                         PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, PROPERTY_ID(SomethingWithALazyVector, otherThings));
     for (; !cursor->atEnd(); cursor->next()) {
       count++;
       auto ot = cursor->get();
@@ -220,12 +255,11 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->getObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
-    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, loaded,
-                                                                         PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, PROPERTY_ID(SomethingWithALazyVector, otherThings));
     if(!cursor->atEnd()) {
       for (; !cursor->atEnd(); cursor->next()) {
         count++;
@@ -550,11 +584,11 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
 
   auto wtxn = kv->beginWrite();
-  ObjectId id = wtxn->putObjectP(si);
+  ObjectId id = wtxn->putObject(*si);
   wtxn->commit();
 
   auto rtxn = kv->beginRead();
-  flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(id);
+  flexis::player::SourceInfo *si2 = rtxn->loadObject<flexis::player::SourceInfo>(id);
   rtxn->abort();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
@@ -587,7 +621,7 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnEmbbededObjectVector *loaded = rtxn->getObject<SomethingWithAnEmbbededObjectVector>(objectId);
+    SomethingWithAnEmbbededObjectVector *loaded = rtxn->loadObject<SomethingWithAnEmbbededObjectVector>(objectId);
 
     assert(loaded && loaded->name == "sweov" && loaded->objects.size() == 4 \
            && loaded->objects[0].number1 == 1 \
@@ -664,7 +698,7 @@ void testObjectIterProperty(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(objectId);
+    SomethingWithAnObjectIter *soi = rtxn->loadObject<SomethingWithAnObjectIter>(objectId);
     vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
 
     assert(hist.size() == 20);
@@ -683,10 +717,11 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
     w.abstracts.push_back(kv::make_obj<SomethingConcrete1>("Hans", "da oide Hans"));
     w.abstracts.push_back(kv::make_obj<SomethingConcrete2>("Otto", 33));
 
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual>("Gabi"));
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual1>("Girlande", "Köchin"));
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual2>("Maria", "Stricken"));
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual>(1, "Gabi"));
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual1>(2, "Girlande", "Köchin"));
+    w.virtuals.push_back(kv::make_obj<SomethingVirtual2>(3, "Maria", "Stricken"));
 
+    w.objects.insert(w.objects.begin(), w.virtuals.cbegin(), w.virtuals.cend());
     oid = wtxn->putObject(w);
 
     wtxn->commit();
@@ -694,9 +729,9 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    auto loaded = rtxn->getObjectPtr<Wonderful>(oid);
+    auto loaded = rtxn->getObject<Wonderful>(oid);
 
-    assert(loaded->abstracts.size() == 2 && loaded->virtuals.size() == 3);
+    assert(loaded->abstracts.size() == 2 && loaded->virtuals.size() == 3 && loaded->objects.size() == 3);
 
     rtxn->abort();
   }
@@ -708,10 +743,16 @@ void testCompatibleDatabase(ObjectId oid)
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   //need to cleanup static data for test only
+  ClassTraits<SomethingAbstract>::info->classId = 0;
+  ClassTraits<SomethingAbstract>::info->subs.clear();
   ClassTraits<SomethingConcrete1>::info->classId = 0;
   ClassTraits<SomethingConcrete2>::info->classId = 0;
   ClassTraits<SomethingVirtual>::info->classId = 0;
+  ClassTraits<SomethingVirtual>::info->subs.clear();
   ClassTraits<SomethingVirtual1>::info->classId = 0;
+  ClassTraits<SomethingVirtual2>::info->classId = 0;
+  ClassTraits<SomethingVirtual2>::info->subs.clear();
+  ClassTraits<SomethingVirtual3>::info->classId = 0;
 
   kv->registerType<SomethingAbstract>(); //abstract => ignore subtypes is implicit
   kv->registerType<SomethingVirtual>();  //not abstract => ignore subtypes is false by default
@@ -719,14 +760,34 @@ void testCompatibleDatabase(ObjectId oid)
   kv->registerType<Wonderful>();
   kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
 
-  auto rtxn = kv->beginRead();
+  {
+    auto rtxn = kv->beginRead();
 
-  auto loaded = rtxn->getObjectPtr<Wonderful>(oid);
+    auto loaded = rtxn->getObject<Wonderful>(oid);
 
-  assert(loaded->abstracts.empty() && loaded->virtuals.size() == 3 && \
-  loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "Girlande" && loaded->virtuals[2]->name == "Maria");
+    assert(loaded->abstracts.empty() && loaded->virtuals.size() == 3 && loaded->objects.size() == 3);
+    assert(loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "Girlande" && loaded->virtuals[1]->unknown && loaded->virtuals[2]->name == "Maria");
+    assert(loaded->objects[0]->name == "Gabi" && loaded->objects[1]->name == "Girlande" && loaded->objects[1]->unknown && loaded->objects[2]->name == "Maria");
 
-  rtxn->abort();
+    rtxn->abort();
+  }
+  {
+    cout << "start compatible cursor" << endl << endl;
+    auto rtxn = kv->beginRead();
+
+    unsigned count = 0;
+    auto cursor = rtxn->openCursor<SomethingVirtual>();
+    while(!cursor->atEnd()) {
+      count++;
+      auto sv = cursor->get();
+      sv->sayhello(); cout << endl;
+      cursor->next();
+    }
+
+    //substitutes dont work with class cursors. We get the classes that are available
+    assert(count == 5);
+    rtxn->abort();
+  }
 
   delete kv;
 }
@@ -745,6 +806,7 @@ int main()
   kv->registerType<SomethingVirtual>();
   kv->registerType<SomethingVirtual1>();
   kv->registerType<SomethingVirtual2>();
+  kv->registerType<SomethingVirtual3>();
   kv->registerType<Wonderful>();
 
 #if 1
@@ -778,7 +840,9 @@ int main()
   testGrowDatabase(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
+
 #endif
+  testClassCursor(kv);
 
   ObjectId oid = setupTestCompatibleDatabase(kv);
   delete kv;

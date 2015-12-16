@@ -153,34 +153,43 @@ struct SomethingConcrete2 : public SomethingAbstract {
   void sayhello() override {cout << "hello, my name is " << name << " and I am " << age << endl;};
 };
 struct SomethingVirtual {
+  unsigned id;
   bool unknown;
   std::string name;
-  SomethingVirtual(string n, bool unknown=false) : name(n), unknown(unknown) {}
+  SomethingVirtual(unsigned id, string n, bool unknown=false) : id(id), name(n), unknown(unknown) {}
   SomethingVirtual() {}
 
-  virtual void sayhello() {cout << "hello, I'm " << name << endl;}
+  virtual void sayhello() {cout << id << ": hello, I'm " << name;}
 };
 struct SomethingVirtual1 : public SomethingVirtual {
   std::string profession;
-  SomethingVirtual1(string n, string p) : SomethingVirtual(n), profession(p) {}
+  SomethingVirtual1(unsigned id, string n, string p) : SomethingVirtual(id, n), profession(p) {}
   SomethingVirtual1() {}
 
-  virtual void sayhello() { SomethingVirtual::sayhello(); cout << " my profession is " << profession << endl;}
+  void sayhello() override { SomethingVirtual::sayhello(); cout << " my profession is " << profession;}
 };
 struct SomethingVirtual2 : public SomethingVirtual {
   std::string hobby;
-  SomethingVirtual2(string n, string h) : SomethingVirtual(n), hobby(h) {}
+  SomethingVirtual2(unsigned id, string n, string h) : SomethingVirtual(id, n), hobby(h) {}
   SomethingVirtual2() {}
 
-  virtual void sayhello() { SomethingVirtual::sayhello(); cout << " my hobby is " << hobby << endl;}
+  void sayhello() override { SomethingVirtual::sayhello(); cout << " my hobby is " << hobby;}
+};
+struct SomethingVirtual3 : public SomethingVirtual2 {
+  unsigned age;
+  SomethingVirtual3(unsigned id, string n, string h, unsigned age) : SomethingVirtual2(id, n, h), age(age) {}
+  SomethingVirtual3() {}
+
+  void sayhello() override { SomethingVirtual2::sayhello(); cout << " and my age: " << age;}
 };
 struct UnknownVirtual : public SomethingVirtual {
-  UnknownVirtual() : SomethingVirtual("unknown", true) {}
-  virtual void sayhello() { SomethingVirtual::sayhello(); cout << "I am only a substitute" << endl;}
+  UnknownVirtual() : SomethingVirtual(0, "unknown", true) {}
+  void sayhello() override { SomethingVirtual::sayhello(); cout << "I am only a substitute";}
 };
 struct Wonderful {
   vector<shared_ptr<SomethingAbstract>> abstracts;
   vector<shared_ptr<SomethingVirtual>> virtuals;
+  vector<shared_ptr<SomethingVirtual>> objects;
 };
 
 namespace flexis {
@@ -295,8 +304,9 @@ END_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
 END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, d)
 
 START_MAPPINGHDR(SomethingVirtual)
-  enum PropertyIds {name=1};
+  enum PropertyIds {id=1, name};
 END_MAPPINGHDR(SomethingVirtual)
+  MAPPED_PROP(SomethingVirtual, BasePropertyAssign, unsigned, id)
   MAPPED_PROP(SomethingVirtual, BasePropertyAssign, std::string, name)
 END_MAPPING(SomethingVirtual)
 
@@ -312,11 +322,18 @@ END_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
   MAPPED_PROP(SomethingVirtual2, BasePropertyAssign, std::string, hobby)
 END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, f)
 
+START_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
+  enum PropertyIds {age=1};
+END_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
+  MAPPED_PROP(SomethingVirtual3, BasePropertyAssign, unsigned, age)
+END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, g)
+
 START_MAPPINGHDR(Wonderful)
-  enum PropertyIds {abstracts=1, virtuals};
+  enum PropertyIds {abstracts=1, virtuals, objects};
 END_MAPPINGHDR(Wonderful)
  MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstracts)
  MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtuals)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, objects)
 END_MAPPING(Wonderful)
 
 }

@@ -52,7 +52,7 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 }
 
 /**
- * class cursor backend. Iterates over all instances of a given class
+ * class cursor backend. Iterates over all instances of a given set of classes
  */
 class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::kv::CursorHelper
 {
@@ -62,18 +62,29 @@ class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::k
   ::lmdb::cursor m_cursor;
   ::lmdb::val m_keyval;
 
-  ClassId m_classId;
+  const vector<ClassId> m_classIds;
+  unsigned m_index = 0;
+
+  bool dostart()
+  {
+    for(; m_index < m_classIds.size(); m_index++) {
+      ClassId cid = m_classIds[m_index];
+
+      SK_CONSTR(sk, cid, 0, 0);
+      m_keyval.assign(sk, sizeof(sk));
+
+      if(m_cursor.get(m_keyval, MDB_SET_RANGE)) {//&& SK_CLASSID(m_keyval.data<byte_t>()) == cid) {
+        return true;
+      }
+    }
+    return false;
+  }
 
 protected:
   bool start() override
   {
-    SK_CONSTR(sk, m_classId, 0, 0);
-    m_keyval.assign(sk, sizeof(sk));
-
-    if(m_cursor.get(m_keyval, MDB_SET_RANGE)) {
-      return SK_CLASSID(m_keyval.data<byte_t>()) == m_classId;
-    }
-    return false;
+    m_index=0;
+    return dostart();
   }
 
   ObjectId key() override
@@ -84,17 +95,21 @@ protected:
 
   bool next() override
   {
-    while(m_cursor.get(m_keyval, MDB_NEXT)) {
-      if(SK_CLASSID(m_keyval.data<byte_t>()) != m_classId) {
-        //not anymore the requested class
-        return false;
+    ClassId cid = m_classIds[m_index];
+
+    while(true) {
+      while(m_cursor.get(m_keyval, MDB_NEXT)) {
+        if(SK_CLASSID(m_keyval.data<byte_t>()) != cid) {
+          //end of class range
+          break;
+        }
+        else if(SK_PROPID(m_keyval.data<byte_t>()) == 0) {
+          //property ID 0 is class shallow data
+          return true;
+        }
       }
-      else if(SK_PROPID(m_keyval.data<byte_t>()) == 0) {
-        //its a complex property. Skip
-        return true;
-      }
+      return (++m_index < m_classIds.size()) ? dostart() : false;
     }
-    return false;
   }
 
   void erase() override
@@ -124,8 +139,8 @@ protected:
   }
 
 public:
-  ClassCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, ClassId classId)
-      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(m_txn, m_dbi)), m_classId(classId)
+  ClassCursorHelper(::lmdb::txn &txn, ::lmdb::dbi &dbi, const vector<ClassId> &classIds)
+      : m_txn(txn), m_dbi(dbi), m_cursor(::lmdb::cursor::open(m_txn, m_dbi)), m_classIds(classIds)
   {}
   ~ClassCursorHelper() {m_cursor.close();}
 };
@@ -398,7 +413,7 @@ protected:
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
   bool remove(ClassId classId, ObjectId objectId, PropertyId propertyid) override;
 
-  ClassCursorHelper * _openCursor(ClassId classId) override;
+  ClassCursorHelper * _openCursor(const vector<ClassId> &classId) override;
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
   VectorCursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
@@ -813,9 +828,9 @@ PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
   return PropertyId(0);
 }
 
-ClassCursorHelper * Transaction::_openCursor(ClassId classId)
+ClassCursorHelper * Transaction::_openCursor(const vector<ClassId> &classIds)
 {
-  return new ClassCursorHelper(m_txn, m_dbi, classId);
+  return new ClassCursorHelper(m_txn, m_dbi, classIds);
 }
 
 VectorCursorHelper * Transaction::_openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId)
