@@ -70,14 +70,14 @@ void testColoredPolygonIterator(KeyValueStore *kv)
 {
   auto rtxn = kv->beginRead();
 
-  for(auto cursor = rtxn->openCursor<ColoredPolygon>(); !cursor->atEnd(); ++(*cursor)) {
+  for(auto cursor = rtxn->openCursor<ColoredPolygon>(); !cursor->atEnd(); cursor->next()) {
     auto loaded = cursor->get();
     if(loaded) {
       cout << "loaded ColoredPolygon visible: " << loaded->visible << " pts: " << loaded->pts.size() << endl;
     }
   }
 
-  for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); ++(*cursor)) {
+  for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); cursor->next()) {
     auto loaded = cursor->get();
     if(loaded) {
       cout << "loaded Colored2DPoint x: " << loaded->x << " y: " << loaded->y << endl;
@@ -714,15 +714,23 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     Wonderful w = Wonderful();
-    w.abstracts.push_back(kv::make_obj<SomethingConcrete1>("Hans", "da oide Hans"));
-    w.abstracts.push_back(kv::make_obj<SomethingConcrete2>("Otto", 33));
+    w.abstractsEmbedded.push_back(kv::make_obj<SomethingConcrete1>("Hans", "da oide Hans"));
+    w.abstractsEmbedded.push_back(kv::make_obj<SomethingConcrete2>("Otto", 33));
 
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual>(1, "Gabi"));
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual1>(2, "Girlande", "Köchin"));
-    w.virtuals.push_back(kv::make_obj<SomethingVirtual2>(3, "Maria", "Stricken"));
+    w.virtualsEmbedded.push_back(kv::make_obj<SomethingVirtual>(1, "Gabi"));
+    w.virtualsEmbedded.push_back(kv::make_obj<SomethingVirtual1>(2, "Girlande", "Köchin"));
+    w.virtualsEmbedded.push_back(kv::make_obj<SomethingVirtual2>(3, "Maria", "Stricken"));
 
-    w.objects.insert(w.objects.begin(), w.virtuals.cbegin(), w.virtuals.cend());
+    w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual>(1, "Rosine"));
+    w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual1>(2, "Methode", "Köchin"));
+    w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual2>(3, "Fontäne", "Stricken"));
     oid = wtxn->putObject(w);
+
+    //we need to kick virtualsLazy separately
+    w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual>(1, "Albrecht"));
+    w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual1>(2, "Hannes", "Anwalt"));
+    w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual2>(3, "Friedrich", "der Große"));
+    wtxn->updateMember(oid, w, PROPERTY(Wonderful, virtualsLazy));
 
     wtxn->commit();
   }
@@ -731,7 +739,7 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
 
     auto loaded = rtxn->getObject<Wonderful>(oid);
 
-    assert(loaded->abstracts.size() == 2 && loaded->virtuals.size() == 3 && loaded->objects.size() == 3);
+    assert(loaded->abstractsEmbedded.size() == 2 && loaded->virtualsEmbedded.size() == 3 && loaded->virtualsPointers.size() == 3);
 
     rtxn->abort();
   }
@@ -761,18 +769,19 @@ void testCompatibleDatabase(ObjectId oid)
   kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
 
   {
+    //see how embedded and non-embedded relationships behave
     auto rtxn = kv->beginRead();
 
     auto loaded = rtxn->getObject<Wonderful>(oid);
 
-    assert(loaded->abstracts.empty() && loaded->virtuals.size() == 3 && loaded->objects.size() == 3);
-    assert(loaded->virtuals[0]->name == "Gabi" && loaded->virtuals[1]->name == "Girlande" && loaded->virtuals[1]->unknown && loaded->virtuals[2]->name == "Maria");
-    assert(loaded->objects[0]->name == "Gabi" && loaded->objects[1]->name == "Girlande" && loaded->objects[1]->unknown && loaded->objects[2]->name == "Maria");
+    assert(loaded->abstractsEmbedded.empty() && loaded->virtualsEmbedded.size() == 3 && loaded->virtualsPointers.size() == 3);
+    assert(loaded->virtualsEmbedded[0]->name == "Gabi" && loaded->virtualsEmbedded[1]->name == "Girlande" && loaded->virtualsEmbedded[1]->unknown && loaded->virtualsEmbedded[2]->name == "Maria");
+    assert(loaded->virtualsPointers[0]->name == "Rosine" && loaded->virtualsPointers[1]->name == "Methode" && loaded->virtualsPointers[1]->unknown && loaded->virtualsPointers[2]->name == "Fontäne");
 
     rtxn->abort();
   }
   {
-    cout << "start compatible cursor" << endl << endl;
+    //see how it goes with class cursors
     auto rtxn = kv->beginRead();
 
     unsigned count = 0;
@@ -784,8 +793,29 @@ void testCompatibleDatabase(ObjectId oid)
       cursor->next();
     }
 
-    //substitutes dont work with class cursors. We get the classes that are available
-    assert(count == 5);
+    //substitutes don't work with class cursors, we get the classes that are available.
+    //that's 2 from w.virtualsPointers, 2 from w.virtualsLazy, and 3 top-level, created in
+    //testClassCursor. Objects from embedded collections don't count because they don't have a top-level key
+    assert(count == 7);
+    rtxn->abort();
+  }
+  {
+    //test lazy collection cursor
+    auto rtxn = kv->beginRead();
+
+    auto loaded = rtxn->getObject<Wonderful>(oid);
+
+    unsigned count = 0, unknownCount=0;
+    auto cursor = rtxn->openCursor<Wonderful, SomethingVirtual>(loaded, PROPERTY_ID(Wonderful, virtualsLazy));
+    while(!cursor->atEnd()) {
+      count++;
+      auto sv = cursor->get();
+      if(sv->unknown) unknownCount++;
+      sv->sayhello(); cout << endl;
+      cursor->next();
+    }
+
+    assert(count == 3 && unknownCount == 1);
     rtxn->abort();
   }
 

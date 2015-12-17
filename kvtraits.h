@@ -18,6 +18,13 @@
 
 namespace flexis {
 namespace persistence {
+
+class invalid_pointer_error : public persistence_error
+{
+public:
+  invalid_pointer_error() : persistence_error("invalid pointer argument: not created by KV store", "") {}
+};
+
 namespace kv {
 
 #define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
@@ -624,13 +631,13 @@ struct ClassInfo : public AbstractClassInfo
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
   bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const get_id)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
+  bool (* const get_objectid)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
   bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
                       ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
-  sub::Substitute<T> *substitute;
+  sub::Substitute<T> *substitute = nullptr;
 
   ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
       : AbstractClassInfo(name, typeinfo, classId),
@@ -640,7 +647,7 @@ struct ClassInfo : public AbstractClassInfo
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         add(&ClassTraits<T>::add),
-        get_id(&ClassTraits<T>::get_id),
+        get_objectid(&ClassTraits<T>::get_objectid),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
 
@@ -778,17 +785,26 @@ public:
     return false;
   }
 
-  static bool get_id(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
+  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true)
   {
-    if(get_objectid(obj, oid)) {
+    ObjectId oid = 0;
+    if(!get_objectid(obj, oid) && force) throw invalid_pointer_error();
+    return oid;
+  }
+
+  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
+  {
+    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
+    if(ohm) {
+      oid = ohm->objectId;
       return true;
     }
     else {
-      if(UP && ClassTraits<SUP>::get_id(obj, oid, FLAG_UP)) return true;
+      if(UP && ClassTraits<SUP>::get_objectid(obj, oid, FLAG_UP)) return true;
       if(DN) {
         for(auto &sub : info->subs) {
           ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
-          if(si->get_id(obj, oid, FLAG_DN)) return true;
+          if(si->get_objectid(obj, oid, FLAG_DN)) return true;
         }
       }
     }
@@ -921,17 +937,21 @@ struct ClassTraits<EmptyClass>
     return false;
   }
   template <typename T>
-  static bool get_id(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=0) {
+  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true) {
+    return 0;
+  }
+  template <typename T>
+  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags) {
     return false;
   }
   template <typename T>
-  static bool save(WriteTransaction *wtr,
-                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=0) {
+  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj,
+                   PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static bool load(ReadTransaction *tr, ReadBuf &buf,
-                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=0) {
+  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
+                   PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }
   template <typename T, typename TV>

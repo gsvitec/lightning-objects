@@ -136,6 +136,7 @@ struct SomethingAbstract {
   std::string name;
   SomethingAbstract(string n) : name(n) {}
   SomethingAbstract() {}
+  virtual ~SomethingAbstract() {}
   virtual void sayhello() = 0;
 };
 struct SomethingConcrete1 : public SomethingAbstract {
@@ -157,7 +158,8 @@ struct SomethingVirtual {
   bool unknown;
   std::string name;
   SomethingVirtual(unsigned id, string n, bool unknown=false) : id(id), name(n), unknown(unknown) {}
-  SomethingVirtual() {}
+  SomethingVirtual() : unknown(false) {}
+  virtual ~SomethingVirtual() {}
 
   virtual void sayhello() {cout << id << ": hello, I'm " << name;}
 };
@@ -184,12 +186,13 @@ struct SomethingVirtual3 : public SomethingVirtual2 {
 };
 struct UnknownVirtual : public SomethingVirtual {
   UnknownVirtual() : SomethingVirtual(0, "unknown", true) {}
-  void sayhello() override { SomethingVirtual::sayhello(); cout << "I am only a substitute";}
+  void sayhello() override { SomethingVirtual::sayhello(); cout << " I am only a substitute";}
 };
 struct Wonderful {
-  vector<shared_ptr<SomethingAbstract>> abstracts;
-  vector<shared_ptr<SomethingVirtual>> virtuals;
-  vector<shared_ptr<SomethingVirtual>> objects;
+  vector<shared_ptr<SomethingAbstract>> abstractsEmbedded;
+  vector<shared_ptr<SomethingVirtual>> virtualsEmbedded;
+  vector<shared_ptr<SomethingVirtual>> virtualsPointers;
+  vector<shared_ptr<SomethingVirtual>> virtualsLazy;
 };
 
 namespace flexis {
@@ -329,11 +332,12 @@ END_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
 END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, g)
 
 START_MAPPINGHDR(Wonderful)
-  enum PropertyIds {abstracts=1, virtuals, objects};
+  enum PropertyIds {abstractsEmbedded=1, virtualsEmbedded, virtualsPointers, virtualsLazy};
 END_MAPPINGHDR(Wonderful)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstracts)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtuals)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, objects)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstractsEmbedded)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtualsEmbedded)
+ MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsPointers)
+ MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
 END_MAPPING(Wonderful)
 
 }

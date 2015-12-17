@@ -63,23 +63,6 @@ static std::shared_ptr<T> make_ptr(T *t, ObjectId oid = 0)
 }
 
 /**
- * retrieve the ObjectId stored inside the given pointer
- *
- * @param obj the object pointer
- * @param oid (out) the retrieved ObjectId
- * @return true if the ObjectId was retrieved
- */
-template<typename T> bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid)
-{
-  object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-  if(ohm) {
-    oid = ohm->objectId;
-    return true;
-  }
-  return false;
-}
-
-/**
  * @param obj a pointer to a mapped object
  * @param oid the ObjectId
  * @throws persistence_error if the shared_ptr was not created via make_shared_ptr

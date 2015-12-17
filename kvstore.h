@@ -32,12 +32,6 @@ static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
 static const size_t CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
-class invalid_pointer_error : public persistence_error
-{
-public:
-  invalid_pointer_error() : persistence_error("invalid pointer argument: not created by KV store", "") {}
-};
-
 class incompatible_schema_error : public persistence_error
 {
 public:
@@ -190,16 +184,12 @@ public:
 
   template <typename T> ObjectId getObjectId(std::shared_ptr<T> &obj)
   {
-    ObjectId oid = 0;
-    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
-    return oid;
+    return ClassTraits<T>::getObjectId(obj);
   }
 
   template <typename T> bool isNew(std::shared_ptr<T> &obj)
   {
-    ObjectId oid = 0;
-    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
-    return oid == 0;
+    return ClassTraits<T>::getObjectId(obj) == 0;
   }
 
   /**
@@ -235,6 +225,49 @@ void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, s
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size=nullptr, bool *deleted=nullptr);
 
+/**
+ * instantiate an object and read object data polymorphically
+ */
+template<typename T> T *readObject(ReadTransaction *tr, ReadBuf &buf,
+                                   ClassId classId, ObjectId objectId, ClassInfo<T> *info = nullptr)
+{
+  T *obj = info ? info->makeObject(classId) : ClassTraits<T>::makeObject(classId);
+  Properties *props = ClassTraits<T>::getProperties(classId);
+  if(!props) throw persistence_error("unknown classId. Class not registered");
+
+  PropertyId propertyId = 0;
+  for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+    //we use the key index (+1) as id
+    propertyId++;
+
+    PropertyAccessBase *p = props->get(px);
+    if(!p->enabled) continue;
+
+    ClassTraits<T>::load(tr, buf, classId, objectId, obj, p);
+  }
+  return obj;
+}
+
+/**
+ * read object data non-polymorphically
+ */
+template<typename T> void readObject(ReadTransaction *tr, ReadBuf &buf, T &obj,
+                                     ClassId classId, ObjectId objectId, StoreMode mode = StoreMode::force_none)
+{
+  Properties *props = ClassTraits<T>::properties;
+
+  PropertyId propertyId = 0;
+  for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+    //we use the key index (+1) as id
+    propertyId++;
+
+    PropertyAccessBase *p = props->get(px);
+    if(!p->enabled) continue;
+
+    ClassTraits<T>::load(tr, buf, classId, objectId, &obj, p, mode);
+  }
+}
+
 template <typename T> class IterPropertyBackend
 {
 protected:
@@ -255,6 +288,9 @@ class FlexisPersistence_EXPORT CursorHelper {
   template <typename T> friend class ClassCursor;
 
 protected:
+  ClassId m_currentClassId;
+  ObjectId m_currentObjectId;
+
   virtual ~CursorHelper() {}
 
   /**
@@ -277,7 +313,12 @@ protected:
   /**
    * @return the objectId of the item at the current cursor position
    */
-  virtual ObjectId key() = 0;
+  ObjectId currentObjectId() {return m_currentObjectId;}
+
+  /**
+   * @return the classId of the item at the current cursor position
+   */
+  ClassId currentClassId() {return m_currentClassId;}
 
   /**
    * close the cursor an release all resources
@@ -438,22 +479,30 @@ class ClassCursor
   CursorHelper * const m_helper;
   ReadTransaction * const m_tr;
   bool m_hasData;
+  ClassInfo<T> *m_classInfo;
+
+  bool validateClass() {
+    m_classInfo = FIND_CLS(T, m_helper->currentClassId());
+    return m_classInfo != nullptr || ClassTraits<T>::info->substitute != nullptr;
+  }
 
 public:
   using Ptr = std::shared_ptr<ClassCursor<T>>;
 
   ClassCursor(CursorHelper *helper, ReadTransaction *tr) : m_helper(helper), m_tr(tr)
   {
-    m_hasData = helper->start();
+    bool hasData = helper->start();
+    bool clsFound = validateClass();
+
+    while(hasData && !clsFound) {
+      hasData = helper->next();
+      clsFound = hasData && validateClass();
+    }
+    m_hasData = hasData && clsFound;
   }
 
   virtual ~ClassCursor() {
     delete m_helper;
-  }
-
-  ObjectId key()
-  {
-    return m_helper->key();
   }
 
   void erase()
@@ -514,22 +563,15 @@ public:
     //nothing here
     if(readBuf.null()) return nullptr;
 
-    T *obj = ClassTraits<T>::makeObject(key.classId);
-    Properties *properties = ClassTraits<T>::getProperties(key.classId);
-
     if(objId) *objId = key.objectId;
 
-    PropertyId propertyId = 0;
-    for(unsigned px=0, sz=properties->full_size(); px < sz; px++) {
-      //we use the key index (+1) as id
-      propertyId++;
-
-      PropertyAccessBase *p = properties->get(px);
-      if(!p->enabled) continue;
-
-      ClassTraits<T>::load(m_tr, readBuf, key.classId, key.objectId, obj, p);
+    if(m_classInfo)
+      return readObject<T>(m_tr, readBuf, key.classId, key.objectId, m_classInfo);
+    else {
+      T *sp = ClassTraits<T>::getSubstitute();
+      readObject<T>(m_tr, readBuf, *sp, key.classId, key.objectId);
+      return sp;
     }
-    return obj;
   }
 
   /**
@@ -543,13 +585,14 @@ public:
     return make_ptr(obj, id);
   }
 
-  ClassCursor &operator++() {
-    m_hasData = m_helper->next();
-    return *this;
-  }
-
   bool next() {
-    m_hasData = m_helper->next();
+    bool hasData, clsFound;
+    do {
+      hasData = m_helper->next();
+      clsFound = hasData && validateClass();
+    } while(hasData && !clsFound);
+
+    m_hasData = hasData && clsFound;
     return m_hasData;
   }
 
@@ -595,6 +638,7 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
   template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
   friend class CollectionCursorBase;
+  template <typename T> friend class ClassCursor;
   friend class CollectionAppenderBase;
 
   CollectionInfo *readCollectionInfo(ReadBuf &readBuf);
@@ -611,48 +655,6 @@ protected:
   }
 
   /**
-   * instantiate an object and read object data polymorphically
-   */
-  template<typename T> T *readObject(ReadBuf &buf, ClassId classId, ObjectId objectId, ClassInfo<T> *info = nullptr)
-  {
-    T *obj = info ? info->makeObject(classId) : ClassTraits<T>::makeObject(classId);
-    Properties *props = store.objectProperties[classId];
-    if(!props) throw persistence_error("unknown classId. Class not registered");
-
-    PropertyId propertyId = 0;
-    for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
-      //we use the key index (+1) as id
-      propertyId++;
-
-      PropertyAccessBase *p = props->get(px);
-      if(!p->enabled) continue;
-
-      ClassTraits<T>::load(this, buf, classId, objectId, obj, p);
-    }
-    return obj;
-  }
-
-  /**
-   * read object data non-polymorphically
-   */
-  template<typename T> void readObject(ReadBuf &buf, T &obj,
-                                       ClassId classId, ObjectId objectId, StoreMode mode = StoreMode::force_none)
-  {
-    Properties *props = ClassTraits<T>::properties;
-
-    PropertyId propertyId = 0;
-    for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
-      //we use the key index (+1) as id
-      propertyId++;
-
-      PropertyAccessBase *p = props->get(px);
-      if(!p->enabled) continue;
-
-      ClassTraits<T>::load(this, buf, classId, objectId, &obj, p, mode);
-    }
-  }
-
-  /**
    * load an object from the KV store polymorphically. Used by collections that store the classId
    *
    * @param classId the actual class id, which may be the id of a subclass of T
@@ -666,7 +668,7 @@ protected:
 
     if(readBuf.null()) return nullptr;
 
-    return readObject<T>(readBuf, classId, objectId);
+    return readObject<T>(this, readBuf, classId, objectId);
   }
 
   /**
@@ -686,7 +688,7 @@ protected:
 
     if(readBuf.null()) return false;
 
-    readObject<T>(readBuf, subst, missingClassId, objectId);
+    readObject<T>(this, readBuf, subst, missingClassId, objectId);
     return true;
   }
 
@@ -710,7 +712,7 @@ protected:
         bool deleted;
         readObjectHeader(buf, &cid, &oid, nullptr, &deleted);
         if(!deleted && ClassTraits<T>::info->isInstance(cid)) {
-          T *obj = readObject<T>(buf, cid, oid);
+          T *obj = readObject<T>(this, buf, cid, oid);
           if(obj) result.push_back(std::shared_ptr<T>(obj));
           else
             throw persistence_error("collection object not found");
@@ -773,7 +775,7 @@ public:
     if(readBuf.null()) return nullptr;
 
     T *tp = new T();
-    readObject<T>(readBuf, *tp, classId, objectId);
+    readObject<T>(this, readBuf, *tp, classId, objectId);
 
     return tp;
   }
@@ -801,7 +803,7 @@ public:
    */
   template<typename T> std::shared_ptr<T> reloadObject(std::shared_ptr<T> &obj)
   {
-    ObjectId oid = store.getObjectId(obj);
+    ObjectId oid = ClassTraits<T>::getObjectId(obj);
     return make_ptr(loadObject<T>(oid), oid);
   }
 
@@ -828,12 +830,25 @@ public:
   }
 
   /**
+   * @param obj the object that holds the property
+   * @param propertyId the propertyId (1-based index into declared properties)
+   * @return a cursor over the contents of a vector-valued, lazy-loading object property. The cursor will be empty if the
+   * given property is not vector-valued
+   */
+  template <typename T, typename V> typename ClassCursor<V>::Ptr openCursor(std::shared_ptr<T> obj, PropertyId propertyId) {
+    ClassId cid = ClassTraits<T>::info->classId;
+    ObjectId oid = ClassTraits<T>::getObjectId(obj);
+
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(cid, oid, propertyId), this));
+  }
+
+  /**
    * @param collectionId the id of a top-level object collection
    * @return a cursor over the contents of the collection
    */
   template <typename V> typename ObjectCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
-    return typename ObjectCollectionCursor<V>::Ptr(new ObjectCollectionCursor<V>( collectionId, this,
-                                                                                  _openChunkCursor(COLLECTION_CLSID, collectionId)));
+    return typename ObjectCollectionCursor<V>::Ptr(
+        new ObjectCollectionCursor<V>( collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId)));
   }
 
   /**
@@ -859,8 +874,7 @@ public:
   void getCollection(std::shared_ptr<T> &obj, PropertyId propertyId, std::vector<std::shared_ptr<V>> &vect)
   {
     ClassId objClassId = getClassId(typeid(*obj));
-    ObjectId objectId = 0;
-    if(!ClassTraits<T>::get_id(obj, objectId)) throw invalid_pointer_error();
+    ObjectId objectId = ClassTraits<T>::getObjectId(obj);
 
     ReadBuf buf;
     getData(buf, objClassId, objectId, propertyId);
@@ -965,8 +979,7 @@ public:
   {
     using Traits = ClassTraits<T>;
 
-    ObjectId objId = 0;
-    if(!ClassTraits<T>::get_id(obj, objId)) throw invalid_pointer_error();
+    ObjectId objId = ClassTraits<T>::getObjectId(obj);
 
     ReadBuf rb;
     ClassTraits<T>::load(this, rb, Traits::info->classId, objId, &obj, pa, StoreMode::force_all);
@@ -1422,23 +1435,21 @@ public:
    * Otherwise, the object will be stored under a new key (whiuch is again stored inside the shared_ptr)
    *
    * @param obj a persistent object pointer, which must have been obtained from KV (see make_obj, make_ptr)
-   * @return true if the object was newly inserted
+   * @return the objectId
    */
   template <typename T>
-  bool saveObject(const std::shared_ptr<T> &obj)
+  ObjectId saveObject(const std::shared_ptr<T> &obj)
   {
-    ObjectId oid = 0;
-    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
+    ObjectId oid = ClassTraits<T>::getObjectId(obj);
 
     if(oid) {
       saveObject<T>(oid, *obj, false);
-      return false;
     }
     else {
       oid = saveObject<T>(0, *obj, true);
       set_objectid(obj, oid);
-      return true;
     }
+    return oid;
   }
 
   /**
@@ -1493,8 +1504,7 @@ public:
   template <typename T>
   void updateMember(const std::shared_ptr<T> &obj, PropertyAccessBase *pa, bool shallow=false)
   {
-    ObjectId objId = 0;
-    if(!ClassTraits<T>::get_id(obj, objId)) throw invalid_pointer_error();
+    ObjectId objId = ClassTraits<T>::getObjectId(obj);
     updateMember(objId, *obj, pa, shallow);
   }
 
@@ -1509,8 +1519,7 @@ public:
   void putCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect,
                      bool saveMembers=true)
   {
-    ObjectId objId = 0;
-    if(!ClassTraits<T>::get_id(obj, objId)) throw invalid_pointer_error();
+    ObjectId objId = ClassTraits<T>::getObjectId(obj);
 
     ClassId classId = getClassId(typeid(*obj));
     byte_t *data;
@@ -1524,15 +1533,21 @@ public:
 
     for(auto &v : vect) {
       ClassId classId = getClassId(typeid(*v));
-      ObjectId objectId = 0;
-      ClassTraits<V>::get_id(v, objectId);
-      if(!objectId || saveMembers) {
-        pushWriteBuf();
-        saveObject(v);
-        popWriteBuf();
-        ClassTraits<V>::get_id(v, objectId);
-      }
+      ObjectId objectId;
 
+      if(saveMembers) {
+        pushWriteBuf();
+        objectId = saveObject(v);
+        popWriteBuf();
+      }
+      else {
+        objectId = ClassTraits<V>::getObjectId(v);
+        if(!objectId) {
+          pushWriteBuf();
+          objectId = saveObject(0, v, true);
+          popWriteBuf();
+        }
+      }
       writeBuf().append(classId, objectId, 0);
     }
   }
@@ -1547,8 +1562,7 @@ public:
   template <typename T, typename V>
   bool updateCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::shared_ptr<V> &val, bool remove=false)
   {
-    ObjectId objectId = 0;
-    if(!ClassTraits<T>::get_id(obj, objectId)) throw invalid_pointer_error();
+    ObjectId objectId = ClassTraits<T>::getObjectId(obj);
 
     ReadBuf buf;
     ClassId classId = getClassId(typeid(*obj));
@@ -1558,8 +1572,7 @@ public:
     size_t elementCount = buf.readInteger<size_t>(4);
 
     ClassId valueClassId = getClassId(typeid(*val));
-    ObjectId valueId = 0;
-    ClassTraits<V>::get_id(val, valueId);
+    ObjectId valueId = ClassTraits<V>::getObjectId(val);
     byte_t *slotStart = nullptr;
 
     for(size_t i=0; i < elementCount; i++) {
@@ -1586,8 +1599,7 @@ public:
     }
     else {
       if(!valueId) {
-        saveObject(val);
-        ClassTraits<V>::get_id(val, valueId);
+        valueId = saveObject(0, val, true);
       }
       writeBuf().start(buf.size()+StorageKey::byteSize);
       writeBuf().append(buf.data(), buf.size());
@@ -1729,8 +1741,7 @@ public:
   template <typename T>
   void deleteObject(std::shared_ptr<T> obj) {
     ClassId cid = getClassId(typeid(*obj));
-    ObjectId oid = 0;
-    if(!ClassTraits<T>::get_id(obj, oid)) throw invalid_pointer_error();
+    ObjectId oid = ClassTraits<T>::getObjectId(obj);
     removeObject(cid, oid, obj);
   }
 
@@ -2179,8 +2190,7 @@ template <typename V> struct OidAccess<V, std::shared_ptr>
   }
 
   static ObjectId getObjectId(ClassId cid, std::shared_ptr<V> ptr) {
-    ObjectId oid = 0;
-    if(!ClassTraits<V>::get_id(ptr, oid)) throw invalid_pointer_error();
+    ObjectId oid = ClassTraits<V>::getObjectId(ptr);
     return oid;
   }
 
@@ -2424,7 +2434,7 @@ public:
     for(size_t i=0; i< sz; i++) {
       V v;
       buf.readInteger<unsigned>(4);
-      tr->readObject(buf, v, childClassId, ++childObjectId);
+      readObject(tr, buf, v, childClassId, ++childObjectId);
       val.push_back(v);
     }
     T *tp = reinterpret_cast<T *>(obj);
@@ -2500,13 +2510,13 @@ public:
         buf.mark();
         V *vp = ClassTraits<V>::getSubstitute();
         if(vp) {
-          tr->readObject<V>(buf, *vp, childClassId, ++childObjectId, StoreMode::force_buffer);
+          readObject<V>(tr, buf, *vp, childClassId, ++childObjectId, StoreMode::force_buffer);
           val.push_back(std::shared_ptr<V>(vp));
         }
         buf.unmark(sz);
       }
       else {
-        V *vp = tr->readObject<V>(buf, childClassId, ++childObjectId, vi);
+        V *vp = readObject<V>(tr, buf, childClassId, ++childObjectId, vi);
         val.push_back(std::shared_ptr<V>(vp));
       }
     }
@@ -2544,8 +2554,7 @@ public:
     tr->pushWriteBuf();
     for(std::shared_ptr<V> &v : val) {
       ClassId childClassId = tr->getClassId(typeid(*v));
-      ObjectId childId = 0;
-      ClassTraits<V>::get_id(v, childId);
+      ObjectId childId = ClassTraits<V>::getObjectId(v, false);
 
       if(mode != StoreMode::force_buffer) {
         if(childId) {

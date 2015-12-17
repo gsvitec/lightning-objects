@@ -73,7 +73,9 @@ class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::k
       SK_CONSTR(sk, cid, 0, 0);
       m_keyval.assign(sk, sizeof(sk));
 
-      if(m_cursor.get(m_keyval, MDB_SET_RANGE)) {//&& SK_CLASSID(m_keyval.data<byte_t>()) == cid) {
+      if(m_cursor.get(m_keyval, MDB_SET_RANGE) && SK_CLASSID(m_keyval.data<byte_t>()) == cid) {
+        m_currentClassId = cid;
+        m_currentObjectId = SK_OBJID(m_keyval.data<byte_t>());
         return true;
       }
     }
@@ -85,12 +87,6 @@ protected:
   {
     m_index=0;
     return dostart();
-  }
-
-  ObjectId key() override
-  {
-    m_cursor.get(m_keyval, MDB_GET_CURRENT);
-    return SK_OBJID(m_keyval.data<byte_t>());
   }
 
   bool next() override
@@ -105,6 +101,8 @@ protected:
         }
         else if(SK_PROPID(m_keyval.data<byte_t>()) == 0) {
           //property ID 0 is class shallow data
+          m_currentClassId = cid;
+          m_currentObjectId = SK_OBJID(m_keyval.data<byte_t>());
           return true;
         }
       }
@@ -229,6 +227,10 @@ class FlexisPersistence_EXPORT CollectionCursorHelper : public flexis::persisten
       m_chunkSize = m_readBuf.readInteger<size_t>(4);
       m_readBuf.readInteger<ObjectId>(ObjectId_sz); //throw away
       m_data = m_readBuf.cur();
+
+      m_currentClassId = SK_CLASSID(m_data);
+      m_currentObjectId = SK_OBJID(m_data);
+
       return true;
     }
     return false;
@@ -246,17 +248,17 @@ protected:
       m_chunkCursor->next();
       if(!prepare_chunk()) return false;
     }
-    else
+    else {
       m_data = m_readBuf.cur() + m_chunkIndex * StorageKey::byteSize;
+
+      m_currentClassId = SK_CLASSID(m_data);
+      m_currentObjectId = SK_OBJID(m_data);
+    }
     return true;
   }
 
   void erase() {
     throw persistence_error("not implemented");
-  }
-
-  ObjectId key() {
-    return SK_OBJID(m_data);
   }
 
   void close() {
@@ -318,19 +320,24 @@ protected:
 
     if(m_dbi.get(m_txn, keyval, m_vectordata)) {
       m_size = m_vectordata.size() / StorageKey::byteSize;
+
+      m_currentClassId = SK_CLASSID(m_vectordata.data<byte_t>());
+      m_currentObjectId = SK_OBJID(m_vectordata.data<byte_t>());
+
       return true;
     }
     return false;
   }
 
-  ObjectId key() override
-  {
-    return SK_OBJID(m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize);
-  }
-
   bool next() override
   {
-    return ++m_index < m_size;
+    if(++m_index < m_size) {
+      byte_t *data = m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize;
+      m_currentClassId = SK_CLASSID(data);
+      m_currentObjectId = SK_OBJID(data);
+      return true;
+    }
+    return false;
   }
 
   void erase() override
