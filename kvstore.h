@@ -385,7 +385,7 @@ public:
 };
 
 /**
- * top-level collection cursor
+ * top-level chunked collection cursor base
  */
 class CollectionCursorBase
 {
@@ -411,10 +411,18 @@ class ObjectCollectionCursor : public CollectionCursorBase
 {
   const ClassId m_declClass;
 
+  ClassInfo<T> *m_curClassInfo = nullptr;
+
 protected:
   bool isValid() override
   {
-    return !read_integer<byte_t>(m_readBuf.data() + ObjectHeader_sz - 1, 1);
+    if(!read_integer<byte_t>(m_readBuf.data() + ObjectHeader_sz - 1, 1)) { //check deleted flag
+      ClassId cid = read_integer<ClassId>(m_readBuf.cur(), ClassId_sz);
+      m_curClassInfo = FIND_CLS(T, cid);
+
+      return m_curClassInfo != nullptr || ClassTraits<T>::info->substitute != nullptr;
+    }
+    return false;
   }
 
 public:
@@ -422,7 +430,9 @@ public:
 
   ObjectCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
       : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::info->classId)
-  {}
+  {
+    if(!isValid()) next();
+  }
 
   T *get()
   {
@@ -430,20 +440,13 @@ public:
     ObjectId objectId;
     readObjectHeader(m_readBuf, &classId, &objectId);
 
-    T *obj = (T *)ClassTraits<T>::makeObject(classId);
-    Properties *properties = ClassTraits<T>::getProperties(classId);
-
-    PropertyId propertyId = 0;
-    for(unsigned px=0, sz=properties->full_size(); px < sz; px++) {
-      //we use the key index (+1) as id
-      propertyId++;
-
-      PropertyAccessBase *p = properties->get(px);
-      if(!p->enabled) continue;
-
-      ClassTraits<T>::load(m_tr, m_readBuf, m_declClass, objectId, obj, p);
+    if(m_curClassInfo)
+      return readObject<T>(m_tr, m_readBuf, classId, objectId, m_curClassInfo);
+    else {
+      T *sp = ClassTraits<T>::getSubstitute();
+      readObject<T>(m_tr, m_readBuf, *sp, classId, objectId);
+      return sp;
     }
-    return obj;
   }
 };
 
@@ -711,11 +714,21 @@ protected:
         ObjectId oid;
         bool deleted;
         readObjectHeader(buf, &cid, &oid, nullptr, &deleted);
-        if(!deleted && ClassTraits<T>::info->isInstance(cid)) {
-          T *obj = readObject<T>(this, buf, cid, oid);
-          if(obj) result.push_back(std::shared_ptr<T>(obj));
-          else
-            throw persistence_error("collection object not found");
+
+        if(!deleted) {
+          ClassInfo<T> *ti = FIND_CLS(T, cid);
+          if(!ti) {
+            T *sp = ClassTraits<T>::getSubstitute();
+            if(sp) {
+              readObject<T>(this, buf, *sp, cid, oid);
+              result.push_back(std::shared_ptr<T>(sp));
+            }
+          }
+          else {
+            T *obj = readObject<T>(this, buf, cid, oid);
+            if(!obj) throw persistence_error("collection object not found");
+            result.push_back(std::shared_ptr<T>(obj));
+          }
         }
       }
     }
@@ -734,13 +747,6 @@ protected:
   virtual void doReset() = 0;
   virtual void doRenew() = 0;
   virtual void doAbort() = 0;
-
-  /**
-   * @return the highes currently stored property ID for the given values
-   */
-  virtual PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) = 0;
-
-  virtual bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startindex) = 0;
 
   /**
    * retrieve info about a top-level collection
@@ -887,11 +893,18 @@ public:
       StorageKey sk;
       buf.read(sk);
 
-      if(ClassTraits<V>::info->isInstance(sk.classId)) {
+      ClassInfo<V> *vi = FIND_CLS(V, sk.classId);
+      if(!vi) {
+        V *vp = ClassTraits<V>::getSubstitute();
+        if(vp) {
+          loadSubstitute<V>(*vp, sk.classId, sk.objectId);
+          vect.push_back(make_ptr(vp, sk.objectId));
+        }
+      }
+      else {
         V *obj = loadObject<V>(sk.classId, sk.objectId);
-        if(obj) vect.push_back(make_ptr(obj, sk.objectId));
-        else
-          throw persistence_error("collection object not found");
+        if(!obj) throw persistence_error("collection object not found");
+        vect.push_back(make_ptr(obj, sk.objectId));
       }
     }
   }
@@ -1544,7 +1557,7 @@ public:
         objectId = ClassTraits<V>::getObjectId(v);
         if(!objectId) {
           pushWriteBuf();
-          objectId = saveObject(0, v, true);
+          objectId = saveObject(0, *v, true);
           popWriteBuf();
         }
       }

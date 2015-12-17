@@ -427,8 +427,6 @@ protected:
   bool _getCollectionData(CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize,
                           void **data, bool *owned) override;
 
-  PropertyId getMaxPropertyId(ClassId classId, ObjectId objectId) override;
-  bool getNextChunkInfo(ObjectId collectionId, PropertyId *propertyId, size_t *startIndex) override;
   bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
@@ -711,23 +709,6 @@ ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectI
   return ChunkCursor::Ptr(new ChunkCursorImpl(m_txn, m_dbi, classId, objectId, atEnd));
 }
 
-bool Transaction::getNextChunkInfo(ObjectId collectionId, PropertyId *chunkId, size_t *startIndex)
-{
-  ::lmdb::val data;
-  PropertyId last;
-
-  bool ok = lastChunk(collectionId, last, data);
-
-  if(ok) {
-    *chunkId = last + PropertyId(1); //next higher chunkid
-    size_t start, count;
-    readChunkHeader(data.data<byte_t>(), 0, &start, &count);
-    *startIndex = start + count; //next higher element index
-    return true;
-  }
-  return false;
-}
-
 bool Transaction::lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data)
 {
   SK_CONSTR(k, COLLECTION_CLSID, collectionId, 0xFFFF);
@@ -814,25 +795,6 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
     }
   }
   return false;
-}
-
-PropertyId Transaction::getMaxPropertyId(ClassId classId, ObjectId objectId)
-{
-  SK_CONSTR(k, classId, objectId, 0xFFFF);
-  ::lmdb::val key {k, sizeof(k)};
-
-  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
-
-  bool ok;
-  if(cursor.get(key, nullptr, MDB_SET_RANGE))
-    ok = cursor.get(key, nullptr, MDB_PREV);
-  else
-    ok = cursor.get(key, nullptr, MDB_LAST);
-
-  if(ok && SK_CLASSID(key.data<byte_t>()) == classId) {
-    return SK_PROPID(key.data<byte_t>());
-  }
-  return PropertyId(0);
 }
 
 ClassCursorHelper * Transaction::_openCursor(const vector<ClassId> &classIds)
