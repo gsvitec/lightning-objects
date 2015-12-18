@@ -724,6 +724,13 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
     w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual>(1, "Rosine"));
     w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual1>(2, "Methode", "Köchin"));
     w.virtualsPointers.push_back(kv::make_obj<SomethingVirtual2>(3, "Fontäne", "Stricken"));
+
+    w.embeddedVirtual1 = kv::make_obj<SomethingVirtual1>(4, "Franzine", "Pfarrerin");
+    w.embeddedVirtual2 = kv::make_obj<SomethingVirtual2>(5, "Fontäne", "Stricken");
+
+    w.toplevelVirtual1 = kv::make_obj<SomethingVirtual1>(4, "Karl", "der Große");
+    w.toplevelVirtual2 = kv::make_obj<SomethingVirtual2>(5, "Siegfried", "Drachentöten");
+
     oid = wtxn->putObject(w);
 
     //we need to kick virtualsLazy separately
@@ -745,6 +752,8 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
   }
   return oid;
 }
+
+#define IS_TYPE(__val, __cls) typeid(__val) == typeid(__cls)
 
 void testCompatibleDatabase(ObjectId oid)
 {
@@ -778,6 +787,12 @@ void testCompatibleDatabase(ObjectId oid)
     assert(loaded->virtualsEmbedded[0]->name == "Gabi" && loaded->virtualsEmbedded[1]->name == "Girlande" && loaded->virtualsEmbedded[1]->unknown && loaded->virtualsEmbedded[2]->name == "Maria");
     assert(loaded->virtualsPointers[0]->name == "Rosine" && loaded->virtualsPointers[1]->name == "Methode" && loaded->virtualsPointers[1]->unknown && loaded->virtualsPointers[2]->name == "Fontäne");
 
+    assert(loaded->embeddedVirtual1->name == "Franzine" && IS_TYPE(*loaded->embeddedVirtual1, UnknownVirtual));
+    assert(loaded->embeddedVirtual2->name == "Fontäne");
+
+    assert(loaded->toplevelVirtual1->name == "Karl" && IS_TYPE(*loaded->toplevelVirtual1, UnknownVirtual));
+    assert(loaded->toplevelVirtual2->name == "Siegfried");
+
     rtxn->abort();
   }
   {
@@ -796,7 +811,7 @@ void testCompatibleDatabase(ObjectId oid)
     //substitutes don't work with class cursors, we get the classes that are available.
     //that's 2 from w.virtualsPointers, 2 from w.virtualsLazy, and 3 top-level, created in
     //testClassCursor. Objects from embedded collections don't count because they don't have a top-level key
-    assert(count == 7);
+    assert(count == 8);
     rtxn->abort();
   }
   {

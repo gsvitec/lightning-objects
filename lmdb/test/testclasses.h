@@ -189,6 +189,11 @@ struct UnknownVirtual : public SomethingVirtual {
   void sayhello() override { SomethingVirtual::sayhello(); cout << " I am only a substitute";}
 };
 struct Wonderful {
+  shared_ptr<SomethingVirtual> embeddedVirtual1;
+  shared_ptr<SomethingVirtual> toplevelVirtual1;
+  shared_ptr<SomethingVirtual> embeddedVirtual2;
+  shared_ptr<SomethingVirtual> toplevelVirtual2;
+
   vector<shared_ptr<SomethingAbstract>> abstractsEmbedded;
   vector<shared_ptr<SomethingVirtual>> virtualsEmbedded;
   vector<shared_ptr<SomethingVirtual>> virtualsPointers;
@@ -200,7 +205,7 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend<T>
+struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend
 {
   T t;
   T& getHistoryValue(uint64_t bufferPos) override {
@@ -212,14 +217,14 @@ struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend<T>
 };
 
 START_MAPPINGHDR_A(OtherThing)
-  enum PropertyIds {name=1, dvalue};
+  enum class PropertyIds {name=1, dvalue};
 END_MAPPINGHDR(OtherThing)
   MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)
   MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
 END_MAPPING(OtherThing)
 
 START_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
-  enum PropertyIds {lvalue=1, testnames};
+  enum class PropertyIds {lvalue=1, testnames};
 END_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
@@ -227,35 +232,35 @@ END_MAPPING_SUB(OtherThingA, OtherThing, a)
 
 
 START_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
-  enum PropertyIds {llvalue=1};
+  enum class PropertyIds {llvalue=1};
 END_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
   MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue)
 END_MAPPING_SUB(OtherThingB, OtherThing, b)
 
 //SomethingWithALazyVector
 START_MAPPINGHDR(SomethingWithALazyVector)
-  enum PropertyIds {name=1, otherThings};
+  enum class PropertyIds {name=1, otherThings};
 END_MAPPINGHDR(SomethingWithALazyVector)
   MAPPED_PROP(SomethingWithALazyVector, BasePropertyAssign, std::string, name)
   MAPPED_PROP3(SomethingWithALazyVector, ObjectPtrVectorPropertyAssign, OtherThing, otherThings, true)
 END_MAPPING(SomethingWithALazyVector)
 
 START_MAPPINGHDR(FixedSizeObject)
-  enum PropertyIds {number1=1, number2};
+  enum class PropertyIds {number1=1, number2};
 END_MAPPINGHDR(FixedSizeObject)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number1)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
 START_MAPPINGHDR(VariableSizeObject)
-  enum PropertyIds {number=1, name};
+  enum class PropertyIds {number=1, name};
 END_MAPPINGHDR(VariableSizeObject)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
 END_MAPPING(VariableSizeObject)
 
 START_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
-  enum PropertyIds {name=1, objects};
+  enum class PropertyIds {name=1, objects};
 END_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, BasePropertyAssign, std::string, name)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, objects)
@@ -263,7 +268,7 @@ END_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
 END_MAPPING(SomethingWithAnEmbbededObjectVector)
 
 START_MAPPINGHDR(flexis::player::SourceDisplayConfig)
-  enum PropertyIds {sourceIndex=1, attachedIndex, attached, window_x, window_y, window_width, window_height};
+  enum class PropertyIds {sourceIndex=1, attachedIndex, attached, window_x, window_y, window_width, window_height};
 END_MAPPINGHDR(flexis::player::SourceDisplayConfig)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, attachedIndex)
@@ -275,7 +280,7 @@ END_MAPPINGHDR(flexis::player::SourceDisplayConfig)
 END_MAPPING(flexis::player::SourceDisplayConfig)
 
 START_MAPPINGHDR(flexis::player::SourceInfo)
-  enum PropertyIds {sourceIndex=1, displayConfig, userOverlays};
+  enum class PropertyIds {sourceIndex=1, displayConfig, userOverlays};
 END_MAPPINGHDR(flexis::player::SourceInfo)
   MAPPED_PROP(flexis::player::SourceInfo, BasePropertyAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
@@ -283,61 +288,65 @@ END_MAPPINGHDR(flexis::player::SourceInfo)
 END_MAPPING(flexis::player::SourceInfo)
 
 START_MAPPINGHDR(SomethingWithAnObjectIter)
-  enum PropertyIds {history=1};
+  enum class PropertyIds {history=1};
 END_MAPPINGHDR(SomethingWithAnObjectIter)
-  MAPPED_PROP_ITER(SomethingWithAnObjectIter, ObjectIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPINGHDR_A(SomethingAbstract)
-  enum PropertyIds {name=1};
+  enum class PropertyIds {name=1};
 END_MAPPINGHDR(SomethingAbstract)
   MAPPED_PROP(SomethingAbstract, BasePropertyAssign, std::string, name)
 END_MAPPING(SomethingAbstract)
 
 START_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
-  enum PropertyIds {description=1};
+  enum class PropertyIds {description=1};
 END_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
   MAPPED_PROP(SomethingConcrete1, BasePropertyAssign, std::string, description)
 END_MAPPING_SUB(SomethingConcrete1, SomethingAbstract, c)
 
 START_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
-  enum PropertyIds {age=1};
+  enum class PropertyIds {age=1};
 END_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
   MAPPED_PROP(SomethingConcrete2, BasePropertyAssign, unsigned, age)
 END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, d)
 
 START_MAPPINGHDR(SomethingVirtual)
-  enum PropertyIds {id=1, name};
+  enum class PropertyIds {id=1, name};
 END_MAPPINGHDR(SomethingVirtual)
   MAPPED_PROP(SomethingVirtual, BasePropertyAssign, unsigned, id)
   MAPPED_PROP(SomethingVirtual, BasePropertyAssign, std::string, name)
 END_MAPPING(SomethingVirtual)
 
 START_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
-  enum PropertyIds {profession=1};
+  enum class PropertyIds {profession=1};
 END_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
   MAPPED_PROP(SomethingVirtual1, BasePropertyAssign, std::string, profession)
 END_MAPPING_SUB(SomethingVirtual1, SomethingVirtual, e)
 
 START_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
-  enum PropertyIds {hobby=1};
+  enum class PropertyIds {hobby=1};
 END_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
   MAPPED_PROP(SomethingVirtual2, BasePropertyAssign, std::string, hobby)
 END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, f)
 
 START_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
-  enum PropertyIds {age=1};
+  enum class PropertyIds {age=1};
 END_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
   MAPPED_PROP(SomethingVirtual3, BasePropertyAssign, unsigned, age)
 END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, g)
 
 START_MAPPINGHDR(Wonderful)
-  enum PropertyIds {abstractsEmbedded=1, virtualsEmbedded, virtualsPointers, virtualsLazy};
+  enum class PropertyIds {embeddedVirtual1=1, toplevelVirtual1, embeddedVirtual2, toplevelVirtual2, abstractsEmbedded, virtualsEmbedded, virtualsPointers, virtualsLazy};
 END_MAPPINGHDR(Wonderful)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstractsEmbedded)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtualsEmbedded)
- MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsPointers)
- MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
+  MAPPED_PROP(Wonderful, ObjectPtrPropertyEmbeddedAssign, SomethingVirtual, embeddedVirtual1)
+  MAPPED_PROP(Wonderful, ObjectPtrPropertyAssign, SomethingVirtual, toplevelVirtual1)
+  MAPPED_PROP(Wonderful, ObjectPtrPropertyEmbeddedAssign, SomethingVirtual, embeddedVirtual2)
+  MAPPED_PROP(Wonderful, ObjectPtrPropertyAssign, SomethingVirtual, toplevelVirtual2)
+  MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingAbstract, abstractsEmbedded)
+  MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyEmbeddedAssign, SomethingVirtual, virtualsEmbedded)
+  MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsPointers)
+  MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
 END_MAPPING(Wonderful)
 
 }

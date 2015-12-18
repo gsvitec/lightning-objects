@@ -63,18 +63,6 @@ static std::shared_ptr<T> make_ptr(T *t, ObjectId oid = 0)
 }
 
 /**
- * @param obj a pointer to a mapped object
- * @param oid the ObjectId
- * @throws persistence_error if the shared_ptr was not created via make_shared_ptr
- */
-template<typename T> void set_objectid(const std::shared_ptr<T> &obj, ObjectId  oid, bool force = true)
-{
-  object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-  if(ohm) ohm->objectId = oid;
-  else if(force) throw persistence_error("shared_ptr was not created by KV store");
-}
-
-/**
  * a storage key. This structure must not be changed (lest db files become unreadable)
  */
 struct StorageKey

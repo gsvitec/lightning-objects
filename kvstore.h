@@ -17,8 +17,8 @@
 
 #include "kvtraits.h"
 
-#define PROPERTY_ID(cls, name) flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name
-#define PROPERTY(cls, name) flexis::persistence::kv::ClassTraits<cls>::decl_props[flexis::persistence::kv::ClassTraits<cls>::PropertyIds::name-1]
+#define PROPERTY_ID(__cls, __name) static_cast<unsigned>(flexis::persistence::kv::ClassTraits<__cls>::PropertyIds::__name)
+#define PROPERTY(__cls, __name) flexis::persistence::kv::ClassTraits<__cls>::decl_props[static_cast<unsigned>(flexis::persistence::kv::ClassTraits<__cls>::PropertyIds::__name)-1]
 
 #define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
   var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
@@ -268,18 +268,32 @@ template<typename T> void readObject(ReadTransaction *tr, ReadBuf &buf, T &obj,
   }
 }
 
-template <typename T> class IterPropertyBackend
+/**
+ * class that must be subclassed by CollectionIterProperty replacements
+ */
+class IterPropertyBackend
 {
 protected:
   ObjectId m_collectionId = 0;
-  KeyValueStore *m_store;
+  KeyValueStore *m_store = nullptr;
 
 public:
+  template <typename O>
+  static void assign(KeyValueStore &store, O &o, PropertyAccessBase *pa, ObjectId collectionId)
+  {
+    void * ib = ClassTraits<O>::initMember(&o, pa);
+    if(!ib) throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
+
+    //bad luck if pa->storage was not an CollectionIterPropertyStorage
+    ((IterPropertyBackend *)ib)->setCollectionId(collectionId);
+    ((IterPropertyBackend *)ib)->setKVStore(&store);
+  }
+
   ObjectId getCollectionId() {return m_collectionId;}
   void setCollectionId(ObjectId collectionId) {m_collectionId = collectionId;}
   void setKVStore(KeyValueStore *store) {m_store = store;}
 };
-template <typename T> using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend<T>>;
+using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend>;
 
 /**
  * Helper interface used by cursor, to be extended by implementors
@@ -634,12 +648,14 @@ class FlexisPersistence_EXPORT ReadTransaction
   template<typename T, typename V> friend class ValueVectorPropertyStorage;
   template<typename T, typename V> friend class ValueSetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
+  template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
+  template<typename T, typename V> friend class ObjectPtrPropertyStorage;
+  template<typename T, typename V> friend class ObjectPtrPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
-  template<typename T, typename V> friend class ObjectPtrVectorPropertyStorageEmbedded;
-  template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
-  template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
+  template<typename T, typename V> friend class ObjectPtrVectorPropertyStorageEmbedded;
+  template<typename T, typename V, typename KVIter, typename Iter> friend struct CollectionIterPropertyStorage;
   friend class CollectionCursorBase;
   template <typename T> friend class ClassCursor;
   friend class CollectionAppenderBase;
@@ -930,7 +946,7 @@ public:
   template <typename O, typename T, template <typename> class Iter>
   std::vector<std::shared_ptr<T>> getCollection(O &o, std::shared_ptr<Iter<T>> O::*p)
   {
-    IterPropertyBackend<T> &ib = dynamic_cast<IterPropertyBackend<T> &>(*(o.*p));
+    IterPropertyBackend &ib = dynamic_cast<IterPropertyBackend &>(*(o.*p));
 
     CollectionInfo *ci = getCollectionInfo(ib.getCollectionId());
     return loadChunkedCollection<T, std::shared_ptr>(ci);
@@ -1104,12 +1120,14 @@ class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
   template<typename T, typename V> friend class ValueVectorPropertyStorage;
   template<typename T, typename V> friend class ValueSetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
+  template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
+  template<typename T, typename V> friend class ObjectPtrPropertyStorage;
+  template<typename T, typename V> friend class ObjectPtrPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
-  template<typename T, typename V> friend class ObjectPtrVectorPropertyStorageEmbedded;
-  template<typename T, typename V, template<typename> class Ptr> friend class ObjectPtrPropertyStorage;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
-  template<typename T, typename V, typename KVIter, typename Iter> friend struct ObjectIterPropertyStorage;
+  template<typename T, typename V> friend class ObjectPtrVectorPropertyStorageEmbedded;
+  template<typename T, typename V, typename KVIter, typename Iter> friend struct CollectionIterPropertyStorage;
   friend class CollectionAppenderBase;
 
   WriteBuf writeBufStart;
@@ -1428,7 +1446,7 @@ public:
   void putObject(std::shared_ptr<T> obj)
   {
     ObjectId oid = saveObject<T>(0, *obj, true);
-    set_objectid(obj, oid);
+    ClassTraits<T>::setObjectId(obj, oid);
   }
 
   /**
@@ -1460,7 +1478,7 @@ public:
     }
     else {
       oid = saveObject<T>(0, *obj, true);
-      set_objectid(obj, oid);
+      ClassTraits<T>::setObjectId(obj, oid);
     }
     return oid;
   }
@@ -1621,9 +1639,10 @@ public:
   }
 
   /**
-   * save a top-level (chunked) object collection.
+   * create a top-level (chunked) object collection.
    *
-   * @param vect the collection contents
+   * @param vect the initial collection contents
+   * @return the collection ID
    */
   template <typename T, template <typename> class Ptr> ObjectId putCollection(const std::vector<Ptr<T>> &vect)
   {
@@ -1636,36 +1655,23 @@ public:
   }
 
   /**
-   * save a top-level (chunked) member object collection. After saving the collection, the member object
-   * will be initialized with the collectionId and a pointer to the KV store
+   * create a top-level (chunked) member object collection and assign it to the given property, which is expected to be
+   * mapped as CollectionIterPropertyAssign
    *
    * @param o the object that holds the member
    * @param pa the property accessor, usually obtained via PROPERTY macro
-   * @param vect the collection contents
+   * @param vect the initial collection contents
    */
-  template <typename O, typename T>
-  ObjectId putCollection(O &o, PropertyAccessBase *pa, const std::vector<std::shared_ptr<T>> &vect)
+  template <typename O, typename T> void putCollection(O &o, PropertyAccessBase *pa, const std::vector<std::shared_ptr<T>> &vect)
   {
-    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
-    m_collectionInfos[ci->collectionId] = ci;
-
-    saveChunk(vect, ci, ClassTraits<T>::info->isPoly());
-
-    void * ib = ClassTraits<O>::initMember(&o, pa);
-    if(!ib)
-      throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
-
-    //bad luck if pa->storage was not an ObjectIterPropertyStorage
-    ((IterPropertyBackend<T> *)ib)->setCollectionId(ci->collectionId);
-    ((IterPropertyBackend<T> *)ib)->setKVStore(&store);
-
-    return ci->collectionId;
+    ObjectId collectionId = putCollection<T, std::shared_ptr>(vect);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
    * save a top-level (chunked) value collection.
    *
-   * @param vect the collection contents
+   * @param vect the initial collection contents
    */
   template <typename T>
   ObjectId putValueCollection(const std::vector<T> &vect)
@@ -1679,11 +1685,25 @@ public:
   }
 
   /**
+   * create a top-level (chunked) member value collection and assign it to the given property, which is expected to be
+   * mapped as CollectionIterPropertyAssign
+   *
+   * @param o the object that holds the member
+   * @param pa the property accessor, usually obtained via PROPERTY macro
+   * @param vect the initial collection contents
+   */
+  template <typename O, typename T> void putValueCollection(O &o, PropertyAccessBase *pa, const std::vector<T> &vect)
+  {
+    ObjectId collectionId = putValueCollection(vect);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
+  }
+
+  /**
    * save a top-level (chunked) raw data collection. Note that the rwaw data API is only usable for
    * floating point (float, double) and for integral data types that conform to the LP64 data model.
    * This precludes the long data type on Windows platforms
    *
-   * @param array the collection contents
+   * @param array the initial collection contents
    * @param arraySize length of the contents
    */
   template <typename T>
@@ -1696,6 +1716,21 @@ public:
     saveChunk(array, arraySize, ci);
 
     return ci->collectionId;
+  }
+
+  /**
+   * create a top-level (chunked) member data collection and assign it to the given property, which is expected to be
+   * mapped as CollectionIterPropertyAssign
+   *
+   * @param o the object that holds the member
+   * @param pa the property accessor, usually obtained via PROPERTY macro
+   * @param array the initial collection contents
+   * @param arraySize length of the contents
+   */
+  template <typename O, typename T> void putDataCollection(O &o, PropertyAccessBase *pa, const T* array, size_t arraySize)
+  {
+    ObjectId collectionId = putDataCollection(array, arraySize);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2174,48 +2209,56 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
 };
 
 /**
- * base template for access to ObjectId from arbitrary pointer types
+ * storage template for mapped non-pointer object references which are directly serialized into the enclosing object's
+ * buffer. Storage is shallow-only, i.e. properties of the referred-to object which are not themselves shallow-serializable
+ * are ignored. Since reference is by value, there is no polymorphism
  */
-template <typename V, template <typename> class Ptr> struct OidAccess
+template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public StoreAccessBase
 {
-  static Ptr<V> make(V *v, ObjectId oid) {
-    Ptr<V> ptr(v, oid);
-    return ptr;
+  size_t size(const byte_t *buf) const override {
+    return read_integer<unsigned>(buf, 4);
   }
+  size_t size(void *obj, const PropertyAccessBase *pa) override {
+    size_t sz = ClassTraits<V>::properties->fixedSize;
+    if(sz)  return sz + 4;
 
-  static ObjectId getObjectId(Ptr<V> ptr) {
-    return ptr.objectid;
+    V v;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, v);
+    return calculateBuffer(&v, ClassTraits<V>::properties) + 4;
   }
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    V val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
 
-  static void setObjectId(ObjectId oid, Ptr<V> &ptr) {
-    ptr.objectid = oid;
+    ClassId childClassId = ClassTraits<V>::info->classId;
+    size_t sz = ClassTraits<V>::properties->fixedSize;
+    if(!sz) sz = calculateBuffer(&val, ClassTraits<V>::properties);
+
+    tr->writeBuf().appendInteger(sz, 4);
+    tr->writeObject(childClassId, 1, val, ClassTraits<V>::properties, true);
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    ClassId childClassId = ClassTraits<V>::info->classId;
+
+    V v;
+    buf.readInteger<unsigned>(4);
+    readObject(tr, buf, v, childClassId, 1);
+
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, v);
   }
 };
 
 /**
- * template specialization for access to ObjectId from std::shared_ptr
+ * storage template for shared_ptr-based mapped object references. Fully polymorphic
  */
-template <typename V> struct OidAccess<V, std::shared_ptr>
-{
-  static std::shared_ptr<V> make(V *v, ObjectId oid) {
-    std::shared_ptr<V> ptr = make_ptr(v, oid);
-    return ptr;
-  }
-
-  static ObjectId getObjectId(ClassId cid, std::shared_ptr<V> ptr) {
-    ObjectId oid = ClassTraits<V>::getObjectId(ptr);
-    return oid;
-  }
-
-  static void setObjectId(ObjectId oid, std::shared_ptr<V> ptr) {
-    set_objectid(ptr, oid);
-  }
-};
-
-/**
- * storage template for mapped object references. Pointer-based, fully polymorphic
- */
-template<typename T, typename V, template<typename> class Ptr>
+template<typename T, typename V>
 class ObjectPtrPropertyStorage : public StoreAccessEmbeddedKey
 {
 protected:
@@ -2227,7 +2270,7 @@ public:
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    Ptr<V> val;
+    std::shared_ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
@@ -2236,7 +2279,7 @@ public:
     if(val) {
       //save the pointed-to object
       childClassId = tr->getClassId(typeid(*val));
-      childId = OidAccess<V, Ptr>::getObjectId(childClassId, val);
+      childId = ClassTraits<V>::getObjectId(val);
 
       if(mode != StoreMode::force_buffer) {
         tr->pushWriteBuf();
@@ -2249,7 +2292,7 @@ public:
         tr->popWriteBuf();
 
         //update the property so that it holds the object id
-        OidAccess<V, Ptr>::setObjectId(childId, val);
+        ClassTraits<V>::setObjectId(val, childId);
       }
     }
 
@@ -2269,42 +2312,79 @@ public:
     StorageKey sk;
     buf.read(sk);
 
-    if(sk.classId > 0) {
-      V *v = tr->loadObject<V>(sk.objectId);
-      Ptr<V> vp = OidAccess<V, Ptr>::make(v, sk.objectId);
-      T *tp = reinterpret_cast<T *>(obj);
-      ClassTraits<T>::get(*tp, pa, vp);
+    std::shared_ptr<V> vp;
+    ClassInfo<V> *vi = FIND_CLS(V, sk.classId);
+    if(!vi) {
+      V *v = ClassTraits<V>::getSubstitute();
+      if(v) {
+        tr->loadSubstitute<V>(*v, sk.classId, sk.objectId);
+        vp = make_ptr(v, sk.objectId);
+      }
     }
+    else {
+      V *v = tr->loadObject<V>(sk.classId, sk.objectId);
+      vp = make_ptr(v, sk.objectId);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, vp);
   }
 };
 
-template<typename T, typename V, template<typename> class Ptr>
-class ObjectPtrPropertyDeferredStorage : public ObjectPtrPropertyStorage<T, V, Ptr>
+/**
+ * storage template for shared_ptr-based object references which are directly serialized into the enclosing object's
+ * buffer. Storage is shallow-only, i.e. properties of the referred-to object which are not themselves shallow-serializable
+ * are ignored. Fully polymorphic
+ */
+template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : public StoreAccessBase
 {
-public:
-  ObjectPtrPropertyDeferredStorage() : ObjectPtrPropertyStorage<T, V, Ptr>(true) {}
+  size_t size(const byte_t *buf) const override {
+    unsigned objSize = read_integer<unsigned>(buf+ClassId_sz, 4);
+    return ClassId_sz + 4 + objSize;
+  }
+  size_t size(void *obj, const PropertyAccessBase *pa) override {
+    std::shared_ptr<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
 
+    return ClassTraits<V>::bufferSize(&(*val)) + ClassId_sz + 4;
+  }
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::shared_ptr<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    ClassId childClassId;
+    size_t sz = ClassTraits<V>::bufferSize(&(*val), &childClassId);
+
+    tr->writeBuf().appendInteger(childClassId, ClassId_sz);
+    tr->writeBuf().appendInteger(sz, 4);
+    tr->writeObject(childClassId, 1, *val, ClassTraits<V>::getProperties(childClassId), true);
+  }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    if(mode == StoreMode::force_none) {
-      const byte_t *data = buf.read(StorageKey::byteSize);
-      ObjectId oid = *(ObjectId *)(data+ClassId_sz);
+    std::shared_ptr<V> val;
+    ClassId childClassId = buf.readInteger<ClassId>(ClassId_sz);
+    unsigned sz = buf.readInteger<unsigned>(4);
 
-      T *tp = reinterpret_cast<T *>(obj);
-      Ptr<V> val = OidAccess<V, Ptr>::make(nullptr, oid);
-      ClassTraits<T>::put(*tp, pa, val);
-      return;
+    ClassInfo<V> *vi = FIND_CLS(V, childClassId);
+    if(!vi) {
+      buf.mark();
+      V *vp = ClassTraits<V>::getSubstitute();
+      if(vp) {
+        readObject<V>(tr, buf, *vp, childClassId, 1, StoreMode::force_buffer);
+        val.reset(vp);
+      }
+      buf.unmark(sz);
     }
-    else
-      ObjectPtrPropertyStorage<T, V, Ptr>::load(tr, buf, classId, objectId, obj, pa, mode);
-  }
-
-  ObjectId oid(void *obj, const PropertyAccessBase *pa) {
-    Ptr<V> val;
+    else {
+      V *vp = readObject<V>(tr, buf, childClassId, 1, vi);
+      val.reset(vp);
+    }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
-    return OidAccess<V, Ptr>::getObjectId(val);
+    ClassTraits<T>::get(*tp, pa, val);
   }
 };
 
@@ -2391,7 +2471,7 @@ public:
     size_t sz = ClassTraits<V>::properties->fixedSize;
     if(sz) {
       unsigned objSize = read_integer<unsigned>(buf, 4);
-      if(objSize != sz) throw persistence_error("invalid object buffer");
+      if(objSize != sz) throw persistence_error("corrupted object buffer");
       return vectSize * (objSize + 4) + 4;
     }
     else {
@@ -2449,6 +2529,89 @@ public:
       buf.readInteger<unsigned>(4);
       readObject(tr, buf, v, childClassId, ++childObjectId);
       val.push_back(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(*tp, pa, val);
+  }
+};
+
+/**
+ * storage template for vectors of pointers to mapped objects. Collection objects are saved under individual top-level keys.
+ * The collection itself holds copies of all member keys in a shallow buffer and is stored under a property key for the enclosing
+ * object.
+ *
+ * Fully polymorphic
+ */
+template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
+{
+  bool m_lazy;
+
+public:
+  ObjectPtrVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
+
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    if(m_lazy && mode == StoreMode::force_none) return;
+
+    std::vector<std::shared_ptr<V>> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+
+    size_t psz = StorageKey::byteSize * val.size();
+    WriteBuf propBuf(psz);
+
+    tr->pushWriteBuf();
+    for(std::shared_ptr<V> &v : val) {
+      ClassId childClassId = tr->getClassId(typeid(*v));
+      ObjectId childId = ClassTraits<V>::getObjectId(v, false);
+
+      if(mode != StoreMode::force_buffer) {
+        if(childId) {
+          tr->saveObject<V>(childClassId, childId, *v, false);
+        }
+        else {
+          childId = tr->saveObject<V>(childClassId, 0, *v, true);
+          ClassTraits<V>::setObjectId(v, childId, false);
+        }
+      }
+
+      propBuf.append(childClassId, childId, 0);
+    }
+    tr->popWriteBuf();
+
+    //vector goes into a separate property key
+    if(!tr->putData(classId, objectId, pa->id, propBuf))
+      throw persistence_error("data was not saved");
+  }
+
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    if(m_lazy && mode == StoreMode::force_none) return;
+
+    std::vector<std::shared_ptr<V>> val;
+
+    //load vector base (array of object keys) data from property key
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    if(!readBuf.null()) {
+      StorageKey sk;
+      while(readBuf.read(sk)) {
+        ClassInfo<V> *vi = FIND_CLS(V, sk.classId);
+        if(!vi) {
+          V *vp = ClassTraits<V>::getSubstitute();
+          if(vp) {
+            tr->loadSubstitute<V>(*vp, sk.classId, sk.objectId);
+            val.push_back(make_ptr(vp, sk.objectId));
+          }
+        }
+        else {
+          V *obj = tr->loadObject<V>(sk.classId, sk.objectId);
+          val.push_back(make_ptr(obj, sk.objectId));
+        }
+      }
     }
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::get(*tp, pa, val);
@@ -2539,96 +2702,13 @@ public:
 };
 
 /**
- * storage template for vectors of pointers to mapped objects. Collection objects are saved under individual top-level keys.
- * The collection itself holds copies of all member keys in a shallow buffer and is stored under a property key for the enclosing
- * object.
- *
- * Fully polymorphic
- */
-template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
-{
-  bool m_lazy;
-
-public:
-  ObjectPtrVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
-
-  void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    if(m_lazy && mode == StoreMode::force_none) return;
-
-    std::vector<std::shared_ptr<V>> val;
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
-
-    size_t psz = StorageKey::byteSize * val.size();
-    WriteBuf propBuf(psz);
-
-    tr->pushWriteBuf();
-    for(std::shared_ptr<V> &v : val) {
-      ClassId childClassId = tr->getClassId(typeid(*v));
-      ObjectId childId = ClassTraits<V>::getObjectId(v, false);
-
-      if(mode != StoreMode::force_buffer) {
-        if(childId) {
-          tr->saveObject<V>(childClassId, childId, *v, false);
-        }
-        else {
-          childId = tr->saveObject<V>(childClassId, 0, *v, true);
-          set_objectid(v, childId, false);
-        }
-      }
-
-      propBuf.append(childClassId, childId, 0);
-    }
-    tr->popWriteBuf();
-
-    //vector goes into a separate property key
-    if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
-  }
-
-  void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    if(m_lazy && mode == StoreMode::force_none) return;
-
-    std::vector<std::shared_ptr<V>> val;
-
-    //load vector base (array of object keys) data from property key
-    ReadBuf readBuf;
-    tr->getData(readBuf, classId, objectId, pa->id);
-
-    if(!readBuf.null()) {
-      StorageKey sk;
-      while(readBuf.read(sk)) {
-        ClassInfo<V> *vi = FIND_CLS(V, sk.classId);
-        if(!vi) {
-          V *vp = ClassTraits<V>::getSubstitute();
-          if(vp) {
-            tr->loadSubstitute<V>(*vp, sk.classId, sk.objectId);
-            val.push_back(make_ptr(vp, sk.objectId));
-          }
-        }
-        else {
-          V *obj = tr->loadObject<V>(sk.classId, sk.objectId);
-          val.push_back(make_ptr(obj, sk.objectId));
-        }
-      }
-    }
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
-  }
-};
-
-/**
  * storage template for collection iterator members. The collection id is saved within the enclosing object's buffer.
  * Storing the collection proper is done externally, or through the iterator object
  */
 template<typename T, typename V, typename KVIter, typename Iter>
-struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
+struct CollectionIterPropertyStorage : public StoreAccessPropertyKey
 {
-  static_assert(std::is_base_of<IterPropertyBackend<V>, KVIter>::value, "KVIter must subclass IterPropertyBackend<V>");
+  static_assert(std::is_base_of<IterPropertyBackend, KVIter>::value, "KVIter must subclass IterPropertyBackend");
   static_assert(std::is_base_of<Iter, KVIter>::value, "KVIter must subclass Iter");
 
   void *initMember(void *obj, const PropertyAccessBase *pa) override
@@ -2638,7 +2718,7 @@ struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
     auto ib = std::shared_ptr<KVIter>(it);
     ClassTraits<T>::get(*tp, pa, ib);
 
-    return static_cast<IterPropertyBackend<V> *>(it);
+    return static_cast<IterPropertyBackend *>(it);
   }
 
   void save(WriteTransaction *tr,
@@ -2648,7 +2728,7 @@ struct ObjectIterPropertyStorage : public StoreAccessPropertyKey
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
-    IterPropertyBackendPtr<V> ib = std::dynamic_pointer_cast<IterPropertyBackend<V>>(val);
+    IterPropertyBackendPtr ib = std::dynamic_pointer_cast<IterPropertyBackend>(val);
     tr->writeBuf().appendRaw(ib ? ib->getCollectionId() : 0);
   }
 
@@ -2707,12 +2787,18 @@ template<typename T> struct PropertyStorage<T, std::set<bool>> : public ValueSet
 template<typename T> struct PropertyStorage<T, std::set<const char *>> : public ValueSetPropertyStorage<T, const char *>{};
 template<typename T> struct PropertyStorage<T, std::set<std::string>> : public ValueSetPropertyStorage<T, std::string>{};
 
+/**
+ * mapping configuration for an ObjectId property
+ */
 template <typename O, ObjectId O::*p>
 struct ObjectIdAssign : public PropertyAssign<O, ObjectId, p> {
   ObjectIdAssign()
       : PropertyAssign<O, ObjectId, p>("objectId", new ObjectIdStorage<O>(), PropertyType(0, 0, false)) {}
 };
-
+/**
+ * mapping configuration for a property which holds another mapped Object by value. The referred-to object is
+ * saved under a top-level key
+ */
 template <typename O, typename P, std::shared_ptr<P> O::*p>
 struct ObjectPropertyAssign : public PropertyAccess<O, P> {
   ObjectPropertyAssign(const char * name)
@@ -2720,38 +2806,83 @@ struct ObjectPropertyAssign : public PropertyAccess<O, P> {
   void set(O &o, P val) const override { o.*p = val;}
   P get(O &o) const override { return o.*p;}
 };
+/**
+ * mapping configuration for a property which holds another mapped Object by value. The referred-to object is
+ * serialized into the enclsing object's buffer
+ */
+template <typename O, typename P, std::shared_ptr<P> O::*p>
+struct ObjectPropertyEmbeddedAssign : public PropertyAccess<O, P> {
+  ObjectPropertyEmbeddedAssign(const char * name)
+      : PropertyAccess<O, P>(name, new ObjectPropertyStorageEmbedded<O, P>(), object_t<P>()) {}
+  void set(O &o, P val) const override { o.*p = val;}
+  P get(O &o) const override { return o.*p;}
+};
+/**
+ * mapping configuration for a property which holds another mapped Object by shared_ptr. The referred-to object is
+ * saved under a top-level key
+ */
 template <typename O, typename P, std::shared_ptr<P> O::*p>
 struct ObjectPtrPropertyAssign : public PropertyAccess<O, std::shared_ptr<P>> {
   ObjectPtrPropertyAssign(const char * name)
-      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorage<O, P, std::shared_ptr>(), object_t<P>()) {}
+      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorage<O, P>(), object_t<P>()) {}
   void set(O &o, std::shared_ptr<P> val) const override { o.*p = val;}
   std::shared_ptr<P> get(O &o) const override { return o.*p;}
 };
-
+/**
+ * mapping configuration for a property which holds another mapped Object by shared_ptr. The referred-to object is
+ * serialized into the enclosing object's buffer
+ */
+template <typename O, typename P, std::shared_ptr<P> O::*p>
+struct ObjectPtrPropertyEmbeddedAssign : public PropertyAccess<O, std::shared_ptr<P>> {
+  ObjectPtrPropertyEmbeddedAssign(const char * name)
+      : PropertyAccess<O, std::shared_ptr<P>>(name, new ObjectPtrPropertyStorageEmbedded<O, P>(), object_t<P>()) {}
+  void set(O &o, std::shared_ptr<P> val) const override { o.*p = val;}
+  std::shared_ptr<P> get(O &o) const override { return o.*p;}
+};
+/**
+ * mapping configuration for a property which holds a vector of mapped Objects by value. Referred-to objects are
+ * saved under top-level keys
+ */
 template <typename O, typename P, std::vector<P> O::*p>
 struct ObjectVectorPropertyAssign : public PropertyAssign<O, std::vector<P>, p> {
   ObjectVectorPropertyAssign(const char * name, bool lazy=false)
       : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
 };
+/**
+ * mapping configuration for a property which holds a vector of mapped Objects by value. Referred-to objects are
+ * serialized into the buffer of the enclosing object. They don't carry ObjectIds
+ */
 template <typename O, typename P, std::vector<P> O::*p>
 struct ObjectVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<P>, p> {
   ObjectVectorPropertyEmbeddedAssign(const char * name)
       : PropertyAssign<O, std::vector<P>, p>(name, new ObjectVectorPropertyStorageEmbedded<O, P>(), object_vector_t<P>()) {}
 };
-template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
-struct ObjectPtrVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
-  ObjectPtrVectorPropertyEmbeddedAssign(const char * name)
-      : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorageEmbedded<O, P>(), object_vector_t<P>()) {}
-};
+/**
+ * mapping configuration for a property which holds a vector of mapped Objects by shared_ptr. Referred-to objects are
+ * saved under top-level keys
+ */
 template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
 struct ObjectPtrVectorPropertyAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
   ObjectPtrVectorPropertyAssign(const char * name, bool lazy=false)
       : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorage<O, P>(lazy), object_vector_t<P>()) {}
 };
+/**
+ * mapping configuration for a property which holds a vector of mapped Objects by shared_ptr. Referred-to objects are
+ * serialized into the buffer of the enclosing object. They don't carry ObjectIds
+ */
+template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
+struct ObjectPtrVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
+  ObjectPtrVectorPropertyEmbeddedAssign(const char * name)
+      : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorageEmbedded<O, P>(), object_vector_t<P>()) {}
+};
+/**
+ * mapping configuration for a property which holds an object iterator. An object iterator has access to a collectionId which refers to
+ * a top-level object collection.
+ */
 template <typename O, typename P, typename KVIter, typename Iter, std::shared_ptr<Iter> O::*p>
-struct ObjectIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter>, p> {
-  ObjectIterPropertyAssign(const char * name)
-      : PropertyAssign<O, std::shared_ptr<Iter>, p>(name, new ObjectIterPropertyStorage<O, P, KVIter, Iter>(), object_vector_t<P>()) {}
+struct CollectionIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter>, p> {
+  CollectionIterPropertyAssign(const char * name)
+      : PropertyAssign<O, std::shared_ptr<Iter>, p>(name, new CollectionIterPropertyStorage<O, P, KVIter, Iter>(), object_vector_t<P>()) {}
 };
 
 } //kv

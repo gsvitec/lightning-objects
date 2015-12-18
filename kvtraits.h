@@ -435,7 +435,7 @@ public:
         ClassTraits<T>::decl_props,
         ARRAY_SZ(ClassTraits<T>::decl_props),
         ClassTraits<S>::properties,
-        ClassTraits<T>::keyPropertyId);
+        static_cast<unsigned>(ClassTraits<T>::keyPropertyId));
 
     for(unsigned i=0; i<p->full_size(); i++)
       p->get(i)->id = i+1;
@@ -632,6 +632,7 @@ struct ClassInfo : public AbstractClassInfo
   Properties * (* const getProperties)(ClassId classId);
   bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectid)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
+  bool (* const set_objectid)(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
   bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
@@ -648,6 +649,7 @@ struct ClassInfo : public AbstractClassInfo
         getProperties(&ClassTraits<T>::getProperties),
         add(&ClassTraits<T>::add),
         get_objectid(&ClassTraits<T>::get_objectid),
+        set_objectid(&ClassTraits<T>::set_objectid),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
 
@@ -792,6 +794,11 @@ public:
     return oid;
   }
 
+  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true)
+  {
+    if(!set_objectid(obj, oid) && force) throw invalid_pointer_error();
+  }
+
   static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
   {
     object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
@@ -805,6 +812,25 @@ public:
         for(auto &sub : info->subs) {
           ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
           if(si->get_objectid(obj, oid, FLAG_DN)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool set_objectid(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags=FLAGS_ALL)
+  {
+    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
+    if(ohm) {
+      ohm->objectId = oid;
+      return true;
+    }
+    else {
+      if(UP && ClassTraits<SUP>::set_objectid(obj, oid, FLAG_UP)) return true;
+      if(DN) {
+        for(auto &sub : info->subs) {
+          ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
+          if(si->set_objectid(obj, oid, FLAG_DN)) return true;
         }
       }
     }
@@ -941,7 +967,15 @@ struct ClassTraits<EmptyClass>
     return 0;
   }
   template <typename T>
+  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true) {
+    return 0;
+  }
+  template <typename T>
   static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags) {
+    return false;
+  }
+  template <typename T>
+  static bool set_objectid(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags) {
     return false;
   }
   template <typename T>
