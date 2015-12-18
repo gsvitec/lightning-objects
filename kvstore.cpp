@@ -19,36 +19,48 @@ inline bool streq(string s1, const char *s2) {
   return s1 == s2;
 }
 
-void KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties)
+bool KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
   loadSaveClassMeta(classInfo, properties, numProperties, propertyInfos);
 
+  //if previous class schema found in db, check compatibility
   if(!propertyInfos.empty()) {
-    //previous class schema found in db. check compatibility
-    set<string> piNames;
-    for(auto pi : propertyInfos) {
-      piNames.insert(pi->name);
-      for(auto i=0; i<numProperties; i++) {
-        if(pi->name == properties[i]->name) {
-          const PropertyAccessBase * pa = properties[i];
-          if(pa->type.id != pi->typeId
-             || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
-             || pi->isVector != pa->type.isVector) {
-            stringstream ss;
-            ss << "class " << classInfo->name << ": data type for property '" << pi->name << "' has changed";
-            throw incompatible_schema_error(ss.str());
-          }
-        }
+    //1. all available properties must still be in the same sequence and of the same type
+    size_t index=0;
+    unsigned dbShallowCount=0;
+    for(size_t sz=propertyInfos.size(); index < sz && index < numProperties; index++) {
+      PropertyMetaInfoPtr &pi = propertyInfos[index];
+      if(pi->storeLayout != StoreLayout::property) dbShallowCount++;
+
+      const PropertyAccessBase * pa = properties[index];
+      if(pa->type.id != pi->typeId
+         || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
+         || pi->isVector != pa->type.isVector) {
+        stringstream ss;
+        ss << "class " << classInfo->name << ": property at position '" << index << "' has changed";
+        throw incompatible_schema_error(ss.str());
       }
     }
-    for(auto i=0; i<numProperties; i++) {
-      if(!piNames.count(properties[i]->name)) {
-        //property doesn't exist in db. Either migrate db (currently unsupported) or disable locally (questionable)
-        properties[i]->enabled = false;
+
+    //2. we cannot cope with deleted shallow properties in non-leaf classes
+    if(!classInfo->subs.empty()) {
+      unsigned shallowCount = 0;
+      for(unsigned i=0; i<numProperties; i++) if(properties[i]->storage->layout != StoreLayout::property)
+          shallowCount++;
+      if(dbShallowCount > shallowCount) {
+        stringstream ss;
+        ss << "class " << classInfo->name << ": shallow properties in non-leaf class were deleted";
+        throw incompatible_schema_error(ss.str());
       }
     }
+    //3. properties that were added can safely be disabled (during read)
+    for(; index < numProperties; index++) {
+      properties[index]->enabled = false;
+    }
+    return true;
   }
+  return false;
 }
 
 namespace kv {

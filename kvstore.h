@@ -68,14 +68,16 @@ protected:
     bool isVector;
     unsigned byteSize;
     std::string className;
+    StoreLayout storeLayout;
   };
   using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
 
   /**
    * check if class schema already exists. If so, check compatibility. If not, create
+   * @return true if the class already existed
    * @throws incompatible_schema_error
    */
-  void updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties);
+  bool updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties);
 
   /**
    * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
@@ -116,6 +118,59 @@ struct TypeinfoEqualTo {
   }
 };
 
+namespace put_schema {
+/*
+ * helper structs for processing the variadic template list which is passed to KeyValueStore#putSchema
+ */
+
+struct validate_info {
+  AbstractClassInfo * const classInfo;
+  PropertyAccessBase ** const decl_props;
+  Properties * const properties;
+  const unsigned num_decl_props;
+
+  validate_info(AbstractClassInfo *classInfo, Properties *properties, PropertyAccessBase * decl_props[], unsigned num_decl_props)
+      : classInfo(classInfo), properties(properties), decl_props(decl_props), num_decl_props(num_decl_props) {}
+};
+
+//primary template
+template<typename... Sargs>
+struct register_type;
+
+template<typename S>
+struct register_type<S>
+{
+  using Traits = ClassTraits<S>;
+
+  static void addTypes(std::vector<validate_info> &vinfos)
+  {
+    //collect infos
+    vinfos.push_back(
+        validate_info(Traits::info, Traits::properties, Traits::decl_props, Traits::num_decl_props));
+
+    //establish inheritance chain
+    Traits::info->publish();
+  }
+};
+
+template<typename S, typename... Sargs>
+struct register_helper
+{
+  static void addTypes(std::vector<validate_info> &vinfos) {
+    register_type<S>().addTypes(vinfos);
+    register_type<Sargs...>().addTypes(vinfos);
+  }
+};
+
+template<typename... Sargs>
+struct register_type {
+  static void addTypes(std::vector<validate_info> &vinfos) {
+    register_helper<Sargs...>().addTypes(vinfos);
+  }
+};
+
+} //put_schema
+
 /**
  * high-performance key/value store interface. Most application-relevant functions are provided by ReadTransaction
  * and WriteTransaction, which can be obtined from this class
@@ -132,39 +187,36 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   ObjectProperties objectProperties;
   ObjectClassInfos objectClassInfos;
 
-  std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> typeInfos;
+  std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> objectTypeInfos;
 
 protected:
   ClassId m_maxClassId = 0;
   ObjectId m_maxCollectionId = 0;
 
 public:
+
   /**
-   * register a type for key/value persistence. It is assumed that a ClassTraits<type> implementation is visibly defined in the
-   * current namespace. If this is the first call for this type, a ClassId and a ObjectId generator will be persistently
-   * allocated.
-   * Since this call determines the persistence mapping, care must be taken in case of class changes to ensure downward
-   * compatibility for already stored class instance data
+   * register and validate the class schema for this store
    */
-  template <typename T>
-  void registerType()
+  template <typename... Cls>
+  void putSchema()
   {
-    using Traits = ClassTraits<T>;
+    std::vector<put_schema::validate_info> vinfos;
+    put_schema::register_type<Cls...>::addTypes(vinfos);
 
-    updateClassSchema(Traits::info, Traits::decl_props, Traits::num_decl_props);
+    //first process individual classes
+    for(auto &info : vinfos) {
+      updateClassSchema(info.classInfo, info.decl_props, info.num_decl_props);
 
-    //establish inheritance chain
-    Traits::info->publish();
+      //make sure all propertyaccessors have correct classId
+      for(int i=0; i<info.num_decl_props; i++)
+        info.decl_props[i]->classId = info.classInfo->classId;
 
-    //make sure all propertyaccessors have correct classId
-    for(int i=0; i<Traits::num_decl_props; i++)
-      Traits::decl_props[i]->classId = Traits::info->classId;
-
-    objectProperties[Traits::info->classId] = Traits::properties;
-    objectClassInfos[Traits::info->classId] = Traits::info;
-
-    const std::type_info &ti = typeid(T);
-    typeInfos[ti] = Traits::info->classId;
+      //initialize lookup maps
+      objectProperties[info.classInfo->classId] = info.properties;
+      objectClassInfos[info.classInfo->classId] = info.classInfo;
+      objectTypeInfos[info.classInfo->typeinfo] = info.classInfo->classId;
+    }
   }
 
   /**
@@ -1008,7 +1060,7 @@ public:
   }
 
   ClassId getClassId(const std::type_info &ti) {
-    return store.typeInfos[ti];
+    return store.objectTypeInfos[ti];
   }
 
   /**

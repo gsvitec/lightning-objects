@@ -471,8 +471,8 @@ class KeyValueStoreImpl : public KeyValueStore
 
   static int meta_dup_compare(const MDB_val *a, const MDB_val *b);
 
-  PropertyMetaInfoPtr make_metainfo(MDB_val *mdbVal);
-  MDB_val make_val(unsigned id, const PropertyAccessBase *prop);
+  PropertyMetaInfoPtr make_propertyinfo(MDB_val *mdbVal);
+  MDB_val make_propertyval(unsigned id, const PropertyAccessBase *prop);
   ObjectId findMaxObjectId(::lmdb::txn &txn, ClassId classId);
 
 protected:
@@ -838,7 +838,7 @@ ObjectId KeyValueStoreImpl::findMaxObjectId(::lmdb::txn &txn, ClassId classId)
   return maxId;
 }
 
-KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_metainfo(MDB_val *mdbVal)
+KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_propertyinfo(MDB_val *mdbVal)
 {
   byte_t *readPtr = (byte_t *)mdbVal->mv_data;
   PropertyMetaInfoPtr mi(new PropertyMetaInfo());
@@ -853,16 +853,18 @@ KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_metainfo(MDB_val 
   readPtr += 1;
   mi->byteSize = read_integer<unsigned>(readPtr, 2);
   readPtr += 2;
+  mi->storeLayout = static_cast<StoreLayout>(read_integer<unsigned>(readPtr, 2));
+  readPtr += 2;
   if(readPtr - (byte_t *)mdbVal->mv_data < mdbVal->mv_size)
     mi->className = (const char *)readPtr;
 
   return mi;
 }
 
-MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
+MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBase *prop)
 {
   size_t nameLen = strlen(prop->name) + 1;
-  size_t size = nameLen + 7;
+  size_t size = nameLen + 9;
   size_t classLen = 0;
   if(prop->type.className) {
     classLen = strlen(prop->type.className) + 1;
@@ -884,6 +886,8 @@ MDB_val KeyValueStoreImpl::make_val(unsigned id, const PropertyAccessBase *prop)
   write_integer<char>(writePtr, prop->type.isVector ? 1 : 0, 1);
   writePtr += 1;
   write_integer<unsigned>(writePtr, prop->type.byteSize, 2);
+  writePtr += 2;
+  write_integer<unsigned>(writePtr, static_cast<unsigned>(prop->storage->layout), 2);
   writePtr += 2;
   if(classLen > 0)
     memcpy(writePtr, prop->type.className, classLen);
@@ -914,7 +918,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
         first = false;
       }
       else //rest is properties
-        propertyInfos.push_back(make_metainfo((MDB_val *)val));
+        propertyInfos.push_back(make_propertyinfo((MDB_val *) val));
     }
     cursor.close();
 
@@ -939,7 +943,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     //Save properties
     for(unsigned i=0; i < numProps; i++) {
       const PropertyAccessBase *prop = currentProps[i];
-      MDB_val val = make_val(i+1, prop);
+      MDB_val val = make_propertyval(i+1, prop);
       ::lmdb::dbi_put(txn, m_dbi_meta.handle(), (MDB_val *)key, &val, 0);
       free(val.mv_data);
     }

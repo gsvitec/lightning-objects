@@ -771,10 +771,7 @@ void testCompatibleDatabase(ObjectId oid)
   ClassTraits<SomethingVirtual2>::info->subs.clear();
   ClassTraits<SomethingVirtual3>::info->classId = 0;
 
-  kv->registerType<SomethingAbstract>();
-  kv->registerType<SomethingVirtual>();
-  kv->registerType<SomethingVirtual2>();
-  kv->registerType<Wonderful>();
+  kv->putSchema<SomethingAbstract, SomethingVirtual, SomethingVirtual2, Wonderful>();
   kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
 
   {
@@ -840,36 +837,33 @@ void testCompatibleDatabase(ObjectId oid)
 int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
-  kv->registerType<FixedSizeObject>();
-  kv->registerType<VariableSizeObject>();
-  kv->registerType<SomethingWithAnEmbbededObjectVector>();
-  kv->registerType<SomethingWithAnObjectIter>();
 
-  kv->registerType<SomethingAbstract>();
-  kv->registerType<SomethingConcrete1>();
-  kv->registerType<SomethingConcrete2>();
-  kv->registerType<SomethingVirtual>();
-  kv->registerType<SomethingVirtual1>();
-  kv->registerType<SomethingVirtual2>();
-  kv->registerType<SomethingVirtual3>();
-  kv->registerType<Wonderful>();
+  kv->putSchema<FixedSizeObject,
+      VariableSizeObject,
+      SomethingWithAnEmbbededObjectVector,
+      SomethingWithAnObjectIter,
+      SomethingAbstract,
+      SomethingConcrete1,
+      SomethingConcrete2,
+      SomethingVirtual,
+      SomethingVirtual1,
+      SomethingVirtual2,
+      SomethingVirtual3,
+      Wonderful>();
 
 #if 1
-  kv->registerType<Colored2DPoint>();
-  kv->registerType<ColoredPolygon>();
-
-  kv->registerType<player::SourceDisplayConfig>();
-  kv->registerType<player::SourceInfo>();
-
-  kv->registerType<flexis::data::recording::StreamProcessor>();
-  kv->registerType<flexis::IFlexisOverlay>();
-  kv->registerType<flexis::RectangularOverlay>();
-  kv->registerType<flexis::TimeCodeOverlay>();
-
-  kv->registerType<OtherThing>();
-  kv->registerType<OtherThingA>();
-  kv->registerType<OtherThingB>();
-  kv->registerType<SomethingWithALazyVector>();
+  kv->putSchema<Colored2DPoint,
+      ColoredPolygon,
+      player::SourceDisplayConfig,
+      player::SourceInfo,
+      flexis::data::recording::StreamProcessor,
+      flexis::IFlexisOverlay,
+      flexis::RectangularOverlay,
+      flexis::TimeCodeOverlay,
+      OtherThing,
+      OtherThingA,
+      OtherThingB,
+      SomethingWithALazyVector>();
 
   testColored2DPoint(kv);
   testColoredPolygon(kv);
