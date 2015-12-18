@@ -771,8 +771,8 @@ void testCompatibleDatabase(ObjectId oid)
   ClassTraits<SomethingVirtual2>::info->subs.clear();
   ClassTraits<SomethingVirtual3>::info->classId = 0;
 
-  kv->registerType<SomethingAbstract>(); //abstract => ignore subtypes is implicit
-  kv->registerType<SomethingVirtual>();  //not abstract => ignore subtypes is false by default
+  kv->registerType<SomethingAbstract>();
+  kv->registerType<SomethingVirtual>();
   kv->registerType<SomethingVirtual2>();
   kv->registerType<Wonderful>();
   kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
@@ -809,7 +809,7 @@ void testCompatibleDatabase(ObjectId oid)
     }
 
     //substitutes don't work with class cursors, we get the classes that are available.
-    //that's 2 from w.virtualsPointers, 2 from w.virtualsLazy, and 3 top-level, created in
+    //that's 2 from w.virtualsPointers, 1 from w.toplevelVirtual2, 2 from w.virtualsLazy, and 3 top-level, created in
     //testClassCursor. Objects from embedded collections don't count because they don't have a top-level key
     assert(count == 8);
     rtxn->abort();

@@ -65,18 +65,6 @@ void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t
   if(deleted) *deleted = del;
 }
 
-void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount)
-{
-  size_t val = read_integer<size_t>(data, 4);
-  if(dataSize) *dataSize = val;
-  data += 4;
-  val = read_integer<size_t>(data, 4);
-  if(startIndex) *startIndex = val;
-  data += 4;
-  val = read_integer<size_t>(data, 4);
-  if(elementCount) *elementCount = val;
-}
-
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount)
 {
   size_t val = buf.readInteger<size_t>(4);

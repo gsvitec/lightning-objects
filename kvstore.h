@@ -145,16 +145,11 @@ public:
    * allocated.
    * Since this call determines the persistence mapping, care must be taken in case of class changes to ensure downward
    * compatibility for already stored class instance data
-   *
-   * @param ignoreIfUnknown if true, ignore unknown subtypes (i.e., don't subsitute by T). This flag will implicitly be
-   * true if T is abstract
    */
   template <typename T>
-  void registerType(bool ignoreIfUnknown=false)
+  void registerType()
   {
     using Traits = ClassTraits<T>;
-
-    if(Traits::isAbstract) ignoreIfUnknown = true;
 
     updateClassSchema(Traits::info, Traits::decl_props, Traits::num_decl_props);
 
@@ -173,8 +168,7 @@ public:
   }
 
   /**
-   * register a substitype type to be used in polymorphic operations where a subclass of T is unknown (accessing
-   * incompatible schema). Subst must me a non-KV mapped subclass of T
+   * register a substitute type to be used in polymorphic operations where a subclass of T is unknown.
    */
   template <typename T, typename Subst>
   void registerSubstitute()
@@ -221,7 +215,6 @@ public:
 
 namespace kv {
 
-void readChunkHeader(const byte_t *data, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size=nullptr, bool *deleted=nullptr);
 
