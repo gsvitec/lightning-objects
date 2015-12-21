@@ -116,7 +116,7 @@ void testColored2DPointRead(KeyValueStore *kv)
   BEG()
   auto rtxn = kv->beginRead();
   long count = 0;
-  for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); ++(*cursor)) {
+  for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); cursor->next()) {
     ObjectId id;
     Colored2DPoint *loaded = cursor->get(&id);
 
@@ -289,8 +289,7 @@ int main()
 #if 1
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
 
-  kv->registerType<Colored2DPoint>();
-  kv->registerType<ColoredPolygon>();
+  kv->putSchema<Colored2DPoint, ColoredPolygon>();
 
   testColored2DPointWrite(kv);
   testColored2DPointRead(kv);

@@ -461,6 +461,7 @@ public:
   }
 };
 
+enum class SchemaCompatibility {write, read, none};
 /**
  * non-templated superclass for ClassInfo
  */
@@ -468,6 +469,8 @@ struct AbstractClassInfo {
   static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
 
   AbstractClassInfo(const AbstractClassInfo &other) = delete;
+
+  SchemaCompatibility compatibility = SchemaCompatibility::write;
 
   const char *name;
   const std::type_info &typeinfo;
@@ -630,7 +633,7 @@ struct ClassInfo : public AbstractClassInfo
   void * (* const initMember)(T *obj, PropertyAccessBase *pa);
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
-  bool (* const add)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const addSize)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectid)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
   bool (* const set_objectid)(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
@@ -647,7 +650,7 @@ struct ClassInfo : public AbstractClassInfo
         initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
-        add(&ClassTraits<T>::add),
+        addSize(&ClassTraits<T>::addSize),
         get_objectid(&ClassTraits<T>::get_objectid),
         set_objectid(&ClassTraits<T>::set_objectid),
         save(&ClassTraits<T>::save),
@@ -708,7 +711,7 @@ class ClassTraitsBase
 
       if(!pa->enabled) continue;
 
-      add(obj, pa, size);
+      addSize(obj, pa, size);
     }
     return size;
   }
@@ -773,16 +776,16 @@ public:
     return nullptr;
   }
 
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool addSize(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == info->classId) {
       size += pa->storage->size(obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::add(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->add(obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->addSize(obj, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -959,7 +962,7 @@ struct ClassTraits<EmptyClass>
     return nullptr;
   }
   template <typename T>
-  static bool add(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static bool addSize(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>

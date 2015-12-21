@@ -30,13 +30,16 @@ using namespace kv;
 
 static const ClassId COLLECTION_CLSID = 1;
 static const ClassId COLLINFO_CLSID = 2;
-static const size_t CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
+static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
 class incompatible_schema_error : public persistence_error
 {
+  static std::string make_what(const char *cls);
+  static std::string make_detail(std::vector<std::string> &errs);
+
 public:
-  incompatible_schema_error(std::string detail)
-      : persistence_error("database is not compatible with current class schema", detail) {}
+  incompatible_schema_error(const char *className, std::vector<std::string> errs)
+      : persistence_error(make_what(className), make_detail(errs)) {}
 };
 
 class class_not_registered_error : public persistence_error
@@ -77,7 +80,8 @@ protected:
    * @return true if the class already existed
    * @throws incompatible_schema_error
    */
-  bool updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties);
+  bool updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties,
+                         std::vector<std::string> &errors);
 
   /**
    * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
@@ -197,16 +201,22 @@ public:
 
   /**
    * register and validate the class schema for this store
+   * @param throwIfIncompatible if true (default), throw an incompatible_schema_error if any schema incompatibility
+   * was detected
    */
   template <typename... Cls>
-  void putSchema()
+  void putSchema(bool throwIfIncompatible=true)
   {
     std::vector<put_schema::validate_info> vinfos;
     put_schema::register_type<Cls...>::addTypes(vinfos);
 
     //first process individual classes
     for(auto &info : vinfos) {
-      updateClassSchema(info.classInfo, info.decl_props, info.num_decl_props);
+      std::vector<std::string> errs;
+      updateClassSchema(info.classInfo, info.decl_props, info.num_decl_props, errs);
+      if(throwIfIncompatible && !errs.empty()) {
+        throw incompatible_schema_error(info.classInfo->name, errs);
+      }
 
       //make sure all propertyaccessors have correct classId
       for(int i=0; i<info.num_decl_props; i++)
@@ -1149,7 +1159,7 @@ static size_t calculateBuffer(T *obj, Properties *properties)
     if(!info->enabled) continue;
 
     //calculate variable size
-    ClassTraits<T>::add(obj, info, size);
+    ClassTraits<T>::addSize(obj, info, size);
   }
   return size;
 }
@@ -1256,8 +1266,8 @@ protected:
     //create the data buffer
     size_t size = calculateBuffer(&obj, Traits::properties);
     writeBuf().start(size);
-
     writeObject(classId, objectId, obj, Traits::properties, shallow);
+
     if(pa && shallow)
       Traits::save(this, classId, id, &obj, pa, StoreMode::force_property);
 
@@ -1290,13 +1300,13 @@ protected:
     Properties *properties = store.objectProperties[classId];
     ObjectId objectId = newObject ? ++classInfo->maxObjectId : id;
 
-    if(pa && shallow)
-      ClassTraits<T>::save(this, classId, id, &obj, pa, StoreMode::force_property);
-
     //create the data buffer
     size_t size = calculateBuffer(&obj, properties);
     writeBuf().start(size);
     writeObject(classId, objectId, obj, properties, shallow);
+
+    if(pa && shallow)
+      ClassTraits<T>::save(this, classId, id, &obj, pa, StoreMode::force_property);
 
     if(!putData(classId, objectId, 0, writeBuf()))
       throw persistence_error("data was not saved");
@@ -1429,19 +1439,21 @@ protected:
   /**
    * save raw data collection chunk
    *
-   * @param array the raw data array
+   * @param array (in, out) the raw data array. If != nullptr, data will be copied from here. Otherwise, the
+   * chunk data pointer will be stored here
    * @param arraySize the number of items in array
    * @param ci the collection metadata
    */
   template <typename T>
-  void saveChunk(const T *array, size_t arraySize, CollectionInfo *ci)
+  void saveChunk(T *&array, size_t arraySize, CollectionInfo *ci)
   {
     if(!arraySize) return;
 
     size_t chunkSize = arraySize * sizeof(T);
 
     startChunk(ci, chunkSize, arraySize);
-    writeBuf().append((byte_t *)array, chunkSize);
+    if(array) writeBuf().append((byte_t *)array, chunkSize);
+    array = (T *)writeBuf().cur();
   }
 
   /**
@@ -1585,11 +1597,13 @@ public:
   }
 
   /**
-   * insert an attached member collection (see explanation in accompanying get function)
+   * insert an attached member collection (see explanation in accompanying get function). Deviant from other put* functions.
+   * this will not alwways create a new collection but rather overwrite an existing one if present.
    *
    * @param obj the object this collection is attached to
-   * @param propertyId a property Id outside the Id space of obj's class
+   * @param propertyId a unique property Id
    * @param vect the contents of the collection
+   * @param saveMembers if true (default), collection members will be saved, too
    */
   template <typename T, typename V>
   void putCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::vector<std::shared_ptr<V>> &vect,
@@ -1625,61 +1639,6 @@ public:
         }
       }
       writeBuf().append(classId, objectId, 0);
-    }
-  }
-
-  /**
-   * add or remove an element to an attached member collection
-   *
-   * @param obj the object the collection is attached to
-   * @param propertyId the attached propertyId (not from the mappings)
-   * @val the value to add. The value will be saved prior to being inserted into the collection
-   */
-  template <typename T, typename V>
-  bool updateCollection(std::shared_ptr<T> &obj, PropertyId propertyId, const std::shared_ptr<V> &val, bool remove=false)
-  {
-    ObjectId objectId = ClassTraits<T>::getObjectId(obj);
-
-    ReadBuf buf;
-    ClassId classId = getClassId(typeid(*obj));
-    getData(buf, classId, objectId, propertyId);
-    if(buf.null()) throw persistence_error("collection does not exist");
-
-    size_t elementCount = buf.readInteger<size_t>(4);
-
-    ClassId valueClassId = getClassId(typeid(*val));
-    ObjectId valueId = ClassTraits<V>::getObjectId(val);
-    byte_t *slotStart = nullptr;
-
-    for(size_t i=0; i < elementCount; i++) {
-      StorageKey sk;
-      buf.read(sk);
-
-      if(sk.classId == valueClassId && sk.objectId == valueId) {
-        if(!remove) {
-          saveObject(val);
-          return false;
-        };
-        slotStart = buf.cur()-StorageKey::byteSize;
-        break;
-      }
-    }
-
-    if(remove) {
-      if(!slotStart) return false;
-      writeBuf().start(buf.size()-StorageKey::byteSize);
-      writeBuf().append(buf.data(), slotStart-buf.data());
-      writeBuf().append(slotStart+StorageKey::byteSize, buf.size()-StorageKey::byteSize);
-      putData(classId, objectId, propertyId, writeBuf());
-      return true;
-    }
-    else {
-      if(!valueId) {
-        valueId = saveObject(0, val, true);
-      }
-      writeBuf().start(buf.size()+StorageKey::byteSize);
-      writeBuf().append(buf.data(), buf.size());
-      writeBuf().append(valueClassId, valueId, 0);
     }
   }
 
@@ -1748,7 +1707,7 @@ public:
    * floating point (float, double) and for integral data types that conform to the LP64 data model.
    * This precludes the long data type on Windows platforms
    *
-   * @param array the initial collection contents
+   * @param array the initial collection contents.
    * @param arraySize length of the contents
    */
   template <typename T>
@@ -1763,6 +1722,28 @@ public:
     return ci->collectionId;
   }
 
+  /**
+   * create an initial chunk for a top-level raw data collection. Note that the rwaw data API is only usable for
+   * floating point (float, double) and for integral data types that conform to the LP64 data model.
+   * This precludes the long data type on Windows platforms
+   *
+   * Note: the chunk data pointer is only usable until the next update operation, or untile the transaction completes
+   *
+   * @param array (out) the initial collection chunk data area.
+   * @param arraySize length in bytes of the data area
+   */
+  template <typename T>
+  ObjectId putDataCollection(T ** array, size_t arraySize)
+  {
+    RAWDATA_API_ASSERT
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
+
+    *array = nullptr;
+    saveChunk(*array, arraySize, ci);
+
+    return ci->collectionId;
+  }
   /**
    * create a top-level (chunked) member data collection and assign it to the given property, which is expected to be
    * mapped as CollectionIterPropertyAssign
@@ -1800,7 +1781,7 @@ public:
    * @param chunkSize size of keys chunk
    */
   template <typename T>
-  void appendValueCollection(ObjectId collectionId, const std::vector<T> &vect, size_t chunkSize = CHUNKSIZE)
+  void appendValueCollection(ObjectId collectionId, const std::vector<T> &vect)
   {
     CollectionInfo *ci= getCollectionInfo(collectionId);
     if(!ci) throw persistence_error("collection not found");
@@ -1813,17 +1794,38 @@ public:
    * (float, double) and for integral data types that conform to the LP64 data model. This precludes the long data
    * type on Windows platforms
    *
-   * @param vect the collection contents
+   * @param data the chunk contents
    * @param chunkSize size of keys chunk
    */
   template <typename T>
-  void appendDataCollection(ObjectId collectionId, const T *data, size_t dataSize, size_t chunkSize = CHUNKSIZE)
+  void appendDataCollection(ObjectId collectionId, const T *data, size_t dataSize)
   {
     RAWDATA_API_ASSERT
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) throw persistence_error("collection not found");
 
     saveChunk(data, dataSize, ci);
+  }
+
+  /**
+   * allocate a new chunk, appending to a top-level (chunked) raw data collection.
+   * Note that the raw data API is only usable for floating-point (float, double) and for integral data types that conform to the
+   * LP64 data model. This precludes the long data type on Windows platforms
+   *
+   * Note: the chunk data pointer is only usable until the next update operation, or until the transaction completes
+   *
+   * @param chunkSize size of keys chunk
+   * @return the address of the data area of the chunk
+   */
+  template <typename T>
+  void appendDataCollection(ObjectId collectionId, T **data, size_t dataSize)
+  {
+    RAWDATA_API_ASSERT
+    CollectionInfo *ci = getCollectionInfo(collectionId);
+    if(!ci) throw persistence_error("collection not found");
+
+    *data = nullptr;
+    saveChunk(*data, dataSize, ci);
   }
 
   template <typename T>
@@ -1963,7 +1965,7 @@ public:
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
-      ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
+      ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
     return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
         this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, ClassTraits<V>::info->isPoly()));
@@ -1977,7 +1979,7 @@ public:
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ValueCollectionAppender<V>::Ptr appendValueCollection(
-      ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
+      ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
     return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(this, collectionId, chunkSize));
   }
@@ -1990,7 +1992,7 @@ public:
    * @return an appender over the contents of the collection.
    */
   template <typename T> typename ValueCollectionAppender<T>::Ptr appendDataCollection(
-      ObjectId collectionId, size_t chunkSize = CHUNKSIZE)
+      ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
     return typename DataCollectionAppender<T>::Ptr(new DataCollectionAppender<T>(this, collectionId, chunkSize));

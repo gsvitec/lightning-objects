@@ -224,6 +224,10 @@ public:
     return prev;
   }
 
+  byte_t *cur() {
+    return m_appendptr;
+  }
+
   void deleteChain() {
     if(next) next->deleteChain();
     delete next;

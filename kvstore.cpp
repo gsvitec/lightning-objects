@@ -14,12 +14,30 @@ using namespace std;
 Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
 ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
 
+string incompatible_schema_error::make_what(const char *className)
+{
+  stringstream ss;
+  ss << "saved class schema for " << className << " is incompatible with application class mapping" << endl;
+  return ss.str();
+}
+string incompatible_schema_error::make_detail(vector<string> &errs)
+{
+  stringstream ss;
+  for(auto it=errs.cbegin();;) {
+    ss << *it;
+    if(it++ != errs.cend()) ss << endl;
+    else break;
+  }
+}
+
 inline bool streq(string s1, const char *s2) {
   if(s2 == nullptr) return s1.empty();
   return s1 == s2;
 }
 
-bool KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties)
+bool KeyValueStoreBase::updateClassSchema(
+    AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties,
+    vector<string> &errors)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
   loadSaveClassMeta(classInfo, properties, numProperties, propertyInfos);
@@ -37,9 +55,10 @@ bool KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, Property
       if(pa->type.id != pi->typeId
          || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
          || pi->isVector != pa->type.isVector) {
+        classInfo->compatibility = SchemaCompatibility::none;
         stringstream ss;
         ss << "class " << classInfo->name << ": property at position '" << index << "' has changed";
-        throw incompatible_schema_error(ss.str());
+        errors.push_back(ss.str());
       }
     }
 
@@ -49,14 +68,18 @@ bool KeyValueStoreBase::updateClassSchema(AbstractClassInfo *classInfo, Property
       for(unsigned i=0; i<numProperties; i++) if(properties[i]->storage->layout != StoreLayout::property)
           shallowCount++;
       if(dbShallowCount > shallowCount) {
+        classInfo->compatibility = SchemaCompatibility::none;
         stringstream ss;
         ss << "class " << classInfo->name << ": shallow properties in non-leaf class were deleted";
-        throw incompatible_schema_error(ss.str());
+        errors.push_back(ss.str());
       }
     }
     //3. properties that were added can safely be disabled (during read)
-    for(; index < numProperties; index++) {
-      properties[index]->enabled = false;
+    if(index < numProperties) {
+      classInfo->compatibility = SchemaCompatibility::read;
+      for(; index < numProperties; index++) {
+        properties[index]->enabled = false;
+      }
     }
     return true;
   }

@@ -450,7 +450,7 @@ void testValueCollection(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    wtxn->appendValueCollection(collectionId, vect, 128);
+    wtxn->appendValueCollection(collectionId, vect);
 
     wtxn->commit();
   }
@@ -465,7 +465,7 @@ void testValueCollection(KeyValueStore *kv)
     //use appender to add more test data
     auto wtxn = kv->beginWrite();
 
-    auto appender = wtxn->appendValueCollection<double>(collectionId, 128);
+    auto appender = wtxn->appendValueCollection<double>(collectionId);
     for(int i=0; i<20; i++) {
       appender->put(6.55 * i);
     }
@@ -488,14 +488,13 @@ void testValueCollection(KeyValueStore *kv)
 }
 
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionData(KeyValueStore *kv)
+void testDataCollection1(KeyValueStore *kv)
 {
-  ObjectId collectionId;
+  ObjectId collectionId, collectionId2;
 
   {
-    //save test data
+    //save test data into application-side buffer
     double vect[1000];
-
     for (unsigned i = 0; i < 1000; i++)
       vect[i] = 1.44 * i;
 
@@ -503,6 +502,16 @@ void testValueCollectionData(KeyValueStore *kv)
 
     collectionId = wtxn->putDataCollection(vect, 1000);
 
+    //alternative: preallocate buffer from DB + access directly
+    double *vect2;
+    collectionId2 = wtxn->putDataCollection(&vect2, 1000);
+    for (unsigned i = 0; i < 1000; i++)
+      vect2[i] = 1.44 * i;
+
+    //append another chunk using zero-copy access
+    wtxn->appendDataCollection(collectionId2, &vect2, 1000);
+    for (unsigned i = 0; i < 1000; i++)
+      vect2[i] = 4.44 * i;
     wtxn->commit();
   }
   {
@@ -528,11 +537,19 @@ void testValueCollectionData(KeyValueStore *kv)
     data = cd3->data();
     assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
 
+    CollectionData<double>::Ptr cd4 = rtxn->getDataCollection<double>(collectionId2, 0, 1000);
+    data = cd4->data();
+    assert(data[1] == 1.44 && data[999] == 1.44 * 999);
+
+    CollectionData<double>::Ptr cd5 = rtxn->getDataCollection<double>(collectionId2, 1000, 1000);
+    data = cd5->data();
+    assert(data[1] == 4.44 && data[999] == 4.44 * 999);
+
     rtxn->abort();
   }
 }
 //test persistent collection of scalar (primitve) values sub-array API
-void testValueCollectionData2(KeyValueStore *kv)
+void testDataCollection2(KeyValueStore *kv)
 {
   ObjectId collectionId2;
   {
@@ -562,7 +579,7 @@ void testValueCollectionData2(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    wtxn->appendDataCollection(collectionId2, darray, 100, 128);
+    wtxn->appendDataCollection(collectionId2, darray, 100);
 
     wtxn->commit();
   }
@@ -874,8 +891,8 @@ int main()
   testValueCollection(kv);
   testObjectPtrPropertyStorage(kv);
   testValueVectorProperty(kv);
-  testValueCollectionData(kv);
-  testValueCollectionData2(kv);
+  testDataCollection1(kv);
+  testDataCollection2(kv);
   testGrowDatabase(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
