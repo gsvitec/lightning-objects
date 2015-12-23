@@ -478,7 +478,7 @@ class KeyValueStoreImpl : public KeyValueStore
 protected:
   void loadSaveClassMeta(
       AbstractClassInfo *classInfo,
-      PropertyAccessBase * currentProps[],
+      const PropertyAccessBase ** currentProps[],
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
 
@@ -897,7 +897,7 @@ MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBas
 
 void KeyValueStoreImpl::loadSaveClassMeta(
     AbstractClassInfo *classInfo,
-    PropertyAccessBase * currentProps[],
+    const PropertyAccessBase ** currentProps[],
     unsigned numProps,
     vector<PropertyMetaInfoPtr> &propertyInfos)
 {
@@ -942,7 +942,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     //Save properties
     for(unsigned i=0; i < numProps; i++) {
-      const PropertyAccessBase *prop = currentProps[i];
+      const PropertyAccessBase *prop = *currentProps[i];
       MDB_val val = make_propertyval(i+1, prop);
       ::lmdb::dbi_put(txn, m_dbi_meta.handle(), (MDB_val *)key, &val, 0);
       free(val.mv_data);
