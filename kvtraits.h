@@ -46,7 +46,7 @@ struct PropertyType
   PropertyType(unsigned id, unsigned byteSize, bool isVector=false)
       : id(id), isVector(isVector), byteSize(byteSize), className(nullptr) {}
   PropertyType(const char *clsName, bool isVector=false) :
-      id(0), isVector(isVector), byteSize(StorageKey::byteSize), className(clsName) {}
+      id(0), isVector(isVector), byteSize(ObjectKey::byteSize), className(clsName) {}
 
   bool operator == (const PropertyType &other) const {
     return id == other.id
@@ -118,7 +118,7 @@ class PrepareBuf;
 
 enum class StoreMode {force_none, force_all, force_buffer, force_property};
 
-enum class StoreLayout {all_embedded, embedded_key, property};
+enum class StoreLayout {all_embedded, embedded_key, property, none};
 
 /**
  * abstract superclass for classes that handle serializing mapped values to the datastore
@@ -126,8 +126,10 @@ enum class StoreLayout {all_embedded, embedded_key, property};
 struct StoreAccessBase
 {
   const StoreLayout layout;
+  const size_t fixedSize;
 
-  StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded) : layout(layout) {}
+  StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded, size_t fixedSize=0)
+      : layout(layout), fixedSize(fixedSize) {}
 
   virtual size_t size(const byte_t *buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
@@ -158,10 +160,10 @@ struct StoreAccessBase
  */
 struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
-  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key) {}
+  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey::byteSize) {}
 
-  size_t size(const byte_t *buf) const override {return StorageKey::byteSize;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
+  size_t size(const byte_t *buf) const override {return ObjectKey::byteSize;}
+  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
 };
 
 /**
@@ -176,7 +178,10 @@ struct StoreAccessPropertyKey: public StoreAccessBase
   size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
-template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
+template<typename T, typename V, unsigned byteSize=TypeTraits<V>::byteSize> struct PropertyStorage
+    : public StoreAccessBase {
+  PropertyStorage() : StoreAccessBase(byteSize) {}
+};
 
 /**
  * base class for value handler templates. Main task is determining storage size and serializing/deserializing
@@ -410,8 +415,7 @@ protected:
       : decl_props(decl_props),
         numProps(numProps),
         keyProperty(keyProperty)
-  {
-  }
+  {}
 
   Properties(const Properties& mit) = delete;
 public:
@@ -470,19 +474,29 @@ public:
       if(!fixedSize) return;
     }
     for(unsigned i=0; i<numProps; i++) {
-      if((*decl_props[i])->enabled) {
-        size_t bs = (*decl_props[i])->type.byteSize;
-        if(!bs) {
-          fixedSize = 0;
-          return;
+      const PropertyAccessBase *pa = *decl_props[i];
+      if(pa->enabled) {
+        switch(pa->storage->layout) {
+          case StoreLayout::all_embedded:
+            if(!pa->storage->fixedSize) {
+              fixedSize = 0;
+              return;
+            }
+            fixedSize += pa->storage->fixedSize;
+            break;
+          case StoreLayout::embedded_key:
+            fixedSize += ObjectKey::byteSize;
+            break;
+          case StoreLayout::property:
+            break;
         }
-        fixedSize += bs;
       }
     }
   }
 };
 
 enum class SchemaCompatibility {write, read, none};
+
 /**
  * non-templated superclass for ClassInfo
  */
@@ -655,8 +669,7 @@ struct ClassInfo : public AbstractClassInfo
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
   bool (* const addSize)(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const get_objectid)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
-  bool (* const set_objectid)(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags);
+  bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
   bool (* const prepareUpdate)(PrepareBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
@@ -673,8 +686,7 @@ struct ClassInfo : public AbstractClassInfo
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         addSize(&ClassTraits<T>::addSize),
-        get_objectid(&ClassTraits<T>::get_objectid),
-        set_objectid(&ClassTraits<T>::set_objectid),
+        get_objectkey(&ClassTraits<T>::get_objectkey),
         prepareUpdate(&ClassTraits<T>::prepareUpdate),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
@@ -824,31 +836,26 @@ public:
     return false;
   }
 
-  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true)
+  static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true)
   {
-    ObjectId oid = 0;
-    if(!get_objectid(obj, oid) && force) throw invalid_pointer_error();
-    return oid;
+    ObjectKey *key;
+    if(!get_objectkey(obj, key) && force) throw invalid_pointer_error();
+    return key;
   }
 
-  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true)
+  static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags=FLAGS_ALL)
   {
-    if(!set_objectid(obj, oid) && force) throw invalid_pointer_error();
-  }
-
-  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
-  {
-    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-    if(ohm) {
-      oid = ohm->objectId;
+    object_handler<T> *handler = std::get_deleter<object_handler<T>>(obj);
+    if(handler) {
+      key = handler;
       return true;
     }
     else {
-      if(UP && ClassTraits<SUP>::get_objectid(obj, oid, FLAG_UP)) return true;
+      if(UP && ClassTraits<SUP>::get_objectkey(obj, key, FLAG_UP)) return true;
       if(DN) {
         for(auto &sub : traits_info->subs) {
           ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
-          if(si->get_objectid(obj, oid, FLAG_DN)) return true;
+          if(si->get_objectkey(obj, key, FLAG_DN)) return true;
         }
       }
     }
@@ -1009,6 +1016,10 @@ struct ClassTraits<EmptyClass>
     return 0;
   }
   template <typename T>
+  static PropertyAccess<T, ObjectId> *objectIdAccess() {
+    return nullptr;
+  }
+  template <typename T>
   static void * initMember(T *obj, const PropertyAccessBase *pa) {
     return nullptr;
   }
@@ -1017,19 +1028,11 @@ struct ClassTraits<EmptyClass>
     return false;
   }
   template <typename T>
-  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true) {
-    return 0;
+  static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true) {
+    return nullptr;
   }
   template <typename T>
-  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true) {
-    return 0;
-  }
-  template <typename T>
-  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags) {
-    return false;
-  }
-  template <typename T>
-  static bool set_objectid(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags) {
+  static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {
     return false;
   }
   template <typename T>

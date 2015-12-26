@@ -29,13 +29,29 @@ static const size_t ChunkHeader_sz = 4 * 3;
 using byte_t = unsigned char;
 
 /**
+ * Persistent object identifier
+ */
+struct ObjectKey
+{
+  static const ObjectKey NIL;
+  static const unsigned byteSize = ClassId_sz + ObjectId_sz;
+
+  ClassId classId;
+  ObjectId objectId;
+  unsigned refcount = 1;
+
+  ObjectKey() : classId(0), objectId(0) {}
+  ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId) {}
+  bool isNew() {return objectId == 0;}
+};
+
+/**
  * custom deleter used to store the objectId inside a std::shared_ptr
  */
-template <typename T> struct object_handler
+template <typename T> struct object_handler : public ObjectKey
 {
-  ObjectId objectId;
-
-  object_handler(ObjectId objectId) : objectId(objectId) {}
+  object_handler(ObjectKey key) : ObjectKey(key.classId, key.objectId) {}
+  object_handler() {}
 
   void operator () (T *t) {
     delete t;
@@ -49,7 +65,7 @@ template <typename T> struct object_handler
 template <typename T, typename... Args>
 static auto make_obj(Args&&... args) -> decltype(std::make_shared<T>(std::forward<Args>(args)...))
 {
-  return std::shared_ptr<T>(new T(std::forward<Args>(args)...), object_handler<T>(0));
+  return std::shared_ptr<T>(new T(std::forward<Args>(args)...), object_handler<T>());
 }
 
 /**
@@ -57,26 +73,10 @@ static auto make_obj(Args&&... args) -> decltype(std::make_shared<T>(std::forwar
  * must have been created through this method (or KV itself)
  */
 template <typename T>
-static std::shared_ptr<T> make_ptr(T *t, ObjectId oid = 0)
+static std::shared_ptr<T> make_ptr(T *t)
 {
-  return std::shared_ptr<T>(t, object_handler<T>(oid));
+  return std::shared_ptr<T>(t, object_handler<T>());
 }
-
-/**
- * a storage key. This structure must not be changed (lest db files become unreadable)
- */
-struct StorageKey
-{
-  static const unsigned byteSize = ClassId_sz + ObjectId_sz + PropertyId_sz;
-
-  ClassId classId;
-  ObjectId objectId;
-  PropertyId propertyId; //will be 0 if this is an object key
-
-  StorageKey() : classId(0), objectId(0), propertyId(0) {}
-  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId)
-      : classId(classId), objectId(objectId), propertyId(propertyId) {}
-};
 
 /*
  * save an integral value to a fixed size of bytes (max. 8)
@@ -171,17 +171,15 @@ public:
     return m_readptr == m_data + m_size;
   }
 
-  bool read(StorageKey &key)
+  bool read(ObjectKey &key)
   {
-    if(m_size - (m_readptr - m_data) < 8)
+    if(m_size - (m_readptr - m_data) < ObjectKey::byteSize)
       return false;
 
     key.classId = *(ClassId *)m_readptr;
     m_readptr += ClassId_sz;
     key.objectId = *(ObjectId *)m_readptr;
     m_readptr += ObjectId_sz;
-    key.propertyId = *(PropertyId *)m_readptr;
-    m_readptr += PropertyId_sz;
 
     return true;
   }
@@ -328,16 +326,24 @@ public:
     memcpy(buf, data, len);
   }
 
-  void append(ClassId classId, ObjectId objectId, PropertyId propertyId)
+  void append(const ObjectKey &key)
   {
-    byte_t * buf = allocate(StorageKey::byteSize);
+    byte_t * buf = allocate(ObjectKey::byteSize);
+
+    *(ClassId *)buf = key.classId;
+    buf += ClassId_sz;
+    *(ObjectId *)buf = key.objectId;
+    buf += ObjectId_sz;
+  }
+
+  void append(ClassId classId, ObjectId objectId)
+  {
+    byte_t * buf = allocate(ClassId_sz + ObjectId_sz);
 
     *(ClassId *)buf = classId;
     buf += ClassId_sz;
     *(ObjectId *)buf = objectId;
     buf += ObjectId_sz;
-    *(PropertyId *)buf = propertyId;
-    buf += PropertyId_sz;
   }
 
   byte_t * data() {

@@ -11,6 +11,8 @@ namespace persistence {
 
 using namespace std;
 
+const ObjectKey ObjectKey::NIL;
+
 Properties * ClassTraits<kv::EmptyClass>::traits_properties {nullptr};
 ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
 
@@ -210,7 +212,7 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
 
 byte_t *PrepareBuf::data(size_t offset) {
   if(!m_data) {
-    m_txn->getData(*this, m_classId, m_objectId, 0);
+    m_txn->getData(*this, m_key.classId, m_key.objectId, 0);
   }
   return m_data + offset;
 }
