@@ -105,6 +105,8 @@ struct SomethingWithALazyVector
 };
 
 struct FixedSizeObject {
+  unsigned objectId = 0; //for ObjectPropertyTest
+
   unsigned number1, number2;
   FixedSizeObject() {}
   FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
@@ -112,11 +114,26 @@ struct FixedSizeObject {
 using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
 
 struct VariableSizeObject {
+  unsigned objectId = 0; //for ObjectPropertyTest
+
   unsigned number;
   std::string name;
 
   VariableSizeObject() {}
   VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
+};
+
+struct ObjectPropertyTest
+{
+  FixedSizeObject fso;
+  VariableSizeObject vso;
+
+  vector<FixedSizeObject> fso_vect;
+  vector<VariableSizeObject> vso_vect;
+
+  ObjectPropertyTest() {}
+  ObjectPropertyTest(unsigned fso_num1, unsigned fso_num2, unsigned vso_num, const char *vso_name)
+      : fso(fso_num1, fso_num2), vso(vso_num, vso_name) {}
 };
 
 struct SomethingWithAnEmbbededObjectVector
@@ -205,7 +222,7 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend
+struct KVObjectHistory2 : public ObjectHistory<T>, public KVPropertyBackend
 {
   T t;
   T& getHistoryValue(uint64_t bufferPos) override {
@@ -215,61 +232,45 @@ struct KVObjectHistory2 : public ObjectHistory<T>, public IterPropertyBackend
     return nullptr;
   }
 };
-
-START_MAPPINGHDR_A(OtherThing)
-  enum class PropertyIds {name=1, dvalue};
-END_MAPPINGHDR(OtherThing)
+START_MAPPING_A(OtherThing, name, dvalue)
   MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)
   MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
 END_MAPPING(OtherThing)
 
-START_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
-  enum class PropertyIds {lvalue=1, testnames};
-END_MAPPINGHDR_SUB(OtherThingA, OtherThing, a)
+START_MAPPING_SUB(OtherThingA, OtherThing, lvalue, testnames)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue)
   MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
-END_MAPPING_SUB(OtherThingA, OtherThing, a)
+END_MAPPING_SUB(OtherThingA, OtherThing)
 
 
-START_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
-  enum class PropertyIds {llvalue=1};
-END_MAPPINGHDR_SUB(OtherThingB, OtherThing, b)
+START_MAPPING_SUB(OtherThingB, OtherThing, llvalue)
   MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue)
-END_MAPPING_SUB(OtherThingB, OtherThing, b)
+END_MAPPING_SUB(OtherThingB, OtherThing)
 
-//SomethingWithALazyVector
-START_MAPPINGHDR(SomethingWithALazyVector)
-  enum class PropertyIds {name=1, otherThings};
-END_MAPPINGHDR(SomethingWithALazyVector)
+START_MAPPING(SomethingWithALazyVector, name, otherThings)
   MAPPED_PROP(SomethingWithALazyVector, BasePropertyAssign, std::string, name)
   MAPPED_PROP3(SomethingWithALazyVector, ObjectPtrVectorPropertyAssign, OtherThing, otherThings, true)
 END_MAPPING(SomethingWithALazyVector)
 
-START_MAPPINGHDR(FixedSizeObject)
-  enum class PropertyIds {number1=1, number2};
-END_MAPPINGHDR(FixedSizeObject)
+START_MAPPING(FixedSizeObject, objectId, number1, number2)
+  OBJECT_ID(FixedSizeObject, objectId)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number1)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
-START_MAPPINGHDR(VariableSizeObject)
-  enum class PropertyIds {number=1, name};
-END_MAPPINGHDR(VariableSizeObject)
+START_MAPPING(VariableSizeObject, objectId, number, name)
+  OBJECT_ID(VariableSizeObject, objectId)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
 END_MAPPING(VariableSizeObject)
 
-START_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
-  enum class PropertyIds {name=1, objects};
-END_MAPPINGHDR(SomethingWithAnEmbbededObjectVector)
+START_MAPPING(SomethingWithAnEmbbededObjectVector, name, objects, objects2)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, BasePropertyAssign, std::string, name)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, objects)
   MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, objects2)
 END_MAPPING(SomethingWithAnEmbbededObjectVector)
 
-START_MAPPINGHDR(flexis::player::SourceDisplayConfig)
-  enum class PropertyIds {sourceIndex=1, attachedIndex, attached, window_x, window_y, window_width, window_height};
-END_MAPPINGHDR(flexis::player::SourceDisplayConfig)
+START_MAPPING(flexis::player::SourceDisplayConfig, sourceIndex, attachedIndex, attached, window_x, window_y, window_width, window_height)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, attachedIndex)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, bool, attached)
@@ -279,66 +280,54 @@ END_MAPPINGHDR(flexis::player::SourceDisplayConfig)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, window_height)
 END_MAPPING(flexis::player::SourceDisplayConfig)
 
-START_MAPPINGHDR(flexis::player::SourceInfo)
-  enum class PropertyIds {sourceIndex=1, displayConfig, userOverlays};
-END_MAPPINGHDR(flexis::player::SourceInfo)
+START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverlays)
   MAPPED_PROP(flexis::player::SourceInfo, BasePropertyAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::IFlexisOverlay, userOverlays)
 END_MAPPING(flexis::player::SourceInfo)
 
-START_MAPPINGHDR(SomethingWithAnObjectIter)
-  enum class PropertyIds {history=1};
-END_MAPPINGHDR(SomethingWithAnObjectIter)
+START_MAPPING(SomethingWithAnObjectIter, history)
   MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
-START_MAPPINGHDR_A(SomethingAbstract)
-  enum class PropertyIds {name=1};
-END_MAPPINGHDR(SomethingAbstract)
+START_MAPPING_A(SomethingAbstract, name)
   MAPPED_PROP(SomethingAbstract, BasePropertyAssign, std::string, name)
 END_MAPPING(SomethingAbstract)
 
-START_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
-  enum class PropertyIds {description=1};
-END_MAPPINGHDR_SUB(SomethingConcrete1, SomethingAbstract, c)
+START_MAPPING_SUB(SomethingConcrete1, SomethingAbstract, description)
   MAPPED_PROP(SomethingConcrete1, BasePropertyAssign, std::string, description)
-END_MAPPING_SUB(SomethingConcrete1, SomethingAbstract, c)
+END_MAPPING_SUB(SomethingConcrete1, SomethingAbstract)
 
-START_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
-  enum class PropertyIds {age=1};
-END_MAPPINGHDR_SUB(SomethingConcrete2, SomethingAbstract, d)
+START_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, age)
   MAPPED_PROP(SomethingConcrete2, BasePropertyAssign, unsigned, age)
-END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, d)
+END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract)
 
-START_MAPPINGHDR(SomethingVirtual)
-  enum class PropertyIds {id=1, name};
-END_MAPPINGHDR(SomethingVirtual)
+START_MAPPING(SomethingVirtual, id, name)
   MAPPED_PROP(SomethingVirtual, BasePropertyAssign, unsigned, id)
   MAPPED_PROP(SomethingVirtual, BasePropertyAssign, std::string, name)
 END_MAPPING(SomethingVirtual)
 
-START_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
-  enum class PropertyIds {profession=1};
-END_MAPPINGHDR_SUB(SomethingVirtual1, SomethingVirtual, e)
+START_MAPPING_SUB(SomethingVirtual1, SomethingVirtual, profession)
   MAPPED_PROP(SomethingVirtual1, BasePropertyAssign, std::string, profession)
-END_MAPPING_SUB(SomethingVirtual1, SomethingVirtual, e)
+END_MAPPING_SUB(SomethingVirtual1, SomethingVirtual)
 
-START_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
-  enum class PropertyIds {hobby=1};
-END_MAPPINGHDR_SUB(SomethingVirtual2, SomethingVirtual, f)
+START_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, hobby)
   MAPPED_PROP(SomethingVirtual2, BasePropertyAssign, std::string, hobby)
-END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, f)
+END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual)
 
-START_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
-  enum class PropertyIds {age=1};
-END_MAPPINGHDR_SUB(SomethingVirtual3, SomethingVirtual2, g)
+START_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, age)
   MAPPED_PROP(SomethingVirtual3, BasePropertyAssign, unsigned, age)
-END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, g)
+END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2)
 
-START_MAPPINGHDR(Wonderful)
-  enum class PropertyIds {embeddedVirtual1=1, toplevelVirtual1, embeddedVirtual2, toplevelVirtual2, abstractsEmbedded, virtualsEmbedded, virtualsPointers, virtualsLazy};
-END_MAPPINGHDR(Wonderful)
+START_MAPPING(Wonderful,
+              embeddedVirtual1,
+              toplevelVirtual1,
+              embeddedVirtual2,
+              toplevelVirtual2,
+              abstractsEmbedded,
+              virtualsEmbedded,
+              virtualsPointers,
+              virtualsLazy)
   MAPPED_PROP(Wonderful, ObjectPtrPropertyEmbeddedAssign, SomethingVirtual, embeddedVirtual1)
   MAPPED_PROP(Wonderful, ObjectPtrPropertyAssign, SomethingVirtual, toplevelVirtual1)
   MAPPED_PROP(Wonderful, ObjectPtrPropertyEmbeddedAssign, SomethingVirtual, embeddedVirtual2)
@@ -348,6 +337,13 @@ END_MAPPINGHDR(Wonderful)
   MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsPointers)
   MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
 END_MAPPING(Wonderful)
+
+START_MAPPING(ObjectPropertyTest, fso, vso, fso_vect, vso_vect)
+  MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, FixedSizeObject, fso)
+  MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, VariableSizeObject, vso)
+  MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, FixedSizeObject, fso_vect)
+  MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, VariableSizeObject, vso_vect)
+END_MAPPING(ObjectPropertyTest)
 
 }
 }

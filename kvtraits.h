@@ -46,7 +46,7 @@ struct PropertyType
   PropertyType(unsigned id, unsigned byteSize, bool isVector=false)
       : id(id), isVector(isVector), byteSize(byteSize), className(nullptr) {}
   PropertyType(const char *clsName, bool isVector=false) :
-      id(0), isVector(isVector), byteSize(StorageKey::byteSize), className(clsName) {}
+      id(0), isVector(isVector), byteSize(ObjectKey::byteSize), className(clsName) {}
 
   bool operator == (const PropertyType &other) const {
     return id == other.id
@@ -114,10 +114,11 @@ static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize 
 class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
+class PrepareBuf;
 
 enum class StoreMode {force_none, force_all, force_buffer, force_property};
 
-enum class StoreLayout {all_embedded, embedded_key, property};
+enum class StoreLayout {all_embedded, embedded_key, property, none};
 
 /**
  * abstract superclass for classes that handle serializing mapped values to the datastore
@@ -125,11 +126,17 @@ enum class StoreLayout {all_embedded, embedded_key, property};
 struct StoreAccessBase
 {
   const StoreLayout layout;
+  const size_t fixedSize;
 
-  StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded) : layout(layout) {}
+  StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded, size_t fixedSize=0)
+      : layout(layout), fixedSize(fixedSize) {}
 
   virtual size_t size(const byte_t *buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
+
+  virtual void prepareUpdate(PrepareBuf &buf, void *obj, const PropertyAccessBase *pa, size_t &sz) {
+    sz += size(obj, pa);
+  }
 
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
@@ -153,10 +160,10 @@ struct StoreAccessBase
  */
 struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
-  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key) {}
+  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey::byteSize) {}
 
-  size_t size(const byte_t *buf) const override {return StorageKey::byteSize;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return StorageKey::byteSize;}
+  size_t size(const byte_t *buf) const override {return ObjectKey::byteSize;}
+  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
 };
 
 /**
@@ -171,7 +178,10 @@ struct StoreAccessPropertyKey: public StoreAccessBase
   size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
-template<typename T, typename V> struct PropertyStorage : public StoreAccessBase {};
+template<typename T, typename V, unsigned byteSize=TypeTraits<V>::byteSize> struct PropertyStorage
+    : public StoreAccessBase {
+  PropertyStorage() : StoreAccessBase(byteSize) {}
+};
 
 /**
  * base class for value handler templates. Main task is determining storage size and serializing/deserializing
@@ -328,6 +338,8 @@ struct ValueTraits<float> : public ValueTraitsFloat<float> {};
 template <>
 struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
+class Properties;
+
 /**
  * non-templated base class for property accessors
  */
@@ -344,9 +356,11 @@ struct PropertyAccessBase
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 
-  void *initMember(void *obj) {
+  void *initMember(void *obj) const {
     return storage->initMember(obj, this);
   }
+
+  virtual void setup(Properties *props) const {}
 };
 
 /**
@@ -394,60 +408,29 @@ struct EmptyClass
  */
 class Properties
 {
-  const unsigned keyStorageId;
+protected:
+  const PropertyAccessBase * keyProperty = nullptr;
   const unsigned numProps;
-  PropertyAccessBase ** const properties;
-  Properties * const superIter;
-  const unsigned startPos;
+  const PropertyAccessBase *** const decl_props;
+  Properties * superIter = nullptr;
+  unsigned startPos = 0;
 
-  Properties(PropertyAccessBase * properties[], unsigned numProps, Properties *superIter, unsigned keyStorageId)
-      : properties(properties),
-        numProps(numProps),
-        superIter(superIter),
-        startPos(superIter ? superIter->full_size() : 0),
-        keyStorageId(keyStorageId)
-  {
-    fixedSize = 0;
-    if(superIter) {
-      fixedSize = superIter->fixedSize;
-      if(!fixedSize) return;
-    }
-    for(unsigned i=0; i<numProps; i++) {
-      if(properties[i]->enabled) {
-        size_t bs = properties[i]->type.byteSize;
-        if(!bs) {
-          fixedSize = 0;
-          return;
-        }
-        fixedSize += bs;
-      }
-    }
-  }
+  Properties(const PropertyAccessBase ** decl_props[], unsigned numProps)
+      : decl_props(decl_props),
+        numProps(numProps)
+  {}
 
   Properties(const Properties& mit) = delete;
 public:
   size_t fixedSize;
 
-  template <typename T, typename S=EmptyClass>
-  static Properties *mk()
-  {
-    Properties *p = new Properties(
-        ClassTraits<T>::decl_props,
-        ARRAY_SZ(ClassTraits<T>::decl_props),
-        ClassTraits<S>::properties,
-        static_cast<unsigned>(ClassTraits<T>::keyPropertyId));
-
-    for(unsigned i=0; i<p->full_size(); i++)
-      p->get(i)->id = i+1;
-
-    return p;
-  }
+  virtual void init() = 0;
 
   template <typename O>
   PropertyAccess<O, ObjectId> *objectIdAccess()
   {
-    if(keyStorageId)
-      return (PropertyAccess<O, ObjectId> *)properties[keyStorageId-1];
+    if(keyProperty)
+      return (PropertyAccess<O, ObjectId> *)keyProperty;
     else
       return superIter ? superIter->objectIdAccess<O>() : nullptr;
   }
@@ -456,12 +439,77 @@ public:
     return superIter ? superIter->full_size() + numProps : numProps;
   }
 
-  PropertyAccessBase * get(unsigned index) {
-    return index >= startPos ? properties[index-startPos] : superIter->get(index);
+  const PropertyAccessBase * get(unsigned index) {
+    return index >= startPos ? *decl_props[index-startPos] : superIter->get(index);
+  }
+
+  void setKeyProperty(const PropertyAccessBase *prop) {
+    keyProperty = prop;
+  }
+};
+
+template <typename S>
+class PropertiesImpl : public Properties
+{
+  PropertiesImpl(const PropertyAccessBase ** decl_props[], unsigned numProps)
+      : Properties(decl_props, numProps)
+  {
+    for(unsigned i=0; i<numProps; i++) {
+      const PropertyAccessBase *pa = *decl_props[i];
+      pa->setup(this);
+    }
+  }
+public:
+  template <typename T>
+  static Properties *mk()
+  {
+    Properties *p = new PropertiesImpl<S>(
+        ClassTraits<T>::decl_props,
+        ClassTraits<T>::num_decl_props);
+
+    //assign consecutive IDs, starting at 2 (0 and 1 are reserved)
+    for(unsigned i=0; i<p->full_size(); i++)
+      const_cast<PropertyAccessBase *>(p->get(i))->id = i+2;
+
+    return p;
+  }
+
+  void init() override
+  {
+    //determine superclass and property start position
+    superIter = ClassTraits<S>::traits_properties;
+    startPos = superIter ? superIter->full_size() : 0;
+
+    //see if we're fixed size
+    fixedSize = 0;
+    if(superIter) {
+      fixedSize = superIter->fixedSize;
+      if(!fixedSize) return;
+    }
+    for(unsigned i=0; i<numProps; i++) {
+      const PropertyAccessBase *pa = *decl_props[i];
+      if(pa->enabled) {
+        switch(pa->storage->layout) {
+          case StoreLayout::all_embedded:
+            if(!pa->storage->fixedSize) {
+              fixedSize = 0;
+              return;
+            }
+            fixedSize += pa->storage->fixedSize;
+            break;
+          case StoreLayout::embedded_key:
+            fixedSize += ObjectKey::byteSize;
+            break;
+          case StoreLayout::property:
+            break;
+        }
+      }
+    }
   }
 };
 
 enum class SchemaCompatibility {write, read, none};
+
 /**
  * non-templated superclass for ClassInfo
  */
@@ -575,7 +623,7 @@ template<typename T, typename S>
 struct resolve_impl
 {
   bool publish(AbstractClassInfo *res) {
-    ClassTraits<S>::info->addSub(res);
+    ClassTraits<S>::traits_info->addSub(res);
     return true;
   }
 };
@@ -630,16 +678,16 @@ struct ClassInfo : public AbstractClassInfo
 {
   T *(* const getSubstitute)();
   size_t (* const size)(T *obj);
-  void * (* const initMember)(T *obj, PropertyAccessBase *pa);
+  void * (* const initMember)(T *obj, const PropertyAccessBase *pa);
   T * (* const makeObject)(ClassId classId);
   Properties * (* const getProperties)(ClassId classId);
-  bool (* const addSize)(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const get_objectid)(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags);
-  bool (* const set_objectid)(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags);
+  bool (* const addSize)(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
+  bool (* const prepareUpdate)(PrepareBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
-                      ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
+                      ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
   bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
-                      ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags);
+                      ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
   sub::Substitute<T> *substitute = nullptr;
 
@@ -651,8 +699,8 @@ struct ClassInfo : public AbstractClassInfo
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         addSize(&ClassTraits<T>::addSize),
-        get_objectid(&ClassTraits<T>::get_objectid),
-        set_objectid(&ClassTraits<T>::set_objectid),
+        get_objectkey(&ClassTraits<T>::get_objectkey),
+        prepareUpdate(&ClassTraits<T>::prepareUpdate),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
 
@@ -676,9 +724,9 @@ struct ClassInfo : public AbstractClassInfo
   }
 };
 
-#define FIND_CLS(__Tpl, __cid) static_cast<ClassInfo<__Tpl> *>(ClassTraits<__Tpl>::info->resolve(__cid))
-#define RESOLVE_SUB(__cid) static_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__cid))
-#define RESOLVE_SUB_TI(__ti) static_cast<ClassInfo<T> *>(ClassTraits<T>::info->doresolve(__ti))
+#define FIND_CLS(__Tpl, __cid) static_cast<ClassInfo<__Tpl> *>(ClassTraits<__Tpl>::traits_info->resolve(__cid))
+#define RESOLVE_SUB(__cid) static_cast<ClassInfo<T> *>(ClassTraits<T>::traits_info->doresolve(__cid))
+#define RESOLVE_SUB_TI(__ti) static_cast<ClassInfo<T> *>(ClassTraits<T>::traits_info->doresolve(__ti))
 
 /**
  * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a templated
@@ -703,11 +751,11 @@ class ClassTraitsBase
    */
   static size_t size(T *obj)
   {
-    if(properties->fixedSize) return properties->fixedSize;
+    if(traits_properties->fixedSize) return traits_properties->fixedSize;
 
     size_t size = 0;
-    for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
-      auto pa = properties->get(i);
+    for(unsigned i=0, sz=traits_properties->full_size(); i<sz; i++) {
+      auto pa = traits_properties->get(i);
 
       if(!pa->enabled) continue;
 
@@ -717,26 +765,37 @@ class ClassTraitsBase
   }
 
 public:
-  static const unsigned keyPropertyId = 0;
-
-  static const char *name;
-  static ClassInfo<T, SUP> *info;
-  static Properties * properties;
-  static PropertyAccessBase * decl_props[];
+  static bool traits_initialized;
+  static const char *traits_classname;
+  static ClassInfo<T, SUP> *traits_info;
+  static Properties * traits_properties;
+  static const PropertyAccessBase ** decl_props[];
   static const unsigned num_decl_props;
+
+  /**
+   * perform lazy initialization of static structures (only once).
+   */
+  static void init() {
+    if(!traits_initialized) {
+      traits_initialized = true;
+
+      traits_properties->init();
+      traits_info->publish();
+    }
+  }
 
   /**
    * @return the objectid accessor for this class
    */
   static PropertyAccess<T, ObjectId> *objectIdAccess() {
-    return properties->objectIdAccess<T>();
+    return traits_properties->objectIdAccess<T>();
   }
 
   static size_t bufferSize(T *obj, ClassId *clsId=nullptr)
   {
     const std::type_info &ti = typeid(*obj);
-    if(ti == info->typeinfo) {
-      if(clsId) *clsId = info->classId;
+    if(ti == traits_info->typeinfo) {
+      if(clsId) *clsId = traits_info->classId;
       return size(obj);
     }
     else {
@@ -748,9 +807,9 @@ public:
 
   static T *getSubstitute()
   {
-    if(info->substitute) return info->substitute->getPtr();
+    if(traits_info->substitute) return traits_info->substitute->getPtr();
 
-    for(auto &sub : info->subs) {
+    for(auto &sub : traits_info->subs) {
       ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
       T *subst = si->getSubstitute();
       if(subst != nullptr) return subst;
@@ -758,9 +817,9 @@ public:
     return nullptr;
   }
 
-  static void * initMember(T *obj, PropertyAccessBase *pa)
+  static void * initMember(T *obj, const PropertyAccessBase *pa)
   {
-    if(pa->classId == info->classId)
+    if(pa->classId == traits_info->classId)
       return pa->initMember(obj);
     else if(pa->classId)
       return RESOLVE_SUB(pa->classId)->initMember(obj, pa);
@@ -769,52 +828,47 @@ public:
 
   static Properties * getProperties(ClassId classId)
   {
-    if(classId == info->classId)
-      return properties;
+    if(classId == traits_info->classId)
+      return traits_properties;
     else if(classId)
       return RESOLVE_SUB(classId)->getProperties(classId);
     return nullptr;
   }
 
-  static bool addSize(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool addSize(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info->classId) {
+    if(pa->classId == traits_info->classId) {
       size += pa->storage->size(obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->addSize(obj, pa, size, FLAG_DN);
     }
     return false;
   }
 
-  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true)
+  static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true)
   {
-    ObjectId oid = 0;
-    if(!get_objectid(obj, oid) && force) throw invalid_pointer_error();
-    return oid;
+    ObjectKey *key;
+    if(!get_objectkey(obj, key) && force) throw invalid_pointer_error();
+    return key;
   }
 
-  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true)
+  static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags=FLAGS_ALL)
   {
-    if(!set_objectid(obj, oid) && force) throw invalid_pointer_error();
-  }
-
-  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags=FLAGS_ALL)
-  {
-    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-    if(ohm) {
-      oid = ohm->objectId;
+    object_handler<T> *handler = std::get_deleter<object_handler<T>>(obj);
+    if(handler) {
+      key = handler;
       return true;
     }
     else {
-      if(UP && ClassTraits<SUP>::get_objectid(obj, oid, FLAG_UP)) return true;
+      if(UP && ClassTraits<SUP>::get_objectkey(obj, key, FLAG_UP)) return true;
       if(DN) {
-        for(auto &sub : info->subs) {
+        for(auto &sub : traits_info->subs) {
           ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
-          if(si->get_objectid(obj, oid, FLAG_DN)) return true;
+          if(si->get_objectkey(obj, key, FLAG_DN)) return true;
         }
       }
     }
@@ -831,7 +885,7 @@ public:
     else {
       if(UP && ClassTraits<SUP>::set_objectid(obj, oid, FLAG_UP)) return true;
       if(DN) {
-        for(auto &sub : info->subs) {
+        for(auto &sub : traits_info->subs) {
           ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
           if(si->set_objectid(obj, oid, FLAG_DN)) return true;
         }
@@ -840,15 +894,30 @@ public:
     return false;
   }
 
-  static bool save(WriteTransaction *wtr,
-                   ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
+  static bool prepareUpdate(PrepareBuf &buf,
+                          T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info->classId) {
+    if(pa->classId == traits_info->classId) {
+      pa->storage->prepareUpdate(buf, obj, pa, size);
+      return true;
+    }
+    else if(pa->classId) {
+      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
+        return true;
+      return DN && RESOLVE_SUB(pa->classId)->prepareUpdate(buf, obj, pa, size, FLAG_DN);
+    }
+    return false;
+  }
+
+  static bool save(WriteTransaction *wtr,
+                   ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
+  {
+    if(pa->classId == traits_info->classId) {
       pa->storage->save(wtr, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->save(wtr, classId, objectId, obj, pa, mode, FLAG_DN);
     }
@@ -856,15 +925,15 @@ public:
   }
 
   static bool load(ReadTransaction *tr,
-                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, PropertyAccessBase *pa,
+                   ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa,
                    StoreMode mode=StoreMode::force_none, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == info->classId) {
+    if(pa->classId == traits_info->classId) {
       pa->storage->load(tr, buf, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::info->classId != info->classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->load(tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
     }
@@ -873,7 +942,7 @@ public:
 
   template <typename TV>
   static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != info->classId)
+    if(pa->classId != traits_info->classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
@@ -886,7 +955,7 @@ public:
    */
   template <typename TV>
   static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != info->classId)
+    if(pa->classId != traits_info->classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
@@ -903,7 +972,7 @@ template <typename T> struct ClassTraitsAbstract
 
   static T *makeObject(ClassId classId)
   {
-    if(classId == ClassTraits<T>::info->classId) {
+    if(classId == ClassTraits<T>::traits_info->classId) {
       throw persistence_error("abstract class cannot be instantiated");
     }
     else if(classId)
@@ -921,7 +990,7 @@ template <typename T> struct ClassTraitsConcrete
 
   static T *makeObject(ClassId classId)
   {
-    if(classId == ClassTraits<T>::info->classId) {
+    if(classId == ClassTraits<T>::traits_info->classId) {
       return new T();
     }
     else if(classId)
@@ -937,13 +1006,15 @@ template <>
 struct ClassTraits<EmptyClass>
 {
   static const bool isAbstract = true;
-  static ClassInfo<EmptyClass> *info;
-  static Properties * properties;
+  static ClassInfo<EmptyClass> *traits_info;
+  static Properties * traits_properties;
   static const unsigned num_decl_props = 0;
-  static PropertyAccessBase * decl_props[0];
+  static const PropertyAccessBase ** decl_props[0];
 
   static EmptyClass *makeObject(ClassId classId) {return nullptr;}
   static Properties * getProperties(ClassId classId) {return nullptr;}
+
+  static void init() {}
 
   template <typename T>
   static T *getSubstitute() {
@@ -958,37 +1029,37 @@ struct ClassTraits<EmptyClass>
     return 0;
   }
   template <typename T>
-  static void * initMember(T *obj, PropertyAccessBase *pa) {
+  static PropertyAccess<T, ObjectId> *objectIdAccess() {
     return nullptr;
   }
   template <typename T>
-  static bool addSize(T *obj, PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static void * initMember(T *obj, const PropertyAccessBase *pa) {
+    return nullptr;
+  }
+  template <typename T>
+  static bool addSize(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static ObjectId getObjectId(const std::shared_ptr<T> &obj, bool force=true) {
-    return 0;
+  static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true) {
+    return nullptr;
   }
   template <typename T>
-  static void setObjectId(const std::shared_ptr<T> &obj, ObjectId oid, bool force=true) {
-    return 0;
-  }
-  template <typename T>
-  static bool get_objectid(const std::shared_ptr<T> &obj, ObjectId &oid, unsigned flags) {
+  static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {
     return false;
   }
   template <typename T>
-  static bool set_objectid(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags) {
+  static bool prepareUpdate(PrepareBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
   static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj,
-                   PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
+                   const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }
   template <typename T>
   static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
-                   PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
+                   const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }
   template <typename T, typename TV>
@@ -1002,13 +1073,13 @@ struct ClassTraits<EmptyClass>
 template<typename T>
 static PropertyType object_vector_t() {
   using Traits = ClassTraits<T>;
-  return PropertyType(Traits::name, true);
+  return PropertyType(Traits::traits_classname, true);
 }
 
 template<typename T>
 static PropertyType object_t() {
   using Traits = ClassTraits<T>;
-  return PropertyType(Traits::name);
+  return PropertyType(Traits::traits_classname);
 }
 
 } //kv

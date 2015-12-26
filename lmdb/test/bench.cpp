@@ -116,9 +116,9 @@ void testColored2DPointRead(KeyValueStore *kv)
   BEG()
   auto rtxn = kv->beginRead();
   long count = 0;
+  ObjectKey key;
   for(auto cursor = rtxn->openCursor<Colored2DPoint>(); !cursor->atEnd(); cursor->next()) {
-    ObjectId id;
-    Colored2DPoint *loaded = cursor->get(&id);
+    Colored2DPoint *loaded = cursor->get(key);
 
     if(loaded) {
       count++;
@@ -301,6 +301,7 @@ int main()
   test_lmdb_read();
 #endif
 #if 0
+
   test_lmdb_write2a();
   test_lmdb_read2();
 #endif

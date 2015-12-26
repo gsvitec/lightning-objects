@@ -24,8 +24,11 @@ static const unsigned PropertyId_off = ClassId_sz + ObjectId_sz;
 #define SK_CONSTR(nm, c, o, p) byte_t nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
 *(PropertyId *)(nm+PropertyId_off) = p
 
-#define SK_RET(nm, k) nm.classId = *(ClassId *)k; nm.objectId = *(ObjectId *)(k+ObjectId_off); \
-nm.propertyId = *(PropertyId *)(k+PropertyId_off)
+#define SK_OBJK(nm, ok) byte_t nm[StorageKey::byteSize]; *(ClassId *)nm = *(ClassId *)ok; \
+*(ObjectId *)(nm+ObjectId_off) = *(ObjectId *)(ok+ObjectId_off); \
+*(PropertyId *)(nm+PropertyId_off) = 0
+
+#define SK_RET(nm, k) nm.classId = *(ClassId *)k; nm.objectId = *(ObjectId *)(k+ObjectId_off)
 
 #define SK_CLASSID(k) *(ClassId *)k
 #define SK_OBJID(k) *(ObjectId *)(k+ObjectId_off)
@@ -119,7 +122,7 @@ protected:
     m_cursor.close();
   }
 
-  void get(StorageKey &key, ReadBuf &rb) override
+  void get(ObjectKey &key, ReadBuf &rb) override
   {
     ::lmdb::val dataval{};
     if(m_cursor.get(m_keyval, dataval, MDB_GET_CURRENT)) {
@@ -264,11 +267,10 @@ protected:
   void close() {
   }
 
-  void get(StorageKey &key, ReadBuf &rb)
+  void get(ObjectKey &key, ReadBuf &rb) override
   {
     key.classId = SK_CLASSID(m_data);
     key.objectId = SK_OBJID(m_data);
-    key.propertyId = SK_PROPID(m_data);
 
     ::lmdb::val keyval {m_data, StorageKey::byteSize};
     ::lmdb::val dataval;
@@ -319,7 +321,7 @@ protected:
     keyval.assign(sk, sizeof(sk));
 
     if(m_dbi.get(m_txn, keyval, m_vectordata)) {
-      m_size = m_vectordata.size() / StorageKey::byteSize;
+      m_size = m_vectordata.size() / ObjectKey::byteSize;
 
       m_currentClassId = SK_CLASSID(m_vectordata.data<byte_t>());
       m_currentObjectId = SK_OBJID(m_vectordata.data<byte_t>());
@@ -332,7 +334,7 @@ protected:
   bool next() override
   {
     if(++m_index < m_size) {
-      byte_t *data = m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize;
+      byte_t *data = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
       m_currentClassId = SK_CLASSID(data);
       m_currentObjectId = SK_OBJID(data);
       return true;
@@ -342,7 +344,8 @@ protected:
 
   void erase() override
   {
-    const byte_t *keydata = m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize;
+    const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+    SK_OBJK(keydata, kp);
     ::lmdb::val keyval;
     keyval.assign(keydata, StorageKey::byteSize);
     m_dbi.del(m_txn, keyval);
@@ -352,10 +355,11 @@ protected:
     m_index = m_size = 0;
   }
 
-  void get(StorageKey &key, ReadBuf &rb) override
+  void get(ObjectKey &key, ReadBuf &rb) override
   {
     if(m_index < m_size) {
-      const byte_t *keydata = m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize;
+      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+      SK_OBJK(keydata, kp);
 
       ::lmdb::val keyval;
       keyval.assign(keydata, StorageKey::byteSize);
@@ -373,7 +377,9 @@ protected:
 
   const byte_t *getObjectData() override {
     if(m_index < m_size) {
-      const byte_t *keydata = m_vectordata.data<byte_t>() + m_index * StorageKey::byteSize;
+      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+      SK_OBJK(keydata, kp);
+
       ::lmdb::val keyval;
       keyval.assign(keydata, StorageKey::byteSize);
       ::lmdb::val dataval;
@@ -478,7 +484,7 @@ class KeyValueStoreImpl : public KeyValueStore
 protected:
   void loadSaveClassMeta(
       AbstractClassInfo *classInfo,
-      PropertyAccessBase * currentProps[],
+      const PropertyAccessBase ** currentProps[],
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
 
@@ -897,7 +903,7 @@ MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBas
 
 void KeyValueStoreImpl::loadSaveClassMeta(
     AbstractClassInfo *classInfo,
-    PropertyAccessBase * currentProps[],
+    const PropertyAccessBase ** currentProps[],
     unsigned numProps,
     vector<PropertyMetaInfoPtr> &propertyInfos)
 {
@@ -942,7 +948,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     //Save properties
     for(unsigned i=0; i < numProps; i++) {
-      const PropertyAccessBase *prop = currentProps[i];
+      const PropertyAccessBase *prop = *currentProps[i];
       MDB_val val = make_propertyval(i+1, prop);
       ::lmdb::dbi_put(txn, m_dbi_meta.handle(), (MDB_val *)key, &val, 0);
       free(val.mv_data);

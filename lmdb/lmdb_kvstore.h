@@ -36,6 +36,22 @@ public:
   };
 };
 
+/**
+ * a storage key. This structure must not be changed (lest db files become unreadable)
+ */
+struct StorageKey
+{
+  static const unsigned byteSize = ClassId_sz + ObjectId_sz + PropertyId_sz;
+
+  ClassId classId;
+  ObjectId objectId;
+  PropertyId propertyId; //will be 0 if this is an object key
+
+  StorageKey() : classId(0), objectId(0), propertyId(0) {}
+  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId)
+      : classId(classId), objectId(objectId), propertyId(propertyId) {}
+};
+
 } //lmdb
 } //persistence
 } //flexis

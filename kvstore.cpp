@@ -11,8 +11,10 @@ namespace persistence {
 
 using namespace std;
 
-Properties * ClassTraits<kv::EmptyClass>::properties {nullptr};
-ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
+const ObjectKey ObjectKey::NIL;
+
+Properties * ClassTraits<kv::EmptyClass>::traits_properties {nullptr};
+ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
 
 string incompatible_schema_error::make_what(const char *className)
 {
@@ -37,7 +39,7 @@ inline bool streq(string s1, const char *s2) {
 }
 
 bool KeyValueStoreBase::updateClassSchema(
-    AbstractClassInfo *classInfo, PropertyAccessBase * properties[], unsigned numProperties,
+    AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[], unsigned numProperties,
     vector<string> &errors)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
@@ -52,7 +54,7 @@ bool KeyValueStoreBase::updateClassSchema(
       PropertyMetaInfoPtr &pi = propertyInfos[index];
       if(pi->storeLayout != StoreLayout::property) dbShallowCount++;
 
-      const PropertyAccessBase * pa = properties[index];
+      const PropertyAccessBase * pa = *properties[index];
       if(pa->type.id != pi->typeId
          || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
          || pi->isVector != pa->type.isVector) {
@@ -66,7 +68,7 @@ bool KeyValueStoreBase::updateClassSchema(
     //2. we cannot cope with deleted shallow properties in non-leaf classes
     if(!classInfo->subs.empty()) {
       unsigned shallowCount = 0;
-      for(unsigned i=0; i<numProperties; i++) if(properties[i]->storage->layout != StoreLayout::property)
+      for(unsigned i=0; i<numProperties; i++) if((*properties[i])->storage->layout != StoreLayout::property)
           shallowCount++;
       if(dbShallowCount > shallowCount) {
         classInfo->compatibility = SchemaCompatibility::none;
@@ -79,7 +81,7 @@ bool KeyValueStoreBase::updateClassSchema(
     if(index < numProperties) {
       classInfo->compatibility = SchemaCompatibility::read;
       for(; index < numProperties; index++) {
-        properties[index]->enabled = false;
+        const_cast<PropertyAccessBase *>(*properties[index])->enabled = false;
       }
     }
     return true;
@@ -207,6 +209,13 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
     getData(readBuf, COLLINFO_CLSID, collectionId, 0);
     return readBuf.null() ? nullptr : readCollectionInfo(readBuf);
   }
+}
+
+byte_t *PrepareBuf::data(size_t offset) {
+  if(!m_data) {
+    m_txn->getData(*this, m_key.classId, m_key.objectId, 0);
+  }
+  return m_data + offset;
 }
 
 void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)

@@ -14,18 +14,18 @@ using namespace std;
 
 void testColored2DPoint(KeyValueStore *kv) 
 {
-  long id = 0;
+  ObjectKey key;
 
   Colored2DPoint p;
   p.set(2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.5f);
 
   auto wtxn = kv->beginWrite();
-  id = wtxn->putObject(p);
+  wtxn->saveObject(p, key);
   wtxn->commit();
 
   Colored2DPoint *p2;
   auto rtxn = kv->beginRead();
-  p2 = rtxn->loadObject<Colored2DPoint>(id);
+  p2 = rtxn->loadObject<Colored2DPoint>(key);
   rtxn->abort();
 
   assert(p2 && p2->x == 2.0f && p2->y == 3.0f && p2->r == 4.0f && p2->g == 5.0f && p2->b == 6.0f && p2->a == 7.5f);
@@ -34,7 +34,7 @@ void testColored2DPoint(KeyValueStore *kv)
 
 void testColoredPolygon(KeyValueStore *kv)
 {
-  long id = 0;
+  ObjectKey key;
 
   auto wtxn = kv->beginWrite();
 
@@ -53,13 +53,13 @@ void testColoredPolygon(KeyValueStore *kv)
   p3.set(3.0f, 3.0f, 3.0f, 3.0f, 3.0f, 3.0f);
   polygon.pts.push_back(p3);
 
-  id = wtxn->putObject(polygon);
+  wtxn->saveObject(polygon, key);
 
   wtxn->commit();
 
   ColoredPolygon *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->loadObject<ColoredPolygon>(id);
+  loaded = rtxn->loadObject<ColoredPolygon>(key);
   rtxn->abort();
 
   assert(loaded && loaded->pts.size() == 3);
@@ -125,7 +125,7 @@ void testClassCursor(KeyValueStore *kv)
 
 void testValueVectorProperty(KeyValueStore *kv)
 {
-  ObjectId oid;
+  ObjectKey key;
   {
     OtherThingA hans("Hans");
     hans.testnames.push_back("Eva");
@@ -133,20 +133,51 @@ void testValueVectorProperty(KeyValueStore *kv)
 
     auto wtxn = kv->beginWrite();
 
-    oid = wtxn->putObject(hans);
+    wtxn->saveObject(hans, key);
 
     wtxn->commit();
   }
   {
     auto rtxn = kv->beginRead();
 
-    OtherThingA *hans = rtxn->loadObject<OtherThingA>(oid);
+    OtherThingA *hans = rtxn->loadObject<OtherThingA>(key);
     assert(hans && hans->testnames.size() == 2);
     assert(hans->testnames[0] == "Eva");
     assert(hans->testnames[1] == "Rudi");
 
     rtxn->abort();
     delete hans;
+  }
+}
+
+void testObjectMappings(KeyValueStore *kv)
+{
+  ObjectKey key;
+  {
+    ObjectPropertyTest test(1, 2, 3, "testname");
+    test.fso_vect.push_back(FixedSizeObject(4, 5));
+    test.vso_vect.push_back(VariableSizeObject(6, "sechs"));
+    test.fso_vect.push_back(FixedSizeObject(7, 8));
+    test.vso_vect.push_back(VariableSizeObject(9, "neun"));
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->saveObject(test, key);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    ObjectPropertyTest *test = rtxn->loadObject<ObjectPropertyTest>(key);
+    assert(test && test->fso_vect.size() == 2 && test->vso_vect.size() == 2);
+    assert(test->fso.number1 == 1 && test->fso.number2 == 2);
+    assert(test->vso.number == 3 && test->vso.name == "testname");
+    assert(test->fso_vect[0].number1 == 4 && test->fso_vect[1].number1 == 7);
+    assert(test->vso_vect[0].number == 6 && test->vso_vect[1].number == 9);
+
+    rtxn->abort();
+    delete test;
   }
 }
 
@@ -163,20 +194,14 @@ void testPolymorphism(KeyValueStore *kv)
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
 
-  long val = -1;
-  WriteBuf bf(10);
-  ValueTraits<long>::putBytes(bf, val);
-  ReadBuf rbuf;
-  rbuf.start(bf.data()+2, 9);
-  ValueTraits<long>::getBytes(rbuf, val);
-
   auto wtxn = kv->beginWrite();
-  ObjectId id = wtxn->putObject(si);
+  ObjectKey key;
+  wtxn->saveObject(si, key);
   wtxn->commit();
 
   player::SourceInfo *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->loadObject<player::SourceInfo>(id);
+  loaded = rtxn->loadObject<player::SourceInfo>(key);
   rtxn->abort();
 
   assert(loaded && loaded->userOverlays.size() == 2
@@ -192,7 +217,7 @@ using OtherThingPtr = shared_ptr<OtherThing>;
 
 void testLazyPolymorphicCursor(KeyValueStore *kv)
 {
-  ObjectId sv_id;
+  ObjectKey key;
   {
     //insert test data
     SomethingWithALazyVector sv;
@@ -206,10 +231,10 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     //save the object proper
-    sv_id = wtxn->putObject(sv);
+    wtxn->saveObject(sv, key);
 
     //since otherThings is lazy, we need to kick it separately
-    wtxn->updateMember(sv_id, sv, PROPERTY(SomethingWithALazyVector, otherThings));
+    wtxn->updateMember(key, sv, PROPERTY(SomethingWithALazyVector, otherThings));
 
     wtxn->commit();
   }
@@ -218,10 +243,10 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
-    rtxn->loadMember(sv_id, *loaded, PROPERTY(SomethingWithALazyVector, otherThings));
+    rtxn->loadMember(key.objectId, *loaded, PROPERTY(SomethingWithALazyVector, otherThings));
 
     assert(loaded && loaded->otherThings.size() == 2);
     for (auto &ot : loaded->otherThings)
@@ -235,11 +260,11 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
-    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(key.objectId, PROPERTY_ID(SomethingWithALazyVector, otherThings));
     for (; !cursor->atEnd(); cursor->next()) {
       count++;
       auto ot = cursor->get();
@@ -255,11 +280,11 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(sv_id);
+    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
-    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(sv_id, PROPERTY_ID(SomethingWithALazyVector, otherThings));
+    auto cursor = rtxn->openCursor<SomethingWithALazyVector, OtherThing>(key.objectId, PROPERTY_ID(SomethingWithALazyVector, otherThings));
     if(!cursor->atEnd()) {
       for (; !cursor->atEnd(); cursor->next()) {
         count++;
@@ -601,11 +626,12 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
 
   auto wtxn = kv->beginWrite();
-  ObjectId id = wtxn->putObject(*si);
+  ObjectKey key;
+  wtxn->saveObject(*si, key);
   wtxn->commit();
 
   auto rtxn = kv->beginRead();
-  flexis::player::SourceInfo *si2 = rtxn->loadObject<flexis::player::SourceInfo>(id);
+  flexis::player::SourceInfo *si2 = rtxn->loadObject<flexis::player::SourceInfo>(key);
   rtxn->abort();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
@@ -616,7 +642,7 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 
 void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
 {
-  ObjectId objectId;
+  ObjectKey key;
   {
     SomethingWithAnEmbbededObjectVector sweov;
     sweov.name = "sweov";
@@ -632,13 +658,13 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
     sweov.objects2.push_back(VariableSizeObject(5, "Regensburg"));
 
     auto wtxn = kv->beginWrite();
-    objectId = wtxn->putObject(sweov);
+    wtxn->saveObject(sweov, key);
     wtxn->commit();
   }
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnEmbbededObjectVector *loaded = rtxn->loadObject<SomethingWithAnEmbbededObjectVector>(objectId);
+    SomethingWithAnEmbbededObjectVector *loaded = rtxn->loadObject<SomethingWithAnEmbbededObjectVector>(key);
 
     assert(loaded && loaded->name == "sweov" && loaded->objects.size() == 4 \
            && loaded->objects[0].number1 == 1 \
@@ -696,7 +722,7 @@ void testGrowDatabase(KeyValueStore *kv)
 
 void testObjectIterProperty(KeyValueStore *kv)
 {
-  ObjectId objectId;
+  ObjectKey key;
 
   {
     auto wtxn = kv->beginWrite();
@@ -708,14 +734,14 @@ void testObjectIterProperty(KeyValueStore *kv)
 
     wtxn->putCollection(soi, PROPERTY(SomethingWithAnObjectIter, history), hist);
 
-    objectId = wtxn->putObject(soi);
+    wtxn->saveObject(soi, key);
 
     wtxn->commit();
   }
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnObjectIter *soi = rtxn->loadObject<SomethingWithAnObjectIter>(objectId);
+    SomethingWithAnObjectIter *soi = rtxn->loadObject<SomethingWithAnObjectIter>(key);
     vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
 
     assert(hist.size() == 20);
@@ -724,9 +750,9 @@ void testObjectIterProperty(KeyValueStore *kv)
   }
 }
 
-ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
+ObjectKey setupTestCompatibleDatabase(KeyValueStore *kv)
 {
-  ObjectId oid;
+  ObjectKey key;
   {
     auto wtxn = kv->beginWrite();
 
@@ -748,45 +774,52 @@ ObjectId setupTestCompatibleDatabase(KeyValueStore *kv)
     w.toplevelVirtual1 = kv::make_obj<SomethingVirtual1>(4, "Karl", "der Große");
     w.toplevelVirtual2 = kv::make_obj<SomethingVirtual2>(5, "Siegfried", "Drachentöten");
 
-    oid = wtxn->putObject(w);
+    wtxn->saveObject(w, key);
 
     //we need to kick virtualsLazy separately
     w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual>(1, "Albrecht"));
     w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual1>(2, "Hannes", "Anwalt"));
     w.virtualsLazy.push_back(kv::make_obj<SomethingVirtual2>(3, "Friedrich", "der Große"));
-    wtxn->updateMember(oid, w, PROPERTY(Wonderful, virtualsLazy));
+    wtxn->updateMember(key, w, PROPERTY(Wonderful, virtualsLazy));
 
     wtxn->commit();
   }
   {
     auto rtxn = kv->beginRead();
 
-    auto loaded = rtxn->getObject<Wonderful>(oid);
+    auto loaded = rtxn->getObject<Wonderful>(key.objectId);
 
     assert(loaded->abstractsEmbedded.size() == 2 && loaded->virtualsEmbedded.size() == 3 && loaded->virtualsPointers.size() == 3);
 
     rtxn->abort();
   }
-  return oid;
+  return key;
 }
 
 #define IS_TYPE(__val, __cls) typeid(__val) == typeid(__cls)
 
-void testCompatibleDatabase(ObjectId oid)
+void testCompatibleDatabase(ObjectKey key)
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   //need to cleanup static data for test only
-  ClassTraits<SomethingAbstract>::info->classId = 0;
-  ClassTraits<SomethingAbstract>::info->subs.clear();
-  ClassTraits<SomethingConcrete1>::info->classId = 0;
-  ClassTraits<SomethingConcrete2>::info->classId = 0;
-  ClassTraits<SomethingVirtual>::info->classId = 0;
-  ClassTraits<SomethingVirtual>::info->subs.clear();
-  ClassTraits<SomethingVirtual1>::info->classId = 0;
-  ClassTraits<SomethingVirtual2>::info->classId = 0;
-  ClassTraits<SomethingVirtual2>::info->subs.clear();
-  ClassTraits<SomethingVirtual3>::info->classId = 0;
+  ClassTraits<SomethingAbstract>::traits_info->classId = 0;
+  ClassTraits<SomethingAbstract>::traits_info->subs.clear();
+  ClassTraits<SomethingAbstract>::traits_initialized = false;
+  ClassTraits<SomethingConcrete1>::traits_info->classId = 0;
+  ClassTraits<SomethingConcrete1>::traits_initialized = false;
+  ClassTraits<SomethingConcrete2>::traits_info->classId = 0;
+  ClassTraits<SomethingConcrete2>::traits_initialized = false;
+  ClassTraits<SomethingVirtual>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual>::traits_info->subs.clear();
+  ClassTraits<SomethingVirtual>::traits_initialized = false;
+  ClassTraits<SomethingVirtual1>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual1>::traits_initialized = false;
+  ClassTraits<SomethingVirtual2>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual2>::traits_info->subs.clear();
+  ClassTraits<SomethingVirtual2>::traits_initialized = false;
+  ClassTraits<SomethingVirtual3>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual3>::traits_initialized = false;
 
   kv->putSchema<SomethingAbstract, SomethingVirtual, SomethingVirtual2, Wonderful>();
   kv->registerSubstitute<SomethingVirtual,UnknownVirtual>(); //substitute for missing SomethingVirtual1
@@ -795,7 +828,7 @@ void testCompatibleDatabase(ObjectId oid)
     //see how embedded and non-embedded relationships behave
     auto rtxn = kv->beginRead();
 
-    auto loaded = rtxn->getObject<Wonderful>(oid);
+    auto loaded = rtxn->getObject<Wonderful>(key.objectId);
 
     assert(loaded->abstractsEmbedded.empty() && loaded->virtualsEmbedded.size() == 3 && loaded->virtualsPointers.size() == 3);
     assert(loaded->virtualsEmbedded[0]->name == "Gabi" && loaded->virtualsEmbedded[1]->name == "Girlande" && loaded->virtualsEmbedded[1]->unknown && loaded->virtualsEmbedded[2]->name == "Maria");
@@ -832,7 +865,7 @@ void testCompatibleDatabase(ObjectId oid)
     //test lazy collection cursor
     auto rtxn = kv->beginRead();
 
-    auto loaded = rtxn->getObject<Wonderful>(oid);
+    auto loaded = rtxn->getObject<Wonderful>(key.objectId);
 
     unsigned count = 0, unknownCount=0;
     auto cursor = rtxn->openCursor<Wonderful, SomethingVirtual>(loaded, PROPERTY_ID(Wonderful, virtualsLazy));
@@ -855,7 +888,8 @@ int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
-  kv->putSchema<FixedSizeObject,
+  kv->putSchema<ObjectPropertyTest,
+      FixedSizeObject,
       VariableSizeObject,
       SomethingWithAnEmbbededObjectVector,
       SomethingWithAnObjectIter,
@@ -896,14 +930,14 @@ int main()
   testGrowDatabase(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
-
-#endif
   testClassCursor(kv);
+  testObjectMappings(kv);
 
-  ObjectId oid = setupTestCompatibleDatabase(kv);
+  ObjectKey key = setupTestCompatibleDatabase(kv);
   delete kv;
 
-  testCompatibleDatabase(oid);
+  testCompatibleDatabase(key);
+#endif
 
   return 0;
 }
