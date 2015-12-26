@@ -1,12 +1,26 @@
 //
 // Created by cse on 12/22/15.
 //
+
+#ifdef _MSC_VER
+#define VA_NUM_ARGS(...) VA_NUM_ARGS_IMPL_((__VA_ARGS__, 26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1))
+#define VA_NUM_ARGS_IMPL_(tuple) VA_NUM_ARGS_IMPL tuple
+#define VA_NUM_ARGS_IMPL(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21,_22,_23,_24,_25,_26,N,...) N
+
+#define macro_dispatcher(macro, ...) macro_dispatcher_(macro, VA_NUM_ARGS(__VA_ARGS__))
+#define macro_dispatcher_(macro, nargs) macro_dispatcher__(macro, nargs)
+#define macro_dispatcher__(macro, nargs) macro_dispatcher___(macro, nargs)
+#define macro_dispatcher___(macro, nargs) macro ## nargs
+
+#else
+
 #define VA_NUM_ARGS(...) VA_NUM_ARGS_IMPL(__VA_ARGS__, 26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1)
 #define VA_NUM_ARGS_IMPL(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21,_22,_23,_24,_25,_26,N,...) N
 
 #define macro_dispatcher(_func, ...) macro_dispatcher_(_func, VA_NUM_ARGS(__VA_ARGS__))
 #define macro_dispatcher_(_func, _nargs) macro_dispatcher__(_func, _nargs)
 #define macro_dispatcher__(_func, _nargs) _func ## _nargs
+#endif
 
 #define prop_decl(...) macro_dispatcher(prop_decl, __VA_ARGS__)(__VA_ARGS__);
 #define prop_decl1(_a) *_a

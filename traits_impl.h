@@ -9,10 +9,11 @@
 // more convenient
 ////////////////////////////////////////////////////////////////////////////
 
-#define prop_impl(_cls, ...) template<> const PropertyAccessBase **ClassTraitsBase<_cls>::decl_props[] = \
-{macro_dispatcher(prop_impl, __VA_ARGS__)(_cls, __VA_ARGS__)}
+#define prop_impl(...) macro_dispatcher(prop_impl, __VA_ARGS__)
+#define prop_impl_so(_cls, ...) template<> const PropertyAccessBase **ClassTraitsBase<_cls>::decl_props[] = \
+{prop_impl(__VA_ARGS__)(_cls, __VA_ARGS__)}
 #define prop_impl_sub(_cls, sup, ...) template<> const PropertyAccessBase **ClassTraitsBase<_cls, sup>::decl_props[] = \
-{macro_dispatcher(prop_impl, __VA_ARGS__)(_cls, __VA_ARGS__)}
+{prop_impl(__VA_ARGS__)(_cls, __VA_ARGS__)}
 
 #define CT(_c, _x) &ClassTraits<_c>::_x
 
@@ -88,7 +89,7 @@ public ClassTraitsBase<_cls>, public ClassTraitsConcrete<_cls>{ \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
-prop_impl(_cls, __VA_ARGS__);
+prop_impl_so(_cls, __VA_ARGS__);
 
 /**
  * start the mapping for an abstract class
@@ -101,7 +102,7 @@ public ClassTraitsBase<_cls>, public ClassTraitsAbstract<_cls>{ \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
-prop_impl(_cls, __VA_ARGS__);
+prop_impl_so(_cls, __VA_ARGS__);
 
 /**
  * start the mapping for a class with a superclass
