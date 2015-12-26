@@ -338,6 +338,8 @@ struct ValueTraits<float> : public ValueTraitsFloat<float> {};
 template <>
 struct ValueTraits<double> : public ValueTraitsFloat<double> {};
 
+class Properties;
+
 /**
  * non-templated base class for property accessors
  */
@@ -357,6 +359,8 @@ struct PropertyAccessBase
   void *initMember(void *obj) const {
     return storage->initMember(obj, this);
   }
+
+  virtual void setup(Properties *props) const {}
 };
 
 /**
@@ -405,16 +409,15 @@ struct EmptyClass
 class Properties
 {
 protected:
-  const PropertyAccessBase * const keyProperty;
+  const PropertyAccessBase * keyProperty = nullptr;
   const unsigned numProps;
   const PropertyAccessBase *** const decl_props;
   Properties * superIter = nullptr;
   unsigned startPos = 0;
 
-  Properties(const PropertyAccessBase ** decl_props[], unsigned numProps, const PropertyAccessBase * keyProperty)
+  Properties(const PropertyAccessBase ** decl_props[], unsigned numProps)
       : decl_props(decl_props),
-        numProps(numProps),
-        keyProperty(keyProperty)
+        numProps(numProps)
   {}
 
   Properties(const Properties& mit) = delete;
@@ -439,22 +442,32 @@ public:
   const PropertyAccessBase * get(unsigned index) {
     return index >= startPos ? *decl_props[index-startPos] : superIter->get(index);
   }
+
+  void setKeyProperty(const PropertyAccessBase *prop) {
+    keyProperty = prop;
+  }
 };
 
 template <typename S>
 class PropertiesImpl : public Properties
 {
-  PropertiesImpl(const PropertyAccessBase ** decl_props[], unsigned numProps, const PropertyAccessBase * keyProperty)
-      : Properties(decl_props, numProps, keyProperty) {}
+  PropertiesImpl(const PropertyAccessBase ** decl_props[], unsigned numProps)
+      : Properties(decl_props, numProps)
+  {
+    for(unsigned i=0; i<numProps; i++) {
+      const PropertyAccessBase *pa = *decl_props[i];
+      pa->setup(this);
+    }
+  }
 public:
   template <typename T>
-  static Properties *mk(const PropertyAccessBase * key = nullptr)
+  static Properties *mk()
   {
     Properties *p = new PropertiesImpl<S>(
         ClassTraits<T>::decl_props,
-        ClassTraits<T>::num_decl_props,
-        key);
+        ClassTraits<T>::num_decl_props);
 
+    //assign consecutive IDs, starting at 2 (0 and 1 are reserved)
     for(unsigned i=0; i<p->full_size(); i++)
       const_cast<PropertyAccessBase *>(p->get(i))->id = i+2;
 

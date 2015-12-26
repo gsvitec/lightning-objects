@@ -150,6 +150,37 @@ void testValueVectorProperty(KeyValueStore *kv)
   }
 }
 
+void testObjectMappings(KeyValueStore *kv)
+{
+  ObjectKey key;
+  {
+    ObjectPropertyTest test(1, 2, 3, "testname");
+    test.fso_vect.push_back(FixedSizeObject(4, 5));
+    test.vso_vect.push_back(VariableSizeObject(6, "sechs"));
+    test.fso_vect.push_back(FixedSizeObject(7, 8));
+    test.vso_vect.push_back(VariableSizeObject(9, "neun"));
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->saveObject(test, key);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    ObjectPropertyTest *test = rtxn->loadObject<ObjectPropertyTest>(key);
+    assert(test && test->fso_vect.size() == 2 && test->vso_vect.size() == 2);
+    assert(test->fso.number1 == 1 && test->fso.number2 == 2);
+    assert(test->vso.number == 3 && test->vso.name == "testname");
+    assert(test->fso_vect[0].number1 == 4 && test->fso_vect[1].number1 == 7);
+    assert(test->vso_vect[0].number == 6 && test->vso_vect[1].number == 9);
+
+    rtxn->abort();
+    delete test;
+  }
+}
+
 void testPolymorphism(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
@@ -857,7 +888,8 @@ int main()
 {
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
-  kv->putSchema<FixedSizeObject,
+  kv->putSchema<ObjectPropertyTest,
+      FixedSizeObject,
       VariableSizeObject,
       SomethingWithAnEmbbededObjectVector,
       SomethingWithAnObjectIter,
@@ -898,14 +930,14 @@ int main()
   testGrowDatabase(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
-
-#endif
   testClassCursor(kv);
+  testObjectMappings(kv);
 
   ObjectKey key = setupTestCompatibleDatabase(kv);
   delete kv;
 
   testCompatibleDatabase(key);
+#endif
 
   return 0;
 }

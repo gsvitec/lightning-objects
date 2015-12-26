@@ -105,6 +105,8 @@ struct SomethingWithALazyVector
 };
 
 struct FixedSizeObject {
+  unsigned objectId = 0; //for ObjectPropertyTest
+
   unsigned number1, number2;
   FixedSizeObject() {}
   FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
@@ -112,11 +114,26 @@ struct FixedSizeObject {
 using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
 
 struct VariableSizeObject {
+  unsigned objectId = 0; //for ObjectPropertyTest
+
   unsigned number;
   std::string name;
 
   VariableSizeObject() {}
   VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
+};
+
+struct ObjectPropertyTest
+{
+  FixedSizeObject fso;
+  VariableSizeObject vso;
+
+  vector<FixedSizeObject> fso_vect;
+  vector<VariableSizeObject> vso_vect;
+
+  ObjectPropertyTest() {}
+  ObjectPropertyTest(unsigned fso_num1, unsigned fso_num2, unsigned vso_num, const char *vso_name)
+      : fso(fso_num1, fso_num2), vso(vso_num, vso_name) {}
 };
 
 struct SomethingWithAnEmbbededObjectVector
@@ -235,12 +252,14 @@ START_MAPPING(SomethingWithALazyVector, name, otherThings)
   MAPPED_PROP3(SomethingWithALazyVector, ObjectPtrVectorPropertyAssign, OtherThing, otherThings, true)
 END_MAPPING(SomethingWithALazyVector)
 
-START_MAPPING(FixedSizeObject, number1, number2)
+START_MAPPING(FixedSizeObject, objectId, number1, number2)
+  OBJECT_ID(FixedSizeObject, objectId)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number1)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
-START_MAPPING(VariableSizeObject, number, name)
+START_MAPPING(VariableSizeObject, objectId, number, name)
+  OBJECT_ID(VariableSizeObject, objectId)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
 END_MAPPING(VariableSizeObject)
@@ -318,6 +337,13 @@ START_MAPPING(Wonderful,
   MAPPED_PROP(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsPointers)
   MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
 END_MAPPING(Wonderful)
+
+START_MAPPING(ObjectPropertyTest, fso, vso, fso_vect, vso_vect)
+  MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, FixedSizeObject, fso)
+  MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, VariableSizeObject, vso)
+  MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, FixedSizeObject, fso_vect)
+  MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, VariableSizeObject, vso_vect)
+END_MAPPING(ObjectPropertyTest)
 
 }
 }
