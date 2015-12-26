@@ -28,6 +28,7 @@ string incompatible_schema_error::make_detail(vector<string> &errs)
     if(it++ != errs.cend()) ss << endl;
     else break;
   }
+  return ss.str();
 }
 
 inline bool streq(string s1, const char *s2) {
