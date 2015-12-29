@@ -43,6 +43,11 @@ struct ObjectKey
   ObjectKey() : classId(0), objectId(0) {}
   ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId) {}
   bool isNew() {return objectId == 0;}
+
+  operator ObjectId () const {return objectId;}
+  bool operator <(const ObjectKey &other) const {
+    return classId < other.classId || (classId == other.classId && objectId < other.objectId);
+  }
 };
 
 /**
@@ -182,6 +187,10 @@ public:
     m_readptr += ObjectId_sz;
 
     return true;
+  }
+
+  size_t strlen() {
+    return ::strlen((const char *)m_readptr);
   }
 };
 

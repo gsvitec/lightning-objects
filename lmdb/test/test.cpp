@@ -288,13 +288,17 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     if(!cursor->atEnd()) {
       for (; !cursor->atEnd(); cursor->next()) {
         count++;
-        const char *name; const byte_t *buf=nullptr;
+        const char *name;
         double *dval;
 
         //we're passing in buf, so that only the first call will go to the store
-        cursor->get(PROPERTY(OtherThing, name), (const byte_t **)&name, &buf);
+        ObjectBuf obuf;
+        cursor->get(PROPERTY(OtherThing, name), obuf);
+        name = (const char *)obuf.read();
+
         //buf is set now, so this call will simply return a pointer into buf
-        cursor->get(PROPERTY(OtherThing, dvalue), (const byte_t **)&dval, &buf);
+        cursor->get(PROPERTY(OtherThing, dvalue), obuf);
+        dval = (double *)obuf.read();
 
         cout << name << " dvalue: " << *dval << endl;
       }
@@ -720,6 +724,75 @@ void testGrowDatabase(KeyValueStore *kv)
   }
 }
 
+template <typename T>
+unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate)
+{
+  unsigned count = 0;
+  for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
+    if(predicate(curs->get())) {
+      count++;
+    }
+  }
+  return count;
+}
+
+void testDeleteUpdate(KeyValueStore *kv)
+{
+  ObjectKey key;
+  {
+    player::SourceInfo si;
+    si.sourceIndex = 123456789;
+
+    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
+    ro->name.setValue("testDeleteUpdate");
+    TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
+    to->name.setValue("testDeleteUpdate");
+
+    si.userOverlays.push_back(ro);
+    si.userOverlays.push_back(to);
+
+    auto txn = kv->beginWrite();
+
+    txn->saveObject(si, key);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginRead();
+
+    unsigned si = countInstances<player::SourceInfo>(
+        txn,[](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+    assert(si == 1);
+
+    unsigned ov = countInstances<IFlexisOverlay>(
+        txn,[](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+    assert(ov == 2);
+
+    txn->abort();
+  }
+  {
+    auto txn = kv->beginWrite();
+
+    auto si = txn->getObject<player::SourceInfo>(key);
+    txn->deleteObject(si);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginRead();
+
+    unsigned si = countInstances<player::SourceInfo>(
+        txn,[](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+    assert(si == 0);
+
+    unsigned ov = countInstances<IFlexisOverlay>(
+        txn,[](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+    assert(ov == 0);
+
+    txn->abort();
+  }
+}
+
 void testObjectIterProperty(KeyValueStore *kv)
 {
   ObjectKey key;
@@ -902,7 +975,6 @@ int main()
       SomethingVirtual3,
       Wonderful>();
 
-#if 1
   kv->putSchema<Colored2DPoint,
       ColoredPolygon,
       player::SourceDisplayConfig,
@@ -916,6 +988,8 @@ int main()
       OtherThingB,
       SomethingWithALazyVector>();
 
+  testDeleteUpdate(kv);
+#if 0
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);

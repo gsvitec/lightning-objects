@@ -86,6 +86,7 @@ CT(_cls,_a), CT(_cls,_b), CT(_cls,_c), CT(_cls,_d), CT(_cls,_e), CT(_cls,_f), CT
  */
 #define START_MAPPING(_cls, ...) template <> struct ClassTraits<_cls> : \
 public ClassTraitsBase<_cls>, public ClassTraitsConcrete<_cls>{ \
+static const bool traits_has_objid; \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
@@ -99,6 +100,7 @@ prop_impl_so(_cls, __VA_ARGS__);
  */
 #define START_MAPPING_A(_cls, ...) template <> struct ClassTraits<_cls> : \
 public ClassTraitsBase<_cls>, public ClassTraitsAbstract<_cls>{ \
+static const bool traits_has_objid; \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
@@ -113,6 +115,7 @@ prop_impl_so(_cls, __VA_ARGS__);
  */
 #define START_MAPPING_SUB(_cls, _sup, ...) \
 template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsConcrete<_cls> { \
+static const bool traits_has_objid; \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls, _sup>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls, _sup>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
@@ -127,6 +130,7 @@ prop_impl_sub(_cls, _sup, __VA_ARGS__);
  */
 #define START_MAPPING_SUB_A(_cls, _sup, ...) \
 template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsAbstract<_cls> { \
+static const bool traits_has_objid; \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls, _sup>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls, _sup>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
@@ -148,7 +152,7 @@ template<> Properties * ClassTraitsBase<cls>::traits_properties(PropertiesImpl<E
  */
 #define END_MAPPING_SUB(cls, sup) template <> const char * ClassTraitsBase<cls, sup>::traits_classname = #cls;\
 template <> ClassInfo<cls, sup> * ClassTraitsBase<cls, sup>::traits_info = ClassInfo<cls, sup>::subclass<sup>(#cls, typeid(cls)); \
-template<> Properties * ClassTraitsBase<cls, sup>::traits_properties(PropertiesImpl<sup>::mk<cls>());
+template<> Properties * ClassTraitsBase<cls, sup>::traits_properties(PropertiesImpl<sup>::mk<cls>()); \
 
 /**
  * define mapping for one property. The property name must have been mentioned in the preceding START_MAPPING*
@@ -196,4 +200,5 @@ const PropertyAccessBase *ClassTraits<cls>::propname = new propkind<cls, proptyp
  * @param the property name. The property must have type ObjectId and be initialized to 0
  */
 #define OBJECT_ID(cls, propname) \
+const bool ClassTraits<cls>::traits_has_objid = true; \
 const PropertyAccessBase *ClassTraits<cls>::propname = new ObjectIdAssign<cls, &cls::propname>();

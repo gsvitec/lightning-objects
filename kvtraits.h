@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <sstream>
 #include <cstring>
 #include <typeinfo>
 #include <stdexcept>
@@ -19,15 +20,25 @@
 namespace flexis {
 namespace persistence {
 
+namespace kv {
+
+#define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
+
 class invalid_pointer_error : public persistence_error
 {
 public:
   invalid_pointer_error() : persistence_error("invalid pointer argument: not created by KV store", "") {}
 };
-
-namespace kv {
-
-#define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
+class invalid_classid_error : public persistence_error
+{
+  std::string mk(const char *msg, ClassId cid) {
+    std::stringstream ss;
+    ss << msg << cid;
+    return ss.str();
+  }
+public:
+  invalid_classid_error(ClassId cid) : persistence_error(mk("invalid classid: ", cid), "is class registered?") {}
+};
 
 struct PropertyType
 {
@@ -114,7 +125,7 @@ static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize 
 class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
-class PrepareBuf;
+class ObjectBuf;
 
 enum class StoreMode {force_none, force_all, force_buffer, force_property};
 
@@ -131,11 +142,15 @@ struct StoreAccessBase
   StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded, size_t fixedSize=0)
       : layout(layout), fixedSize(fixedSize) {}
 
-  virtual size_t size(const byte_t *buf) const = 0;
+  virtual size_t size(ObjectBuf &buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
 
-  virtual void prepareUpdate(PrepareBuf &buf, void *obj, const PropertyAccessBase *pa, size_t &sz) {
-    sz += size(obj, pa);
+  virtual size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) {
+    return size(buf);
+  }
+
+  virtual size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
+    return size(buf);
   }
 
   virtual void save(WriteTransaction *tr,
@@ -162,8 +177,12 @@ struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
   StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey::byteSize) {}
 
-  size_t size(const byte_t *buf) const override {return ObjectKey::byteSize;}
+  size_t size(ObjectBuf &buf) const override {return ObjectKey::byteSize;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
+
+protected:
+  volatile ClassId prepCid = 0;
+  volatile ObjectId prepOid = 0;
 };
 
 /**
@@ -174,7 +193,7 @@ struct StoreAccessPropertyKey: public StoreAccessBase
 {
   StoreAccessPropertyKey() : StoreAccessBase(StoreLayout::property) {}
 
-  size_t size(const byte_t *buf) const override {return 0;}
+  size_t size(ObjectBuf &buf) const override {return 0;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
@@ -348,7 +367,7 @@ struct PropertyAccessBase
   const char * const name;
   bool enabled = true;
   ClassId classId;
-  unsigned id = 0;
+  PropertyId id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
@@ -683,7 +702,8 @@ struct ClassInfo : public AbstractClassInfo
   Properties * (* const getProperties)(ClassId classId);
   bool (* const addSize)(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
-  bool (* const prepareUpdate)(PrepareBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const prep_delete)(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const prep_update)(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const save)(WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
   bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
@@ -700,7 +720,8 @@ struct ClassInfo : public AbstractClassInfo
         getProperties(&ClassTraits<T>::getProperties),
         addSize(&ClassTraits<T>::addSize),
         get_objectkey(&ClassTraits<T>::get_objectkey),
-        prepareUpdate(&ClassTraits<T>::prepareUpdate),
+        prep_delete(&ClassTraits<T>::prep_delete),
+        prep_update(&ClassTraits<T>::prep_update),
         save(&ClassTraits<T>::save),
         load(&ClassTraits<T>::load) {}
 
@@ -842,7 +863,7 @@ public:
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->addSize(obj, pa, size, FLAG_DN);
     }
@@ -875,36 +896,42 @@ public:
     return false;
   }
 
-  static bool set_objectid(const std::shared_ptr<T> &obj, ObjectId oid, unsigned flags=FLAGS_ALL)
+  static size_t prepareUpdate(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa)
   {
-    object_handler<T> *ohm = std::get_deleter<object_handler<T>>(obj);
-    if(ohm) {
-      ohm->objectId = oid;
+    size_t size;
+    if(!prep_update(buf, obj, pa, size)) throw invalid_classid_error(pa->classId);
+    return size;
+  }
+  static bool prep_update(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  {
+    if(pa->classId == traits_info->classId) {
+      size = pa->storage->prepareUpdate(buf, obj, pa);
       return true;
     }
-    else {
-      if(UP && ClassTraits<SUP>::set_objectid(obj, oid, FLAG_UP)) return true;
-      if(DN) {
-        for(auto &sub : traits_info->subs) {
-          ClassInfo<T> * si = static_cast<ClassInfo<T> *>(sub);
-          if(si->set_objectid(obj, oid, FLAG_DN)) return true;
-        }
-      }
+    else if(pa->classId) {
+      if(UP && ClassTraits<SUP>::prep_update(buf, obj, pa, size, FLAG_UP))
+        return true;
+      return DN && RESOLVE_SUB(pa->classId)->prep_update(buf, obj, pa, size, FLAG_DN);
     }
     return false;
   }
 
-  static bool prepareUpdate(PrepareBuf &buf,
-                          T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa)
+  {
+    size_t size;
+    if(!prep_delete(tr, buf, pa, size)) throw invalid_classid_error(pa->classId);
+    return size;
+  }
+  static bool prep_delete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == traits_info->classId) {
-      pa->storage->prepareUpdate(buf, obj, pa, size);
+      size = pa->storage->prepareDelete(tr, buf, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::prep_delete(tr, buf, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prepareUpdate(buf, obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->prep_delete(tr, buf, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -917,7 +944,7 @@ public:
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->save(wtr, classId, objectId, obj, pa, mode, FLAG_DN);
     }
@@ -933,7 +960,7 @@ public:
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::traits_info->classId != traits_info->classId && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
       return DN && RESOLVE_SUB(pa->classId)->load(tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
     }
@@ -1048,8 +1075,18 @@ struct ClassTraits<EmptyClass>
   static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {
     return false;
   }
+  static size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
+    return 0;
+  }
+  static bool prep_delete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+    return false;
+  }
   template <typename T>
-  static bool prepareUpdate(PrepareBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static size_t prepareUpdate(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa) {
+    return 0;
+  }
+  template <typename T>
+  static bool prep_update(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>

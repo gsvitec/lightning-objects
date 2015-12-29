@@ -125,6 +125,7 @@ struct VariableSizeObject {
 
 struct ObjectPropertyTest
 {
+  unsigned id;
   FixedSizeObject fso;
   VariableSizeObject vso;
 
@@ -338,7 +339,8 @@ START_MAPPING(Wonderful,
   MAPPED_PROP3(Wonderful, ObjectPtrVectorPropertyAssign, SomethingVirtual, virtualsLazy, true)
 END_MAPPING(Wonderful)
 
-START_MAPPING(ObjectPropertyTest, fso, vso, fso_vect, vso_vect)
+START_MAPPING(ObjectPropertyTest, id, fso, vso, fso_vect, vso_vect)
+  OBJECT_ID(ObjectPropertyTest, id)
   MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, FixedSizeObject, fso)
   MAPPED_PROP(ObjectPropertyTest, ObjectPropertyAssign, VariableSizeObject, vso)
   MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, FixedSizeObject, fso_vect)

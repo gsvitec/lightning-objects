@@ -131,12 +131,13 @@ protected:
     }
   }
 
-  const byte_t *getObjectData() override {
+  void getObjectData(ObjectBuf &buf) override {
     ::lmdb::val dataval{};
     if(m_cursor.get(m_keyval, dataval, MDB_GET_CURRENT)) {
-      return dataval.data<byte_t>();
+      buf.key.classId = SK_CLASSID(m_keyval.data<byte_t>());
+      buf.key.objectId = SK_OBJID(m_keyval.data<byte_t>());
+      buf.start(dataval.data<byte_t>(), dataval.size());
     }
-    return nullptr;
   }
 
 public:
@@ -279,12 +280,13 @@ protected:
       rb.start(dataval.data<byte_t>(), dataval.size());
   }
 
-  const byte_t *getObjectData()
+  void getObjectData(ObjectBuf &buf) override
   {
     ::lmdb::val keyval {m_data, StorageKey::byteSize};
     ::lmdb::val dataval;
 
-    return m_dbi.get(m_txn, keyval, dataval) ? dataval.data<byte_t>() : nullptr;
+    if(m_dbi.get(m_txn, keyval, dataval))
+      buf.start(dataval.data<byte_t>(), dataval.size());
   }
 
 public:
@@ -375,7 +377,7 @@ protected:
     }
   }
 
-  const byte_t *getObjectData() override {
+  void getObjectData(ObjectBuf &buf) override {
     if(m_index < m_size) {
       const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
       SK_OBJK(keydata, kp);
@@ -385,13 +387,12 @@ protected:
       ::lmdb::val dataval;
 
       if(m_dbi.get(m_txn, keyval, dataval)) {
-        return dataval.data<byte_t>();
+        buf.start(dataval.data<byte_t>(), dataval.size());
       }
       else {
         throw new persistence_error("corrupted vector: item not found");
       }
     }
-    return nullptr;
   }
 
 public:
@@ -424,7 +425,8 @@ protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
   bool allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, byte_t **data) override;
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
-  bool remove(ClassId classId, ObjectId objectId, PropertyId propertyid) override;
+  bool remove(ClassId classId, ObjectId objectId) override;
+  bool remove(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
 
   ClassCursorHelper * _openCursor(const vector<ClassId> &classId) override;
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
@@ -435,6 +437,8 @@ protected:
 
   bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
+
+  unsigned getRefCount(ClassId cid, ObjectId oid) override;
 
 public:
   Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
@@ -702,12 +706,33 @@ void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, Prop
     buf.start(v.data<byte_t>(), v.size());
 }
 
+bool Transaction::remove(ClassId classId, ObjectId objectId)
+{
+  SK_CONSTR(kv, classId, objectId, 1);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{};
+  ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+
+  SK_PROPID(kv) = 0;
+  k.assign(kv, sizeof(kv));
+  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+}
 bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId propertyId)
 {
   SK_CONSTR(kv, classId, objectId, propertyId);
   ::lmdb::val k{kv, sizeof(kv)};
   ::lmdb::val v{};
   return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+}
+
+unsigned Transaction::getRefCount(ClassId cid, ObjectId oid) {
+  SK_CONSTR(kv, cid, oid, 1);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{};
+  if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, v) && v.size() >= 4) {
+    return *((unsigned *)v.data<byte_t>());
+  }
+  return 1;
 }
 
 ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd)

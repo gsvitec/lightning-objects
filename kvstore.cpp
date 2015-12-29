@@ -211,11 +211,12 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
   }
 }
 
-byte_t *PrepareBuf::data(size_t offset) {
-  if(!m_data) {
-    m_txn->getData(*this, m_key.classId, m_key.objectId, 0);
-  }
-  return m_data + offset;
+void ObjectBuf::checkData(ReadTransaction *tr, ClassId cid, ObjectId oid) {
+  if(!m_data) tr->getData(*this, cid, oid, 0);
+}
+
+void LazyBuf::checkData() {
+  ObjectBuf::checkData(m_txn, key.classId, key.objectId);
 }
 
 void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSize, size_t elementCount)
@@ -308,6 +309,5 @@ void CollectionAppenderBase::close()
 }
 
 } //kv
-
 } //persistence
 } //flexis
