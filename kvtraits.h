@@ -181,8 +181,8 @@ struct StoreAccessEmbeddedKey : public StoreAccessBase
   size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
 
 protected:
-  volatile ClassId prepCid = 0;
-  volatile ObjectId prepOid = 0;
+  ClassId prepCid = 0;
+  ObjectId prepOid = 0;
 };
 
 /**

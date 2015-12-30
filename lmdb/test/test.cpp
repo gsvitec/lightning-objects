@@ -291,8 +291,9 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
         const char *name;
         double *dval;
 
-        //we're passing in buf, so that only the first call will go to the store
-        ObjectBuf obuf;
+        //we're passing in buf, so that only the first call will go to the store. We are not copying the buffer,
+        //which we can only do because we are sure no updates will happen until we are done
+        ObjectBuf obuf(false);
         cursor->get(PROPERTY(OtherThing, name), obuf);
         name = (const char *)obuf.read();
 
@@ -738,7 +739,7 @@ unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> pre
 
 void testDeleteUpdate(KeyValueStore *kv)
 {
-  ObjectKey key;
+  ObjectKey siKey, otKey;
   {
     player::SourceInfo si;
     si.sourceIndex = 123456789;
@@ -751,9 +752,15 @@ void testDeleteUpdate(KeyValueStore *kv)
     si.userOverlays.push_back(ro);
     si.userOverlays.push_back(to);
 
+    ObjectPropertyTest ot;
+    ot.vso = VariableSizeObject(1, "testDeleteUpdate.VariableSizeObject");
+    ot.fso = FixedSizeObject(99, 99);
+    ot.fso_vect.push_back(FixedSizeObject(99, 99));
+
     auto txn = kv->beginWrite();
 
-    txn->saveObject(si, key);
+    txn->saveObject(si, siKey);
+    txn->saveObject(ot, otKey);
 
     txn->commit();
   }
@@ -761,20 +768,32 @@ void testDeleteUpdate(KeyValueStore *kv)
     auto txn = kv->beginRead();
 
     unsigned si = countInstances<player::SourceInfo>(
-        txn,[](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+        txn, [](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
     assert(si == 1);
-
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn,[](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
     assert(ov == 2);
+
+    unsigned ot = countInstances<ObjectPropertyTest>(
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+    assert(ot == 1);
+    unsigned vo = countInstances<VariableSizeObject>(
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {v->name == "testDeleteUpdate.VariableSizeObject";});
+    assert(vo == 1);
+    unsigned fo = countInstances<FixedSizeObject>(
+        txn, [](shared_ptr<FixedSizeObject> v)->bool {v->number1 == 99;});
+    assert(fo == 2);
 
     txn->abort();
   }
   {
     auto txn = kv->beginWrite();
 
-    auto si = txn->getObject<player::SourceInfo>(key);
+    auto si = txn->getObject<player::SourceInfo>(siKey);
     txn->deleteObject(si);
+
+    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
+    txn->deleteObject(ot);
 
     txn->commit();
   }
@@ -782,12 +801,21 @@ void testDeleteUpdate(KeyValueStore *kv)
     auto txn = kv->beginRead();
 
     unsigned si = countInstances<player::SourceInfo>(
-        txn,[](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+        txn, [](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
     assert(si == 0);
-
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn,[](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
     assert(ov == 0);
+
+    unsigned ot = countInstances<ObjectPropertyTest>(
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+    assert(ot == 0);
+    unsigned vo = countInstances<VariableSizeObject>(
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {v->name == "testDeleteUpdate.VariableSizeObject";});
+    assert(vo == 0);
+    unsigned fo = countInstances<FixedSizeObject>(
+        txn, [](shared_ptr<FixedSizeObject> v)->bool {v->number1 == 99;});
+    assert(fo == 0);
 
     txn->abort();
   }
@@ -989,7 +1017,7 @@ int main()
       SomethingWithALazyVector>();
 
   testDeleteUpdate(kv);
-#if 0
+#if 1
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);

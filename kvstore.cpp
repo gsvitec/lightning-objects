@@ -212,7 +212,11 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
 }
 
 void ObjectBuf::checkData(ReadTransaction *tr, ClassId cid, ObjectId oid) {
-  if(!m_data) tr->getData(*this, cid, oid, 0);
+  if(!dataChecked) {
+    dataChecked = true;
+    tr->getData(readBuf, cid, oid, 0);
+    if(makeCopy) readBuf.copyData();
+  }
 }
 
 void LazyBuf::checkData() {

@@ -354,9 +354,12 @@ using IterPropertyBackendPtr = std::shared_ptr<KVPropertyBackend>;
 /**
  * buffer for reading raw object data
  */
-class ObjectBuf : private ReadBuf
+class ObjectBuf
 {
 protected:
+  const bool makeCopy;
+  bool dataChecked = false;
+  ReadBuf readBuf;
   virtual void checkData() {}
 
   void checkData(ReadTransaction *tr, ClassId cid, ObjectId oid);
@@ -364,41 +367,42 @@ protected:
 public:
   ObjectKey key;
 
-  ObjectBuf() {}
-  ObjectBuf(ObjectKey key) : key(key) {}
-  ObjectBuf(ReadTransaction *tr, ClassId classId, ObjectId objectId) : key({classId, objectId}) {
+  ObjectBuf(bool makeCopy) : makeCopy(makeCopy) {}
+  ObjectBuf(ObjectKey key, bool makeCopy) : key(key), makeCopy(makeCopy) {}
+  ObjectBuf(ReadTransaction *tr, ClassId classId, ObjectId objectId, bool makeCopy)
+      : key({classId, objectId}), makeCopy(makeCopy) {
     checkData(tr, key.classId, key.objectId);
   }
 
   void start(byte_t *data, size_t size) {
-    ReadBuf::start(data, size);
+    readBuf.start(data, size);
   }
   bool null() {
-    return ReadBuf::null();
+    return readBuf.null();
   }
   void reset() {
-    m_readptr = m_data;
+    readBuf.reset();
   }
   const byte_t *read(size_t sz=0) {
     checkData();
-    return ReadBuf::read(sz);
+    return readBuf.read(sz);
   }
   template <typename T>
   T readInteger(unsigned sz) {
     checkData();
-    return ReadBuf::readInteger<T>(sz);
+    return readBuf.readInteger<T>(sz);
   }
-  template <typename T>
-  T readRaw() {
+  void read(ClassId &cid, ObjectId &oid) {
     checkData();
-    return ReadBuf::readRaw<T>();
+    cid = readBuf.readRaw<ClassId>();
+    oid = readBuf.readRaw<ObjectId>();
   }
   size_t strlen() {
-    return ReadBuf::strlen();
+    return readBuf.strlen();
   }
 
-  void mark() { ReadBuf::mark();}
-  void unmark(size_t offs) { ReadBuf::unmark(offs);}
+  void mark() { readBuf.mark();}
+  void unmark(size_t offs) { readBuf.unmark(offs);}
 };
 
 /**
@@ -406,13 +410,13 @@ public:
  */
 class LazyBuf : public ObjectBuf
 {
-  WriteTransaction * const m_txn;
+  ReadTransaction * const m_txn;
 
 protected:
   void checkData() override;
 
 public:
-  LazyBuf(WriteTransaction * txn, const ObjectKey &key) : ObjectBuf(key), m_txn(txn) {}
+  LazyBuf(ReadTransaction * txn, const ObjectKey &key, bool makeCopy) : ObjectBuf(key, makeCopy), m_txn(txn) {}
 };
 
 /**
@@ -422,8 +426,8 @@ class FlexisPersistence_EXPORT CursorHelper {
   template <typename T> friend class ClassCursor;
 
 protected:
-  ClassId m_currentClassId;
-  ObjectId m_currentObjectId;
+  ClassId m_currentClassId = 0;
+  ObjectId m_currentObjectId = 0;
 
   virtual ~CursorHelper() {}
 
@@ -941,6 +945,10 @@ public:
     return std::shared_ptr<T>(t, handler);
   }
 
+  template<typename T> std::shared_ptr<T> getObject(ObjectKey &key) {
+    return getObject<T>(key.objectId);
+  }
+
   /**
    * reload an object from the KV store, Non-polymorphical, T must be the exact type of the object.
    * The new object is allocated on the heap.
@@ -1294,19 +1302,20 @@ protected:
     using Traits = ClassTraits<T>;
     Properties *props = Traits::getProperties(classId);
 
-    ObjectBuf prepBuf(this, classId, objectId);
+    ObjectBuf prepBuf(this, classId, objectId, true);
+    if(!prepBuf.null()) {
+      for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+        const PropertyAccessBase *pa = props->get(px);
 
-    for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
-      const PropertyAccessBase *pa = props->get(px);
+        if(!pa->enabled) continue;
 
-      if(!pa->enabled) continue;
-
-      prepBuf.mark();
-      size_t psz = ClassTraits<T>::prepareDelete(this, prepBuf, pa);
-      prepBuf.unmark(psz);
+        prepBuf.mark();
+        size_t psz = ClassTraits<T>::prepareDelete(this, prepBuf, pa);
+        prepBuf.unmark(psz);
+      }
+      //now remove the object proper
+      return remove(classId, objectId);
     }
-    //now remove the object proper
-    return remove(classId, objectId);
   }
 
   /**
@@ -1328,7 +1337,7 @@ protected:
   size_t prepareUpdate(ObjectKey &key, T *obj, Properties *properties)
   {
     size_t size = 0;
-    LazyBuf prepBuf(this, key);
+    LazyBuf prepBuf(this, key, false);
 
     for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
       auto pa = properties->get(i);
@@ -2321,13 +2330,13 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
   size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
     //read pre-update state
-    prepCid = buf.readRaw<ClassId>();
-    prepOid = buf.readRaw<ObjectId>();
+    buf.read(prepCid, prepOid);
     return size(obj, pa);
   }
   size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override {
-    ClassId cid = buf.readRaw<ClassId>();
-    ObjectId oid = buf.readRaw<ObjectId>();
+    ClassId cid;
+    ObjectId oid;
+    buf.read(cid, oid);
     if(tr->getRefCount(cid, oid) == 1) tr->removeObject<V>(cid, oid);
     return size(buf);
   }
@@ -2436,13 +2445,12 @@ public:
   size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
     //read pre-update state
-    prepCid = buf.readRaw<ClassId>();
-    prepOid = buf.readRaw<ObjectId>();
+    buf.read(prepCid, prepOid);
     return size(obj, pa);
   }
   size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override {
-    ClassId cid = buf.readRaw<ClassId>();
-    ObjectId oid = buf.readRaw<ObjectId>();
+    ClassId cid; ObjectId oid;
+    buf.read(cid, oid);
     if(cid && oid && tr->getRefCount(cid, oid) == 1) tr->removeObject<V>(cid, oid);
     return size(buf);
   }

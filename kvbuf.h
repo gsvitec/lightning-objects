@@ -44,7 +44,6 @@ struct ObjectKey
   ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId) {}
   bool isNew() {return objectId == 0;}
 
-  operator ObjectId () const {return objectId;}
   bool operator <(const ObjectKey &other) const {
     return classId < other.classId || (classId == other.classId && objectId < other.objectId);
   }
@@ -105,8 +104,8 @@ inline T read_integer(const byte_t *ptr, size_t bytes)
 }
 
 /**
- * a read buffer. Note: with LMDB, this points into mapped memory. Neither the buffer itself nor pointers returned
- * from read() should be kept around. Longer-lived data must be copied away
+ * a read buffer. Note: with LMDB, this may point into mapped memory. Neither the buffer itself nor pointers returned
+ * from read() should be kept around.
  */
 class ReadBuf
 {
@@ -117,12 +116,32 @@ protected:
   byte_t *m_readptr = nullptr;
   byte_t *m_mark = nullptr;
   size_t m_size = 0;
+  bool m_owned = false;
 
 public:
   ReadBuf() {}
+  ~ReadBuf() {
+    if(m_data && m_owned) {
+      free(m_data);
+      m_owned = false;
+      m_data = nullptr;
+    }
+  }
 
   byte_t *&data() {return m_data;}
   byte_t *&cur() {return m_readptr;}
+
+  byte_t *copyData() {
+    if(!m_owned && m_data) {
+      m_owned = true;
+      byte_t *data = (byte_t *)malloc(m_size);
+      memcpy(data, m_data, m_size);
+      m_readptr = data + (m_readptr - m_data);
+      if(m_mark) m_mark = data + (m_mark - m_data);
+      m_data = data;
+    }
+    return m_data;
+  }
 
   void start(byte_t *data, size_t size) {
     m_size = size;
@@ -141,9 +160,6 @@ public:
     m_readptr = m_mark+offs;
   }
 
-  /**
-   * @return a read-only pointer into the store-owned memory
-   */
   const byte_t *read(size_t sz) {
     byte_t *ret = m_readptr;
     m_readptr += sz;
@@ -164,7 +180,6 @@ public:
     return ret;
   }
 
-  //static_assert(TypeTraits<T>::byteSize == sizeof(T), "raw API only usable for types where sizeof matches TypeTraits<T>::byteSize");
   template<typename T>
   T readRaw() {
     T val = *(T *)m_readptr;
@@ -191,6 +206,10 @@ public:
 
   size_t strlen() {
     return ::strlen((const char *)m_readptr);
+  }
+
+  void reset() {
+    m_readptr = m_data;
   }
 };
 
