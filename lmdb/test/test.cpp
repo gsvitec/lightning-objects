@@ -768,20 +768,20 @@ void testDeleteUpdate(KeyValueStore *kv)
     auto txn = kv->beginRead();
 
     unsigned si = countInstances<player::SourceInfo>(
-        txn, [](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+        txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 1);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDeleteUpdate";});
     assert(ov == 2);
 
     unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDeleteUpdate.VariableSizeObject";});
     assert(ot == 1);
     unsigned vo = countInstances<VariableSizeObject>(
-        txn, [](shared_ptr<VariableSizeObject> v)->bool {v->name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDeleteUpdate.VariableSizeObject";});
     assert(vo == 1);
     unsigned fo = countInstances<FixedSizeObject>(
-        txn, [](shared_ptr<FixedSizeObject> v)->bool {v->number1 == 99;});
+        txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
     assert(fo == 2);
 
     txn->abort();
@@ -801,20 +801,20 @@ void testDeleteUpdate(KeyValueStore *kv)
     auto txn = kv->beginRead();
 
     unsigned si = countInstances<player::SourceInfo>(
-        txn, [](shared_ptr<player::SourceInfo> s)->bool {s->sourceIndex == 123456789;});
+        txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 0);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDeleteUpdate";});
     assert(ov == 0);
 
     unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDeleteUpdate.VariableSizeObject";});
     assert(ot == 0);
     unsigned vo = countInstances<VariableSizeObject>(
-        txn, [](shared_ptr<VariableSizeObject> v)->bool {v->name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDeleteUpdate.VariableSizeObject";});
     assert(vo == 0);
     unsigned fo = countInstances<FixedSizeObject>(
-        txn, [](shared_ptr<FixedSizeObject> v)->bool {v->number1 == 99;});
+        txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
     assert(fo == 0);
 
     txn->abort();

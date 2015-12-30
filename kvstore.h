@@ -1316,6 +1316,7 @@ protected:
       //now remove the object proper
       return remove(classId, objectId);
     }
+    return false;
   }
 
   /**
