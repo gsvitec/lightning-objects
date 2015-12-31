@@ -157,7 +157,7 @@ public:
   }
 
   void unmark(size_t offs=0) {
-    m_readptr = m_mark+offs;
+    m_readptr = m_mark ? m_mark + offs : m_readptr + offs;
   }
 
   const byte_t *read(size_t sz) {

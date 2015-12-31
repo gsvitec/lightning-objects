@@ -737,7 +737,7 @@ unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> pre
   return count;
 }
 
-void testDeleteUpdate(KeyValueStore *kv)
+void testDelete(KeyValueStore *kv)
 {
   ObjectKey siKey, otKey;
   {
@@ -745,15 +745,15 @@ void testDeleteUpdate(KeyValueStore *kv)
     si.sourceIndex = 123456789;
 
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name.setValue("testDeleteUpdate");
-    TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name.setValue("testDeleteUpdate");
-
+    ro->name.setValue("testDelete");
     si.userOverlays.push_back(ro);
+
+    TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
+    to->name.setValue("testDelete");
     si.userOverlays.push_back(to);
 
     ObjectPropertyTest ot;
-    ot.vso = VariableSizeObject(1, "testDeleteUpdate.VariableSizeObject");
+    ot.vso = VariableSizeObject(1, "testDelete.VariableSizeObject");
     ot.fso = FixedSizeObject(99, 99);
     ot.fso_vect.push_back(FixedSizeObject(99, 99));
 
@@ -771,14 +771,14 @@ void testDeleteUpdate(KeyValueStore *kv)
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 1);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
     assert(ov == 2);
 
     unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDelete.VariableSizeObject";});
     assert(ot == 1);
     unsigned vo = countInstances<VariableSizeObject>(
-        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDelete.VariableSizeObject";});
     assert(vo == 1);
     unsigned fo = countInstances<FixedSizeObject>(
         txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
@@ -804,18 +804,85 @@ void testDeleteUpdate(KeyValueStore *kv)
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 0);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDeleteUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
     assert(ov == 0);
 
     unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDelete.VariableSizeObject";});
     assert(ot == 0);
     unsigned vo = countInstances<VariableSizeObject>(
-        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDeleteUpdate.VariableSizeObject";});
+        txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDelete.VariableSizeObject";});
     assert(vo == 0);
     unsigned fo = countInstances<FixedSizeObject>(
         txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
     assert(fo == 0);
+
+    txn->abort();
+  }
+}
+
+void testUpdate(KeyValueStore *kv)
+{
+  ObjectKey siKey, otKey;
+  {
+    player::SourceInfo si;
+    si.sourceIndex = 123456789;
+    si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
+    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
+    ro->name.setValue("testUpdate");
+    si.userOverlays.push_back(ro);
+
+    TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
+    to->name.setValue("testUpdate");
+    si.userOverlays.push_back(to);
+
+    ObjectPropertyTest ot;
+    ot.fso_vect.push_back(FixedSizeObject(11, 11));
+    ot.fso_vect.push_back(FixedSizeObject(22, 22));
+
+    auto txn = kv->beginWrite();
+
+    txn->saveObject(si, siKey);
+    txn->saveObject(ot, otKey);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginWrite();
+
+    auto si = txn->getObject<player::SourceInfo>(siKey);
+    assert(si->userOverlays.size() == 2);
+    assert(si->displayConfig->sourceIndex == 1);
+    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
+    assert(ot->fso_vect.size() == 2);
+
+    si->userOverlays.erase(si->userOverlays.begin());
+    ot->fso_vect.erase(ot->fso_vect.end());
+    si->displayConfig = nullptr;
+
+    txn->saveObject(si);
+    txn->saveObject(ot);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginRead();
+
+    auto si = txn->getObject<player::SourceInfo>(siKey);
+    assert(si->userOverlays.size() == 1);
+    assert(si->displayConfig == nullptr);
+    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
+    assert(ot->fso_vect.size() == 1);
+
+    unsigned cov = countInstances<IFlexisOverlay>(
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testUpdate";});
+    assert(cov == 1);
+    unsigned vo = countInstances<player::SourceDisplayConfig>(
+        txn, [](shared_ptr<player::SourceDisplayConfig> v)->bool {return v->sourceIndex == 1;});
+    assert(vo == 0);
+    unsigned fo = countInstances<FixedSizeObject>(
+        txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 11 || v->number1 == 22;});
+    assert(fo == 1);
 
     txn->abort();
   }
@@ -1016,7 +1083,8 @@ int main()
       OtherThingB,
       SomethingWithALazyVector>();
 
-  testDeleteUpdate(kv);
+  testDelete(kv);
+  testUpdate(kv);
 #if 1
   testColored2DPoint(kv);
   testColoredPolygon(kv);

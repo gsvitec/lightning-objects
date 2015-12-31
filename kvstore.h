@@ -208,7 +208,7 @@ class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
   std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> objectTypeInfos;
 
 protected:
-  ClassId m_maxClassId = 0;
+  ClassId m_maxClassId = AbstractClassInfo::MIN_USER_CLSID;
   ObjectId m_maxCollectionId = 0;
 
 public:
@@ -357,8 +357,9 @@ using IterPropertyBackendPtr = std::shared_ptr<KVPropertyBackend>;
 class ObjectBuf
 {
 protected:
-  const bool makeCopy;
+  const bool makeCopy = false;
   bool dataChecked = false;
+  size_t markOffs = 0;
   ReadBuf readBuf;
   virtual void checkData() {}
 
@@ -398,11 +399,18 @@ public:
     oid = readBuf.readRaw<ObjectId>();
   }
   size_t strlen() {
+    checkData();
     return readBuf.strlen();
   }
 
-  void mark() { readBuf.mark();}
-  void unmark(size_t offs) { readBuf.unmark(offs);}
+  void mark() {readBuf.mark();}
+
+  void unmark(size_t offs) {
+    if(readBuf.null())
+      markOffs = offs;
+    else
+      readBuf.unmark(offs);
+  }
 };
 
 /**
@@ -2467,11 +2475,11 @@ public:
       //save the pointed-to object
       ObjectKey *childKey = ClassTraits<V>::getObjectKey(val);
 
-      if(prepOid && prepOid != childKey->objectId) {
-        //previous object reference is about to be overwritten. Delete if refcount == 1
-        if(tr->getRefCount(prepCid, prepOid) == 1) tr->removeObject<V>(prepCid, prepOid);
-      }
       if(mode != StoreMode::force_buffer) {
+        if(prepOid && prepOid != childKey->objectId) {
+          //previous object reference is about to be overwritten. Delete if refcount == 1
+          if(tr->getRefCount(prepCid, prepOid) == 1) tr->removeObject<V>(prepCid, prepOid);
+        }
         tr->pushWriteBuf();
         tr->saveObject<V>(*val, *childKey);
         tr->popWriteBuf();
@@ -2481,9 +2489,13 @@ public:
         tr->writeBuf().append(*childKey);
       }
     }
-    else if(mode != StoreMode::force_property) {
+    else {
+      if(mode != StoreMode::force_buffer && prepOid && tr->getRefCount(prepCid, prepOid) == 1)
+        tr->removeObject<V>(prepCid, prepOid);
+
       //save the key in this objects write buffer
-      tr->writeBuf().append(ObjectKey::NIL);
+      if(mode != StoreMode::force_property)
+        tr->writeBuf().append(ObjectKey::NIL);
     }
   }
   void load(ReadTransaction *tr, ReadBuf &buf,

@@ -216,6 +216,7 @@ void ObjectBuf::checkData(ReadTransaction *tr, ClassId cid, ObjectId oid) {
     dataChecked = true;
     tr->getData(readBuf, cid, oid, 0);
     if(makeCopy) readBuf.copyData();
+    if(markOffs) readBuf.unmark(markOffs);
   }
 }
 
