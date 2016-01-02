@@ -1929,6 +1929,20 @@ public:
    * @param op
    * @throws lmdb::error on failure
    */
+  void put(lmdb::val& key,
+           lmdb::val& val,
+           const MDB_cursor_op op) {
+    lmdb::cursor_put(handle(), key, val, op);
+  }
+
+  /**
+   * Retrieves a key/value pair from the database.
+   *
+   * @param key
+   * @param val
+   * @param op
+   * @throws lmdb::error on failure
+   */
   bool get(std::string& key,
            std::string& val,
            const MDB_cursor_op op) {

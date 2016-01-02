@@ -38,10 +38,11 @@ struct ObjectKey
 
   ClassId classId;
   ObjectId objectId;
-  unsigned refcount = 1;
+  unsigned refcount;
 
-  ObjectKey() : classId(0), objectId(0) {}
-  ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId) {}
+  ObjectKey() : classId(0), objectId(0), refcount(0) {}
+  ObjectKey(unsigned refcount) : classId(0), objectId(0), refcount(refcount) {}
+  ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId), refcount(0) {}
   bool isNew() {return objectId == 0;}
 
   bool operator <(const ObjectKey &other) const {
@@ -55,7 +56,8 @@ struct ObjectKey
 template <typename T> struct object_handler : public ObjectKey
 {
   object_handler(ObjectKey key) : ObjectKey(key.classId, key.objectId) {}
-  object_handler() {}
+  object_handler(ClassId classId, ObjectId objectId) : ObjectKey(classId, objectId) {}
+  object_handler() : ObjectKey(0, 0) {}
 
   void operator () (T *t) {
     delete t;

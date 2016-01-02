@@ -423,10 +423,13 @@ private:
 
 protected:
   bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) override;
+  bool putData(ObjectKey &key, WriteBuf &buf) override;
   bool allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, byte_t **data) override;
   void getData(ReadBuf &buf, ClassId classId, ObjectId objectId, PropertyId propertyId) override;
+  void getData(ReadBuf &buf, ObjectKey &key, bool getRefount) override;
   bool remove(ClassId classId, ObjectId objectId) override;
   bool remove(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
+  void clearRefCounts(std::vector<ClassId> classes) override;
 
   ClassCursorHelper * _openCursor(const vector<ClassId> &classId) override;
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
@@ -438,7 +441,7 @@ protected:
   bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
-  unsigned getRefCount(ClassId cid, ObjectId oid) override;
+  unsigned decrementRefCount(ClassId cid, ObjectId oid) override;
 
 public:
   Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
@@ -684,6 +687,24 @@ bool Transaction::putData(ClassId classId, ObjectId objectId, PropertyId propert
   return ::lmdb::dbi_put(m_txn, m_dbi.handle(), k, v, m_append ? MDB_APPEND : 0);
 }
 
+bool Transaction::putData(ObjectKey &key, WriteBuf &buf)
+{
+  //object shallow buffer under propertyId == 0
+  SK_CONSTR(kv, key.classId, key.objectId, 0);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{buf.data(), buf.size()};
+  if(!::lmdb::dbi_put(m_txn, m_dbi.handle(), k, v, m_append ? MDB_APPEND : 0)) return false;
+
+  if(key.refcount) {
+    //object refcount under propertyId == 1
+    SK_PROPID(kv) = 1;
+    k.assign(kv, sizeof(kv));
+    v.assign(&key.refcount, sizeof(key.refcount));
+    return ::lmdb::dbi_put(m_txn, m_dbi.handle(), k, v, m_append ? MDB_APPEND : 0);
+  }
+  return true;
+}
+
 bool Transaction::allocData(ClassId classId, ObjectId objectId, PropertyId propertyId, size_t size, byte_t **data)
 {
   SK_CONSTR(kv, classId, objectId, propertyId);
@@ -706,6 +727,24 @@ void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, Prop
     buf.start(v.data<byte_t>(), v.size());
 }
 
+void Transaction::getData(ReadBuf &buf, ObjectKey &key, bool getRefount)
+{
+  SK_CONSTR(kv, key.classId, key.objectId, 0);
+  ::lmdb::val k{kv, sizeof(kv)};
+  ::lmdb::val v{};
+  if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, v)) {
+    buf.start(v.data<byte_t>(), v.size());
+
+    if(getRefount) {
+      SK_PROPID(kv) = 1;
+      k.assign(kv, sizeof(kv));
+      ::lmdb::val r{};
+      if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, r))
+        key.refcount = *(unsigned *)r.data();
+    }
+  }
+}
+
 bool Transaction::remove(ClassId classId, ObjectId objectId)
 {
   SK_CONSTR(kv, classId, objectId, 1);
@@ -725,14 +764,42 @@ bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId property
   return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
 }
 
-unsigned Transaction::getRefCount(ClassId cid, ObjectId oid) {
+unsigned Transaction::decrementRefCount(ClassId cid, ObjectId oid)
+{
+  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+
   SK_CONSTR(kv, cid, oid, 1);
   ::lmdb::val k{kv, sizeof(kv)};
   ::lmdb::val v{};
-  if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, v) && v.size() >= 4) {
-    return *((unsigned *)v.data<byte_t>());
+  if(cursor.get(k, v, MDB_SET) && v.size() >= 4) {
+    unsigned refcnt = *((unsigned *)v.data<byte_t>());
+    if(refcnt > 0) {
+      refcnt--;
+      v.assign(&refcnt, sizeof(refcnt));
+      ::lmdb::cursor_put(cursor.handle(), k, v, MDB_CURRENT);
+    }
+    return refcnt;
   }
-  return 1;
+  return 0;
+}
+
+void Transaction::clearRefCounts(std::vector<ClassId> classes)
+{
+  auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
+  for(auto cls : classes) {
+
+    SK_CONSTR(k, cls, 1, 1);
+    ::lmdb::val key {k, sizeof(k)};
+
+    if(cursor.get(key, MDB_SET)) {
+      cursor.del();
+
+      while(cursor.get(key, MDB_NEXT) && SK_CLASSID(k) == cls) {
+        if(SK_PROPID(k) == 1) cursor.del();
+      }
+    }
+  }
+  cursor.close();
 }
 
 ChunkCursor::Ptr Transaction::_openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd)

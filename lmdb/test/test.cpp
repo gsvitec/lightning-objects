@@ -25,7 +25,7 @@ void testColored2DPoint(KeyValueStore *kv)
 
   Colored2DPoint *p2;
   auto rtxn = kv->beginRead();
-  p2 = rtxn->loadObject<Colored2DPoint>(key);
+  p2 = rtxn->getObject<Colored2DPoint>(key);
   rtxn->abort();
 
   assert(p2 && p2->x == 2.0f && p2->y == 3.0f && p2->r == 4.0f && p2->g == 5.0f && p2->b == 6.0f && p2->a == 7.5f);
@@ -59,7 +59,7 @@ void testColoredPolygon(KeyValueStore *kv)
 
   ColoredPolygon *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->loadObject<ColoredPolygon>(key);
+  loaded = rtxn->getObject<ColoredPolygon>(key);
   rtxn->abort();
 
   assert(loaded && loaded->pts.size() == 3);
@@ -140,7 +140,7 @@ void testValueVectorProperty(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    OtherThingA *hans = rtxn->loadObject<OtherThingA>(key);
+    OtherThingA *hans = rtxn->getObject<OtherThingA>(key);
     assert(hans && hans->testnames.size() == 2);
     assert(hans->testnames[0] == "Eva");
     assert(hans->testnames[1] == "Rudi");
@@ -169,7 +169,7 @@ void testObjectMappings(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    ObjectPropertyTest *test = rtxn->loadObject<ObjectPropertyTest>(key);
+    ObjectPropertyTest *test = rtxn->getObject<ObjectPropertyTest>(key);
     assert(test && test->fso_vect.size() == 2 && test->vso_vect.size() == 2);
     assert(test->fso.number1 == 1 && test->fso.number2 == 2);
     assert(test->vso.number == 3 && test->vso.name == "testname");
@@ -201,7 +201,7 @@ void testPolymorphism(KeyValueStore *kv)
 
   player::SourceInfo *loaded;
   auto rtxn = kv->beginRead();
-  loaded = rtxn->loadObject<player::SourceInfo>(key);
+  loaded = rtxn->getObject<player::SourceInfo>(key);
   rtxn->abort();
 
   assert(loaded && loaded->userOverlays.size() == 2
@@ -243,7 +243,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
+    loaded = rtxn->getObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
     rtxn->loadMember(key.objectId, *loaded, PROPERTY(SomethingWithALazyVector, otherThings));
@@ -260,7 +260,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
+    loaded = rtxn->getObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
@@ -280,7 +280,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     SomethingWithALazyVector *loaded;
     auto rtxn = kv->beginRead();
 
-    loaded = rtxn->loadObject<SomethingWithALazyVector>(key);
+    loaded = rtxn->getObject<SomethingWithALazyVector>(key);
     assert(loaded && loaded->otherThings.empty());
 
     unsigned count = 0;
@@ -636,7 +636,7 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   wtxn->commit();
 
   auto rtxn = kv->beginRead();
-  flexis::player::SourceInfo *si2 = rtxn->loadObject<flexis::player::SourceInfo>(key);
+  flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(key);
   rtxn->abort();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
@@ -669,7 +669,7 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnEmbbededObjectVector *loaded = rtxn->loadObject<SomethingWithAnEmbbededObjectVector>(key);
+    SomethingWithAnEmbbededObjectVector *loaded = rtxn->getObject<SomethingWithAnEmbbededObjectVector>(key);
 
     assert(loaded && loaded->name == "sweov" && loaded->objects.size() == 4 \
            && loaded->objects[0].number1 == 1 \
@@ -790,10 +790,10 @@ void testDelete(KeyValueStore *kv)
     auto txn = kv->beginWrite();
 
     auto si = txn->getObject<player::SourceInfo>(siKey);
-    txn->deleteObject(si);
+    txn->deleteObject(si, siKey);
 
     auto ot = txn->getObject<ObjectPropertyTest>(otKey);
-    txn->deleteObject(ot);
+    txn->deleteObject(ot, otKey);
 
     txn->commit();
   }
@@ -860,8 +860,8 @@ void testUpdate(KeyValueStore *kv)
     ot->fso_vect.erase(ot->fso_vect.end());
     si->displayConfig = nullptr;
 
-    txn->saveObject(si);
-    txn->saveObject(ot);
+    txn->saveObject(*si, siKey);
+    txn->saveObject(*ot, otKey);
 
     txn->commit();
   }
@@ -888,6 +888,58 @@ void testUpdate(KeyValueStore *kv)
   }
 }
 
+void testRefCounting(KeyValueStore *kv)
+{
+  ObjectKey siKey;
+  {
+    player::SourceInfo si;
+    si.sourceIndex = 123456789;
+    si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
+
+    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
+    ro->name.setValue("testRefCounting.RectangularOverlay");
+
+    TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
+    to->name.setValue("testRefCounting.TimeCodeOverlay");
+
+    si.userOverlays.push_back(to);
+    si.userOverlays.push_back(ro);
+
+    auto txn = kv->beginWrite();
+
+    txn->saveObject(ro);        //owned by application + userOverlays
+    txn->saveObject(to, false); //owned by userOverlays only
+
+    txn->saveObject(si, siKey);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginWrite();
+
+    auto si = txn->getObject<player::SourceInfo>(siKey);
+
+    assert(si->userOverlays.size() == 2);
+    assert(si->displayConfig->sourceIndex == 1);
+
+    txn->deleteObject(si, siKey);
+
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginRead();
+
+    unsigned rov = countInstances<RectangularOverlay>(
+        txn, [](shared_ptr<RectangularOverlay> o)->bool {return o->name.getValue() == "testRefCounting.RectangularOverlay";});
+    assert(rov == 1);
+    unsigned tov = countInstances<TimeCodeOverlay>(
+        txn, [](shared_ptr<TimeCodeOverlay> o)->bool {return o->name.getValue() == "testRefCounting.TimeCodeOverlay";});
+    assert(tov == 0);
+
+    txn->abort();
+  }
+}
+
 void testObjectIterProperty(KeyValueStore *kv)
 {
   ObjectKey key;
@@ -909,7 +961,7 @@ void testObjectIterProperty(KeyValueStore *kv)
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnObjectIter *soi = rtxn->loadObject<SomethingWithAnObjectIter>(key);
+    SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(key);
     vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
 
     assert(hist.size() == 20);
@@ -1083,9 +1135,16 @@ int main()
       OtherThingB,
       SomethingWithALazyVector>();
 
+  kv->setRefCounting<IFlexisOverlay>();
+  kv->setRefCounting<VariableSizeObject>();
+  kv->setRefCounting<FixedSizeObject>();
+  kv->setRefCounting<player::SourceDisplayConfig>();
+
+  testRefCounting(kv);
+#if 0
   testDelete(kv);
   testUpdate(kv);
-#if 1
+
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);

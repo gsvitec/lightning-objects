@@ -543,6 +543,7 @@ struct AbstractClassInfo {
   const std::type_info &typeinfo;
   ClassId classId = 0;
   ObjectId maxObjectId = 0;
+  bool refcounting = false;
 
   std::vector<AbstractClassInfo *> subs;
 
@@ -751,8 +752,24 @@ struct ClassInfo : public AbstractClassInfo
 
 /**
  * base class for class/inheritance resolution infrastructure. Every mapped class is represented by a templated
- * instance of this class. All calls to access/update mapped object properties should go through here and will be
- * dispatched to the correct location
+ * subclass of this class. All calls to access/update mapped object properties should go through here and will be
+ * dispatched to the correct location. The correct location is determined by the classId which is uniquely assigned
+ * to each mapped class. Many calls here will first determine the correct ClassTraits instance, and from there
+ * hand over to non-templated API's, like PropertyAccessBase's API. This ensures that the cast operations (at handover
+ * to the non-templated API and thereafter before actual processing) happen on the exact type level, i.e., at handover,
+ * the ClassTraits template parameter type T is always the exact type of the handed-over object. Thus the T/void/T
+ * cast sequence is without issues.
+ *
+ * Heres an illustration:
+ *
+ * - mapped type hierarchy: S <- T (T subclasses S)
+ * - persistent operation is exectuted with template parameter type S and an operand of type T
+ * - the operation needs to hand over to a property mapping (PropertyAccessBase), which is not templated and therefore
+ *   takes (void *). Let the property be defined in ClassTraits<T>, while the operation uses ClassTraits<S>
+ * - inside PropertyAccessBase, the pointer is cast back to T to perform actual processing
+ * ==> this does not work. The cast S* -> void* -> T* destroys the object, because the compiler cannot support it.
+ * ==> we therefore perform lookup by classId to determine the exact match, which is ClassTraits<T>.
+ * ==> the cast T* -> void* -> T* is harmless
  */
 template <typename T, typename SUP=EmptyClass>
 class ClassTraitsBase
