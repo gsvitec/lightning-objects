@@ -122,6 +122,7 @@ struct VariableSizeObject {
   VariableSizeObject() : number(0), name("") {}
   VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
 };
+using VariableSizeObjectPtr = std::shared_ptr<VariableSizeObject>;
 
 struct ObjectPropertyTest
 {
@@ -135,6 +136,17 @@ struct ObjectPropertyTest
   ObjectPropertyTest() {}
   ObjectPropertyTest(unsigned fso_num1, unsigned fso_num2, unsigned vso_num, const char *vso_name)
       : fso(fso_num1, fso_num2), vso(vso_num, vso_name) {}
+};
+
+struct RefCountingTest
+{
+  FixedSizeObjectPtr fso;
+  VariableSizeObjectPtr vso;
+
+  vector<FixedSizeObjectPtr> fso_vect;
+  vector<VariableSizeObjectPtr> vso_vect;
+
+  RefCountingTest() {}
 };
 
 struct SomethingWithAnEmbbededObjectVector
@@ -346,6 +358,13 @@ START_MAPPING(ObjectPropertyTest, id, fso, vso, fso_vect, vso_vect)
   MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, FixedSizeObject, fso_vect)
   MAPPED_PROP(ObjectPropertyTest, ObjectVectorPropertyAssign, VariableSizeObject, vso_vect)
 END_MAPPING(ObjectPropertyTest)
+
+START_MAPPING(RefCountingTest, fso, vso, fso_vect, vso_vect)
+  MAPPED_PROP(RefCountingTest, ObjectPtrPropertyAssign, FixedSizeObject, fso)
+  MAPPED_PROP(RefCountingTest, ObjectPtrPropertyAssign, VariableSizeObject, vso)
+  MAPPED_PROP(RefCountingTest, ObjectPtrVectorPropertyAssign, FixedSizeObject, fso_vect)
+  MAPPED_PROP(RefCountingTest, ObjectPtrVectorPropertyAssign, VariableSizeObject, vso_vect)
+END_MAPPING(RefCountingTest)
 
 }
 }

@@ -179,10 +179,6 @@ struct StoreAccessEmbeddedKey : public StoreAccessBase
 
   size_t size(ObjectBuf &buf) const override {return ObjectKey::byteSize;}
   size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
-
-protected:
-  ClassId prepCid = 0;
-  ObjectId prepOid = 0;
 };
 
 /**

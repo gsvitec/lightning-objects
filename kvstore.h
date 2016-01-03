@@ -1388,26 +1388,50 @@ protected:
   }
 
   /**
-   * save an object into the KV store
+   * non-polymorphic, non-refcounting save. Used by value references
+   *
+   * @param objectId the object ID
+   * @param obj the object to save
+   * @param shallow if true, only shallow buffer will be written
+   */
+  template <typename T>
+  ObjectId saveValueObject(ObjectId objectId, T &obj, bool shallow=false)
+  {
+    auto classInfo = ClassTraits<T>::traits_info;
+    Properties *properties = ClassTraits<T>::traits_properties;
+
+    size_t size = calculateBuffer(&obj, properties);
+    if(!objectId) objectId = ++classInfo->maxObjectId;
+
+    writeBuf().start(size);
+    writeObject(classInfo->classId, objectId, obj, properties, shallow);
+
+    if(!putData(classInfo->classId, objectId, 0, writeBuf()))
+      throw persistence_error("data was not saved");
+
+    writeBuf().reset();
+    return objectId;
+  }
+
+  /**
+   * fully polymorphic, refcounting save
    *
    * @param key the object key
    * @param obj the object to save
-   * @param poly use polymorphic resolution
    * @param pa property that has changed. If null, everything will be written
    * @param shallow skip properties that go to separate keys (except pa if present)
    */
   template <typename T>
-  void saveObject(ObjectKey &key, T &obj, bool poly, bool setRefcount, bool shallow=false, const PropertyAccessBase *pa=nullptr)
+  void saveObject(ObjectKey &key, T &obj, bool setRefcount, bool shallow=false, const PropertyAccessBase *pa=nullptr)
   {
     Properties *properties;
     size_t size;
-    PropertyAccess<T, ObjectId> *ida = nullptr;
 
     using Traits = ClassTraits<T>;
 
-    bool doPoly = poly && Traits::traits_info->isPoly();
+    bool poly = Traits::traits_info->isPoly();
     if(key.isNew()) {
-      if(doPoly) {
+      if(poly) {
         key.classId = getClassId(typeid(obj));
 
         AbstractClassInfo *classInfo = store.objectClassInfos.at(key.classId);
@@ -1426,10 +1450,9 @@ protected:
       }
 
       size = calculateBuffer(&obj, properties);
-      ida = properties->objectIdAccess<T>();
     }
     else {
-      properties = doPoly ? Traits::traits_properties : store.objectProperties[key.classId];
+      properties = poly ? Traits::traits_properties : store.objectProperties[key.classId];
       size = prepareUpdate(key, &obj, properties);
     }
 
@@ -1444,8 +1467,6 @@ protected:
       throw persistence_error("data was not saved");
 
     writeBuf().reset();
-
-    if(ida) ida->set(obj, key.objectId);
   }
 
   WriteBuf &writeBuf() {
@@ -1590,7 +1611,7 @@ protected:
   virtual bool putData(ClassId classId, ObjectId objectId, PropertyId propertyId, WriteBuf &buf) = 0;
 
   /**
-   * save a data buffer under an object key
+   * save a data buffer under an object key, including refcount
    */
   virtual bool putData(ObjectKey &key, WriteBuf &buf) = 0;
 
@@ -1635,7 +1656,7 @@ public:
   std::shared_ptr<T> putObject(T *obj)
   {
     object_handler<T> handler;
-    saveObject<T>(handler, *obj, true, true);
+    saveObject<T>(handler, *obj, true);
     return std::shared_ptr<T>(obj, handler);
   }
 
@@ -1648,7 +1669,7 @@ public:
   ObjectKey putObject(T &obj)
   {
     ObjectKey key;
-    saveObject<T>(key, obj, true, true);
+    saveObject<T>(key, obj, true);
     return key;
   }
 
@@ -1663,7 +1684,7 @@ public:
   template <typename T>
   void saveObject(T &obj, ObjectKey &key, bool setRefCount=true)
   {
-    saveObject<T>(key, obj, true, setRefCount);
+    saveObject<T>(key, obj, setRefCount);
   }
 
   /**
@@ -1677,7 +1698,7 @@ public:
   void saveObject(const std::shared_ptr<T> &obj, bool setRefCount=true)
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
-    saveObject<T>(*key, *obj, true, setRefCount);
+    saveObject<T>(*key, *obj, setRefCount);
   }
 
   /**
@@ -1699,11 +1720,11 @@ public:
         break;
       case StoreLayout::embedded_key:
         //save property value and shallow buffer
-        saveObject<T>(key, obj, true, false ,true, pa);
+        saveObject<T>(key, obj, false ,true, pa);
         break;
       case StoreLayout::all_embedded:
         //shallow buffer only
-        saveObject<T>(key, obj, true, false, true, nullptr);
+        saveObject<T>(key, obj, false, true, nullptr);
     }
   }
 
@@ -1951,7 +1972,7 @@ public:
   }
 
   template <typename T>
-  void deleteObject(T *obj, ObjectKey &key) {
+  void deleteObject(ObjectKey &key) {
     if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
     removeObject<T>(key.classId, key.objectId);
   }
@@ -2340,30 +2361,12 @@ struct ValueSetPropertyStorage : public StoreAccessPropertyKey
 /**
  * storage template for mapped non-pointer object references. Since the object is referenced by value value in the enclosing
  * class, storage can only be non-polymorphic. The object is serialized into a separate buffer, but the key is written to the
- * enclosing object's buffer. the referenced object is required to hold an ObjectId-typed member variable which is referenced
- * through the keyPropertyId
+ * enclosing object's buffer. the referenced object is required to hold an ObjectId-typed member variable which is mapped as
+ * OBJECT_ID
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
 {
   VALUEAPI_ASSERT
-
-  size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
-  {
-    //read pre-update state
-    buf.read(prepCid, prepOid);
-    return size(obj, pa);
-  }
-  size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
-  {
-    bool refcount = ClassTraits<V>::traits_info->refcounting;
-    if(refcount) {
-      ClassId cid;
-      ObjectId oid;
-      buf.read(cid, oid);
-      if(tr->decrementRefCount(cid, oid) == 0) tr->removeObject<V>(cid, oid);
-    }
-    return size(buf);
-  }
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2372,22 +2375,17 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
+    ClassId childClassId  = ClassTraits<V>::traits_info->classId;
+    auto ida = ClassTraits<V>::objectIdAccess();
+
     //save the value object
     tr->pushWriteBuf();
-
-    ObjectKey ck(ClassTraits<V>::traits_info->classId, ClassTraits<V>::objectIdAccess()->get(val));
-    bool refcount = ClassTraits<V>::traits_info->refcounting;
-    if(refcount && prepOid && prepOid != ck.objectId) {
-      //previous object reference is about to be overwritten. Delete if refcount == 0
-      if(tr->decrementRefCount(prepCid, prepOid) == 0) tr->removeObject<V>(prepCid, prepOid);
-      ck.refcount++;
-    }
-    tr->saveObject(ck, val, false, true);
-
+    ObjectId childObjectId = tr->saveValueObject(ida->get(val), val);
+    ida->set(val, childObjectId);
     tr->popWriteBuf();
 
     //save the key in this objects write buffer
-    tr->writeBuf().append(ck.classId, ck.objectId);
+    tr->writeBuf().append(childClassId, childObjectId);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2462,6 +2460,8 @@ class ObjectPtrPropertyStorage : public StoreAccessEmbeddedKey
 {
 protected:
   bool m_lazy;
+  ClassId prepCid = 0;
+  ObjectId prepOid = 0;
 
 public:
   ObjectPtrPropertyStorage(bool lazy=false) : m_lazy(lazy) {}
@@ -2501,7 +2501,7 @@ public:
           childKey->refcount++;
         }
         tr->pushWriteBuf();
-        tr->saveObject<V>(*childKey, *val, true, true);
+        tr->saveObject<V>(*childKey, *val, true);
         tr->popWriteBuf();
       }
       if(mode != StoreMode::force_property) {
@@ -2609,51 +2609,11 @@ template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : publi
   }
 };
 
-template <typename V>
-struct AbstractObjectVectorStorage : public StoreAccessPropertyKey
-{
-  size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override {
-    prepared = true;
-    return size(obj, pa);
-  }
-  size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
-  {
-    bool refcount = ClassTraits<V>::traits_info->refcounting;
-    if(refcount) {
-      ReadBuf readBuf;
-      tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
-      if (!readBuf.null()) {
-        ObjectKey key;
-        while (readBuf.read(key)) {
-          if(tr->decrementRefCount(key.classId, key.objectId) == 0)
-            tr->removeObject<V>(key.classId, key.objectId);
-        }
-      }
-    }
-    tr->remove(buf.key.classId, buf.key.objectId, pa->id);
-    return size(buf);
-  }
-
-protected:
-  volatile bool prepared = false;
-
-  void loadStoredKeys(ReadTransaction *tr, ClassId cid, ObjectId oid, PropertyId pid, std::set<ObjectKey> &keys)
-  {
-    ReadBuf readBuf;
-    tr->getData(readBuf, cid, oid, pid);
-    if (!readBuf.null()) {
-      ObjectKey sk;
-      while (readBuf.read(sk)) keys.insert(sk);
-    }
-    prepared = false;
-  }
-};
-
 /**
  * storage template for mapped object vectors. Value-based, therefore not polymorphic. Vector element objects are required
  * to hold an ObjectId-typed member variable which is referenced through the keyPropertyId
  */
-template<typename T, typename V> class ObjectVectorPropertyStorage : public AbstractObjectVectorStorage<V>
+template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessPropertyKey
 {
   VALUEAPI_ASSERT
   bool m_lazy;
@@ -2670,10 +2630,6 @@ public:
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
 
-    std::set<ObjectKey> oldKeys;
-    if (mode != StoreMode::force_buffer)
-      AbstractObjectVectorStorage<V>::loadStoredKeys(tr, classId, objectId, pa->id, oldKeys);
-
     auto ida = ClassTraits<V>::objectIdAccess();
     ClassId childClassId = ClassTraits<V>::traits_info->classId;
     size_t psz = ObjectKey::byteSize * val.size();
@@ -2684,11 +2640,8 @@ public:
     for(V &v : val) {
       ObjectId childId = ida->get(v);
       if(mode != StoreMode::force_buffer) {
-        ObjectKey vk(childClassId, childId);
-        if(childId && (oldKeys.empty() || oldKeys.erase(vk))) vk.refcount++;
-
-        tr->saveObject<V>(vk, v, false, true);
-        childId = vk.objectId;
+        childId = tr->saveValueObject<V>(childId, v);
+        ida->set(v, childId);
       }
       propBuf.append(childClassId, childId);
     }
@@ -2697,15 +2650,6 @@ public:
     //vector goes into a separate property key
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
-
-    bool refcount = ClassTraits<V>::traits_info->refcounting;
-    if(refcount) {
-      //cleanup orphaned objects
-      for(auto &key : oldKeys) {
-        if(tr->decrementRefCount(key.classId, key.objectId) == 0)
-          tr->removeObject<V>(key.classId, key.objectId);
-      }
-    }
   }
 
   void load(ReadTransaction *tr, ReadBuf &buf,
@@ -2815,9 +2759,44 @@ public:
  *
  * Fully polymorphic
  */
-template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public AbstractObjectVectorStorage<V>
+template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public StoreAccessPropertyKey
 {
   bool m_lazy;
+  bool prepared = false;
+
+  size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
+  {
+    prepared = true;
+    return size(obj, pa);
+  }
+  size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
+  {
+    bool refcount = ClassTraits<V>::traits_info->refcounting;
+    if(refcount) {
+      ReadBuf readBuf;
+      tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
+      if (!readBuf.null()) {
+        ObjectKey key;
+        while (readBuf.read(key)) {
+          if(tr->decrementRefCount(key.classId, key.objectId) == 0)
+            tr->removeObject<V>(key.classId, key.objectId);
+        }
+      }
+    }
+    tr->remove(buf.key.classId, buf.key.objectId, pa->id);
+    return size(buf);
+  }
+
+  void loadStoredKeys(ReadTransaction *tr, ClassId cid, ObjectId oid, PropertyId pid, std::set<ObjectKey> &keys)
+  {
+    ReadBuf readBuf;
+    tr->getData(readBuf, cid, oid, pid);
+    if (!readBuf.null()) {
+      ObjectKey sk;
+      while (readBuf.read(sk)) keys.insert(sk);
+    }
+    prepared = false;
+  }
 
 public:
   ObjectPtrVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
@@ -2833,7 +2812,7 @@ public:
 
     std::set<ObjectKey> oldKeys;
     if (mode != StoreMode::force_buffer)
-      AbstractObjectVectorStorage<V>::loadStoredKeys(tr, classId, objectId, pa->id, oldKeys);
+      loadStoredKeys(tr, classId, objectId, pa->id, oldKeys);
 
     size_t psz = ObjectKey::byteSize * val.size();
     WriteBuf propBuf(psz);
@@ -2845,7 +2824,7 @@ public:
       if(mode != StoreMode::force_buffer) {
         if(!childKey->isNew() && (oldKeys.empty() || oldKeys.erase(*childKey))) childKey->refcount++;
         
-        tr->saveObject<V>(*childKey, *v, true, true);
+        tr->saveObject<V>(*childKey, *v, true);
       }
       propBuf.append(*childKey);
     }

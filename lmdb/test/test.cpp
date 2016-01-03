@@ -752,10 +752,10 @@ void testDelete(KeyValueStore *kv)
     to->name.setValue("testDelete");
     si.userOverlays.push_back(to);
 
-    ObjectPropertyTest ot;
-    ot.vso = VariableSizeObject(1, "testDelete.VariableSizeObject");
-    ot.fso = FixedSizeObject(99, 99);
-    ot.fso_vect.push_back(FixedSizeObject(99, 99));
+    RefCountingTest ot;
+    ot.vso = kv::make_obj<VariableSizeObject>(1, "testDelete.VariableSizeObject");
+    ot.fso = kv::make_obj<FixedSizeObject>(99, 99);
+    ot.fso_vect.push_back(kv::make_obj<FixedSizeObject>(99, 99));
 
     auto txn = kv->beginWrite();
 
@@ -774,8 +774,8 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
     assert(ov == 2);
 
-    unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDelete.VariableSizeObject";});
+    unsigned ot = countInstances<RefCountingTest>(
+        txn, [](shared_ptr<RefCountingTest> o)->bool {return o->vso->name == "testDelete.VariableSizeObject";});
     assert(ot == 1);
     unsigned vo = countInstances<VariableSizeObject>(
         txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDelete.VariableSizeObject";});
@@ -789,13 +789,8 @@ void testDelete(KeyValueStore *kv)
   {
     auto txn = kv->beginWrite();
 
-    auto si = txn->getObject<player::SourceInfo>(siKey);
-    txn->deleteObject(si, siKey);
-    delete si;
-
-    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
-    txn->deleteObject(ot, otKey);
-    delete ot;
+    txn->deleteObject<player::SourceInfo>(siKey);
+    txn->deleteObject<RefCountingTest>(otKey);
 
     txn->commit();
   }
@@ -809,8 +804,8 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
     assert(ov == 0);
 
-    unsigned ot = countInstances<ObjectPropertyTest>(
-        txn, [](shared_ptr<ObjectPropertyTest> o)->bool {return o->vso.name == "testDelete.VariableSizeObject";});
+    unsigned ot = countInstances<RefCountingTest>(
+        txn, [](shared_ptr<RefCountingTest> o)->bool {return o->vso->name == "testDelete.VariableSizeObject";});
     assert(ot == 0);
     unsigned vo = countInstances<VariableSizeObject>(
         txn, [](shared_ptr<VariableSizeObject> v)->bool {return v->name == "testDelete.VariableSizeObject";});
@@ -825,7 +820,7 @@ void testDelete(KeyValueStore *kv)
 
 void testUpdate(KeyValueStore *kv)
 {
-  ObjectKey siKey, otKey;
+  ObjectKey siKey, rtKey;
   {
     player::SourceInfo si;
     si.sourceIndex = 2233445;
@@ -838,14 +833,14 @@ void testUpdate(KeyValueStore *kv)
     to->name.setValue("testUpdate");
     si.userOverlays.push_back(to);
 
-    ObjectPropertyTest ot;
-    ot.fso_vect.push_back(FixedSizeObject(11, 11));
-    ot.fso_vect.push_back(FixedSizeObject(22, 22));
+    RefCountingTest ot;
+    ot.fso_vect.push_back(kv::make_obj<FixedSizeObject>(11, 11));
+    ot.fso_vect.push_back(kv::make_obj<FixedSizeObject>(22, 22));
 
     auto txn = kv->beginWrite();
 
     txn->saveObject(si, siKey);
-    txn->saveObject(ot, otKey);
+    txn->saveObject(ot, rtKey);
 
     txn->commit();
   }
@@ -855,7 +850,7 @@ void testUpdate(KeyValueStore *kv)
     auto si = txn->getObject<player::SourceInfo>(siKey);
     assert(si->userOverlays.size() == 2);
     assert(si->displayConfig->sourceIndex == 1);
-    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
+    auto ot = txn->getObject<RefCountingTest>(rtKey);
     assert(ot->fso_vect.size() == 2);
 
     si->userOverlays.erase(si->userOverlays.begin());
@@ -863,7 +858,7 @@ void testUpdate(KeyValueStore *kv)
     si->displayConfig = nullptr;
 
     txn->saveObject(*si, siKey);
-    txn->saveObject(*ot, otKey);
+    txn->saveObject(*ot, rtKey);
 
     txn->commit();
     delete ot;
@@ -875,7 +870,7 @@ void testUpdate(KeyValueStore *kv)
     auto si = txn->getObject<player::SourceInfo>(siKey);
     assert(si->userOverlays.size() == 1);
     assert(si->displayConfig == nullptr);
-    auto ot = txn->getObject<ObjectPropertyTest>(otKey);
+    auto ot = txn->getObject<RefCountingTest>(rtKey);
     assert(ot->fso_vect.size() == 1);
 
     unsigned cov = countInstances<IFlexisOverlay>(
@@ -892,6 +887,10 @@ void testUpdate(KeyValueStore *kv)
     delete ot;
     delete si;
   }
+  auto txn = kv->beginWrite();
+  txn->deleteObject<player::SourceInfo>(siKey);
+  txn->deleteObject<RefCountingTest>(rtKey);
+  txn->commit();
 }
 
 void testRefCounting(KeyValueStore *kv)
@@ -928,7 +927,7 @@ void testRefCounting(KeyValueStore *kv)
     assert(si->userOverlays.size() == 2);
     assert(si->displayConfig->sourceIndex == 1);
 
-    txn->deleteObject(si, siKey);
+    txn->deleteObject<player::SourceInfo>(siKey);
 
     txn->commit();
     delete si;
@@ -1116,6 +1115,7 @@ int main()
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   kv->putSchema<ObjectPropertyTest,
+      RefCountingTest,
       FixedSizeObject,
       VariableSizeObject,
       SomethingWithAnEmbbededObjectVector,
