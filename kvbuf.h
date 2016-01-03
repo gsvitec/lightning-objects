@@ -41,7 +41,6 @@ struct ObjectKey
   unsigned refcount;
 
   ObjectKey() : classId(0), objectId(0), refcount(0) {}
-  ObjectKey(unsigned refcount) : classId(0), objectId(0), refcount(refcount) {}
   ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId), refcount(0) {}
   bool isNew() {return objectId == 0;}
 

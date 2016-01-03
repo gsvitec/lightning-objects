@@ -108,7 +108,7 @@ struct FixedSizeObject {
   unsigned objectId = 0; //for ObjectPropertyTest
 
   unsigned number1, number2;
-  FixedSizeObject() {}
+  FixedSizeObject() : number1(0), number2(0) {}
   FixedSizeObject(unsigned number1, unsigned number2) : number1(number1), number2(number2) {}
 };
 using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
@@ -119,13 +119,13 @@ struct VariableSizeObject {
   unsigned number;
   std::string name;
 
-  VariableSizeObject() {}
+  VariableSizeObject() : number(0), name("") {}
   VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
 };
 
 struct ObjectPropertyTest
 {
-  unsigned id;
+  unsigned id = 0;
   FixedSizeObject fso;
   VariableSizeObject vso;
 

@@ -1388,55 +1388,16 @@ protected:
   }
 
   /**
-   * non-polymorphic save. Used by value-based, non-polymorphic containers
-   *
-   * @param ida the object id accessor
-   * @param obj the object to save
-   * @param pa property that has changed. If null, everything will be written
-   * @param shallow skip properties that go to separate keys (except pa)
-   */
-  template <typename T>
-  ObjectId saveObject(PropertyAccess<T, ObjectId> *ida, T &obj, const PropertyAccessBase *pa=nullptr, bool shallow=false)
-  {
-    using Traits = ClassTraits<T>;
-
-    AbstractClassInfo *classInfo = Traits::traits_info;
-    ObjectKey key(classInfo->classId, ida->get(obj));
-    size_t size;
-
-    if(key.isNew()) {
-      key.objectId = ++classInfo->maxObjectId;
-      size = calculateBuffer(&obj, Traits::traits_properties);
-    }
-    else {
-      size = prepareUpdate(key, &obj, Traits::traits_properties);
-    }
-
-    writeBuf().start(size);
-    writeObject(key.classId, key.objectId, obj, Traits::traits_properties, shallow);
-
-    if(pa && shallow)
-      Traits::save(this, key.classId, key.objectId, &obj, pa, StoreMode::force_property);
-
-    if(!putData(key, writeBuf()))
-      throw persistence_error("data was not saved");
-
-    writeBuf().reset();
-
-    if(ida) ida->set(obj, key.objectId);
-    return key.objectId;
-  }
-
-  /**
-   * polymorphic save
+   * save an object into the KV store
    *
    * @param key the object key
    * @param obj the object to save
+   * @param poly use polymorphic resolution
    * @param pa property that has changed. If null, everything will be written
-   * @param shallow skip properties that go to separate keys (except pa)
+   * @param shallow skip properties that go to separate keys (except pa if present)
    */
   template <typename T>
-  void saveObject(ObjectKey &key, T &obj, const PropertyAccessBase *pa, bool shallow=false)
+  void saveObject(ObjectKey &key, T &obj, bool poly, bool setRefcount, bool shallow=false, const PropertyAccessBase *pa=nullptr)
   {
     Properties *properties;
     size_t size;
@@ -1444,13 +1405,15 @@ protected:
 
     using Traits = ClassTraits<T>;
 
-    bool poly = Traits::traits_info->isPoly();
+    bool doPoly = poly && Traits::traits_info->isPoly();
     if(key.isNew()) {
-      if(poly) {
+      if(doPoly) {
         key.classId = getClassId(typeid(obj));
 
         AbstractClassInfo *classInfo = store.objectClassInfos.at(key.classId);
         if(!classInfo) throw persistence_error("class not registered");
+
+        if(setRefcount && classInfo->refcounting) key.refcount =  1;
 
         key.objectId = ++classInfo->maxObjectId;
         properties = store.objectProperties[key.classId];
@@ -1458,6 +1421,7 @@ protected:
       else {
         key.classId = Traits::traits_info->classId;
         key.objectId = ++Traits::traits_info->maxObjectId;
+        if(setRefcount && Traits::traits_info->refcounting) key.refcount =  1;
         properties = Traits::traits_properties;
       }
 
@@ -1465,7 +1429,7 @@ protected:
       ida = properties->objectIdAccess<T>();
     }
     else {
-      properties = poly ? Traits::traits_properties : store.objectProperties[key.classId];
+      properties = doPoly ? Traits::traits_properties : store.objectProperties[key.classId];
       size = prepareUpdate(key, &obj, properties);
     }
 
@@ -1670,8 +1634,8 @@ public:
   template <typename T>
   std::shared_ptr<T> putObject(T *obj)
   {
-    object_handler<T> handler(1);
-    saveObject<T>(handler, *obj, nullptr);
+    object_handler<T> handler;
+    saveObject<T>(handler, *obj, true, true);
     return std::shared_ptr<T>(obj, handler);
   }
 
@@ -1683,8 +1647,8 @@ public:
   template <typename T>
   ObjectKey putObject(T &obj)
   {
-    ObjectKey key(1);
-    saveObject<T>(key, obj, nullptr);
+    ObjectKey key;
+    saveObject<T>(key, obj, true, true);
     return key;
   }
 
@@ -1699,8 +1663,7 @@ public:
   template <typename T>
   void saveObject(T &obj, ObjectKey &key, bool setRefCount=true)
   {
-    if(setRefCount && key.isNew()) key.refcount =  1;
-    saveObject<T>(key, obj, nullptr);
+    saveObject<T>(key, obj, true, setRefCount);
   }
 
   /**
@@ -1714,8 +1677,7 @@ public:
   void saveObject(const std::shared_ptr<T> &obj, bool setRefCount=true)
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
-    if(setRefCount && key->isNew()) key->refcount =  1;
-    saveObject<T>(*key, *obj, nullptr);
+    saveObject<T>(*key, *obj, true, setRefCount);
   }
 
   /**
@@ -1737,11 +1699,11 @@ public:
         break;
       case StoreLayout::embedded_key:
         //save property value and shallow buffer
-        saveObject<T>(key, obj, pa, true);
+        saveObject<T>(key, obj, true, false ,true, pa);
         break;
       case StoreLayout::all_embedded:
         //shallow buffer only
-        saveObject<T>(key, obj, nullptr, true);
+        saveObject<T>(key, obj, true, false, true, nullptr);
     }
   }
 
@@ -2413,20 +2375,19 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     //save the value object
     tr->pushWriteBuf();
 
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
-    auto ida = ClassTraits<V>::objectIdAccess();
-    ObjectId childId = tr->saveObject(ida, val);
-
-    if(prepOid && prepOid != childId) {
-      bool refcount = ClassTraits<V>::traits_info->refcounting;
-      //previous object reference is about to be overwritten. Delete if refcount == 1
-      if(refcount && tr->decrementRefCount(prepCid, prepOid) == 0) tr->removeObject<V>(prepCid, prepOid);
+    ObjectKey ck(ClassTraits<V>::traits_info->classId, ClassTraits<V>::objectIdAccess()->get(val));
+    bool refcount = ClassTraits<V>::traits_info->refcounting;
+    if(refcount && prepOid && prepOid != ck.objectId) {
+      //previous object reference is about to be overwritten. Delete if refcount == 0
+      if(tr->decrementRefCount(prepCid, prepOid) == 0) tr->removeObject<V>(prepCid, prepOid);
+      ck.refcount++;
     }
+    tr->saveObject(ck, val, false, true);
 
     tr->popWriteBuf();
 
     //save the key in this objects write buffer
-    tr->writeBuf().append(childClassId, childId);
+    tr->writeBuf().append(ck.classId, ck.objectId);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2540,7 +2501,7 @@ public:
           childKey->refcount++;
         }
         tr->pushWriteBuf();
-        tr->saveObject<V>(*val, *childKey, nullptr);
+        tr->saveObject<V>(*childKey, *val, true, true);
         tr->popWriteBuf();
       }
       if(mode != StoreMode::force_property) {
@@ -2726,7 +2687,7 @@ public:
         ObjectKey vk(childClassId, childId);
         if(childId && (oldKeys.empty() || oldKeys.erase(vk))) vk.refcount++;
 
-        tr->saveObject<V>(vk, v, nullptr);
+        tr->saveObject<V>(vk, v, false, true);
         childId = vk.objectId;
       }
       propBuf.append(childClassId, childId);
@@ -2762,8 +2723,7 @@ public:
       ObjectKey sk;
       while(readBuf.read(sk)) {
         V obj;
-        tr->loadObject(sk, &obj);
-        val.push_back(obj);
+        if(tr->loadObject(sk, &obj)) val.push_back(obj);
       }
     }
     T *tp = reinterpret_cast<T *>(obj);
@@ -2885,7 +2845,7 @@ public:
       if(mode != StoreMode::force_buffer) {
         if(!childKey->isNew() && (oldKeys.empty() || oldKeys.erase(*childKey))) childKey->refcount++;
         
-        tr->saveObject<V>(*childKey, *v, nullptr);
+        tr->saveObject<V>(*childKey, *v, true, true);
       }
       propBuf.append(*childKey);
     }
@@ -2929,7 +2889,7 @@ public:
         }
         else {
           V *obj = tr->loadObject<V>(handler);
-          val.push_back(std::shared_ptr<V>(obj, handler));
+          if(obj) val.push_back(std::shared_ptr<V>(obj, handler));
         }
       }
     }

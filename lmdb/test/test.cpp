@@ -791,9 +791,11 @@ void testDelete(KeyValueStore *kv)
 
     auto si = txn->getObject<player::SourceInfo>(siKey);
     txn->deleteObject(si, siKey);
+    delete si;
 
     auto ot = txn->getObject<ObjectPropertyTest>(otKey);
     txn->deleteObject(ot, otKey);
+    delete ot;
 
     txn->commit();
   }
@@ -826,7 +828,7 @@ void testUpdate(KeyValueStore *kv)
   ObjectKey siKey, otKey;
   {
     player::SourceInfo si;
-    si.sourceIndex = 123456789;
+    si.sourceIndex = 2233445;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
     ro->name.setValue("testUpdate");
@@ -864,6 +866,8 @@ void testUpdate(KeyValueStore *kv)
     txn->saveObject(*ot, otKey);
 
     txn->commit();
+    delete ot;
+    delete si;
   }
   {
     auto txn = kv->beginRead();
@@ -885,6 +889,8 @@ void testUpdate(KeyValueStore *kv)
     assert(fo == 1);
 
     txn->abort();
+    delete ot;
+    delete si;
   }
 }
 
@@ -893,7 +899,7 @@ void testRefCounting(KeyValueStore *kv)
   ObjectKey siKey;
   {
     player::SourceInfo si;
-    si.sourceIndex = 123456789;
+    si.sourceIndex = 8887766;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
 
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
@@ -925,6 +931,7 @@ void testRefCounting(KeyValueStore *kv)
     txn->deleteObject(si, siKey);
 
     txn->commit();
+    delete si;
   }
   {
     auto txn = kv->beginRead();
@@ -1140,10 +1147,10 @@ int main()
   kv->setRefCounting<FixedSizeObject>();
   kv->setRefCounting<player::SourceDisplayConfig>();
 
-  testRefCounting(kv);
-#if 0
-  testDelete(kv);
+#if 1
   testUpdate(kv);
+  testDelete(kv);
+  testRefCounting(kv);
 
   testColored2DPoint(kv);
   testColoredPolygon(kv);
