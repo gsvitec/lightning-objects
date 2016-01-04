@@ -25,7 +25,7 @@ string incompatible_schema_error::make_what(const char *className)
 string incompatible_schema_error::make_detail(vector<string> &errs)
 {
   stringstream ss;
-  for(auto it=errs.cbegin();;) {
+  for(auto it=errs.cbegin(); it!=errs.cend();) {
     ss << *it;
     if(it++ != errs.cend()) ss << endl;
     else break;

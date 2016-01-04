@@ -554,6 +554,13 @@ struct AbstractClassInfo {
     return !subs.empty();
   }
 
+  void setRefCounting(bool refcount) {
+    refcounting = refcount;
+    for(auto &sub : subs) {
+      sub->setRefCounting(refcount);
+    }
+  }
+
   bool isInstance(ClassId _classId) {
     if(classId == _classId) return true;
     for(auto s : subs) {
@@ -885,7 +892,7 @@ public:
 
   static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true)
   {
-    ObjectKey *key;
+    ObjectKey *key = nullptr;
     if(!get_objectkey(obj, key) && force) throw invalid_pointer_error();
     return key;
   }

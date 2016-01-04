@@ -194,12 +194,17 @@ public:
 
   bool read(ObjectKey &key)
   {
+    return read(key.classId, key.objectId);
+  }
+
+  bool read(ClassId &classId, ObjectId &objectId)
+  {
     if(m_size - (m_readptr - m_data) < ObjectKey::byteSize)
       return false;
 
-    key.classId = *(ClassId *)m_readptr;
+    classId = *(ClassId *)m_readptr;
     m_readptr += ClassId_sz;
-    key.objectId = *(ObjectId *)m_readptr;
+    objectId = *(ObjectId *)m_readptr;
     m_readptr += ObjectId_sz;
 
     return true;
