@@ -63,7 +63,7 @@ struct SourceInfo {
 
   unsigned sourceIndex;
   SourceDisplayConfig::Ptr displayConfig;
-  std::vector<IFlexisOverlayPtr> userOverlays;
+  std::vector<flexis::Overlays::IFlexisOverlayPtr> userOverlays;
 
   SourceInfo(unsigned sourceIndex = 0) : sourceIndex(sourceIndex) {}
   SourceInfo(SourceDisplayConfig::Ptr displayConfig)
@@ -159,7 +159,7 @@ struct SomethingWithAnEmbbededObjectVector
 struct SomethingWithAnObjectIter
 {
   std::string name;
-  flexis::ObjectHistoryPtr<FixedSizeObject> history;
+  flexis::Overlays::ObjectHistoryPtr<FixedSizeObject> history;
 };
 
 struct SomethingAbstract {
@@ -296,7 +296,7 @@ END_MAPPING(flexis::player::SourceDisplayConfig)
 START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverlays)
   MAPPED_PROP(flexis::player::SourceInfo, BasePropertyAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
-  MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::IFlexisOverlay, userOverlays)
+  MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::Overlays::IFlexisOverlay, userOverlays)
 END_MAPPING(flexis::player::SourceInfo)
 
 START_MAPPING(SomethingWithAnObjectIter, history)
