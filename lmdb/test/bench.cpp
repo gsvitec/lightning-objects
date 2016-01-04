@@ -13,6 +13,7 @@ using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
 using namespace flexis;
 using namespace std;
+using namespace flexis::Overlays;
 
 namespace flexislmdb = flexis::persistence::lmdb;
 

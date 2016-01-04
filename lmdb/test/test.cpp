@@ -11,6 +11,7 @@ using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
 using namespace flexis;
 using namespace std;
+using namespace flexis::Overlays;
 
 void testColored2DPoint(KeyValueStore *kv) 
 {
@@ -1134,9 +1135,9 @@ int main()
       player::SourceDisplayConfig,
       player::SourceInfo,
       flexis::data::recording::StreamProcessor,
-      flexis::IFlexisOverlay,
-      flexis::RectangularOverlay,
-      flexis::TimeCodeOverlay,
+      flexis::Overlays::IFlexisOverlay,
+      flexis::Overlays::RectangularOverlay,
+      flexis::Overlays::TimeCodeOverlay,
       OtherThing,
       OtherThingA,
       OtherThingB,
