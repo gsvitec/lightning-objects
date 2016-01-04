@@ -251,6 +251,16 @@ public:
   template <typename T> void setRefCounting(bool refcount=true)
   {
     ClassTraits<T>::traits_info->setRefCounting(refcount);
+    ClassId cid = ClassTraits<T>::traits_info->classId;
+    for(auto &op : objectProperties) {
+      if(op.first != cid && op.second->preparesUpdates(cid)) {
+        if(refcount)
+          objectClassInfos[op.first]->prepareClasses.insert(cid);
+        else
+          objectClassInfos[op.first]->prepareClasses.erase(cid);
+        break;
+      }
+    }
   }
 
   /**
@@ -1344,21 +1354,26 @@ protected:
     using Traits = ClassTraits<T>;
     Properties *props = Traits::getProperties(classId);
 
-    ObjectBuf prepBuf(this, classId, objectId, true);
-    if(!prepBuf.null()) {
-      for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
-        const PropertyAccessBase *pa = props->get(px);
+    if(Traits::needsPrepare()) {
+      ObjectBuf prepBuf(this, classId, objectId, true);
+      if(!prepBuf.null()) {
+        for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+          const PropertyAccessBase *pa = props->get(px);
 
-        if(!pa->enabled) continue;
+          if(!pa->enabled) continue;
 
-        prepBuf.mark();
-        size_t psz = ClassTraits<T>::prepareDelete(this, prepBuf, pa);
-        prepBuf.unmark(psz);
+          prepBuf.mark();
+          size_t psz = ClassTraits<T>::prepareDelete(this, prepBuf, pa);
+          prepBuf.unmark(psz);
+        }
+        //now remove the object proper
+        return remove(classId, objectId);
       }
-      //now remove the object proper
+      return false;
+    }
+    else {
       return remove(classId, objectId);
     }
-    return false;
   }
 
   /**
@@ -1456,7 +1471,7 @@ protected:
     }
     else {
       properties = poly ? store.objectProperties[key.classId] : Traits::traits_properties;
-      prepareUpdate(key, &obj, properties);
+      if(Traits::needsPrepare()) prepareUpdate(key, &obj, properties);
     }
 
     if(pa && shallow)
@@ -2470,6 +2485,10 @@ protected:
 public:
   ObjectPtrPropertyStorage(bool lazy=false) : m_lazy(lazy) {}
 
+  bool preparesUpdates(ClassId classId) override
+  {
+    return ClassTraits<V>::traits_info->hasClassId(classId);
+  }
   size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
     if(ClassTraits<V>::traits_info->refcounting) {
@@ -2770,6 +2789,10 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
   bool m_lazy;
   bool updatePrepared = false;
 
+  bool preparesUpdates(ClassId classId) override
+  {
+    return ClassTraits<V>::traits_info->classId == classId;
+  }
   size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
     updatePrepared = ClassTraits<V>::traits_info->refcounting;

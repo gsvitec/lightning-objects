@@ -142,6 +142,7 @@ struct StoreAccessBase
   StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded, size_t fixedSize=0)
       : layout(layout), fixedSize(fixedSize) {}
 
+  virtual bool preparesUpdates(ClassId classId) {return false;}
   virtual size_t size(ObjectBuf &buf) const = 0;
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
 
@@ -366,8 +367,10 @@ struct PropertyAccessBase
   PropertyId id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
+
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : name(name), storage(storage), type(type) {}
+
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 
@@ -448,6 +451,13 @@ public:
       return (PropertyAccess<O, ObjectId> *)keyProperty;
     else
       return superIter ? superIter->objectIdAccess<O>() : nullptr;
+  }
+
+  bool preparesUpdates(ClassId classId) {
+    for(int i=0; i<numProps; i++)
+      if((*decl_props[i])->storage->preparesUpdates(classId))
+        return true;
+    return false;
   }
 
   inline unsigned full_size() {
@@ -541,6 +551,7 @@ struct AbstractClassInfo {
   ObjectId maxObjectId = 0;
   bool refcounting = false;
 
+  std::set<ClassId> prepareClasses;
   std::vector<AbstractClassInfo *> subs;
 
   AbstractClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId)
@@ -552,6 +563,13 @@ struct AbstractClassInfo {
 
   bool isPoly() {
     return !subs.empty();
+  }
+
+  bool hasClassId(ClassId cid) {
+    if(classId == cid) return true;
+    for(auto &sub : subs)
+      if(sub->hasClassId(cid)) return true;
+    return false;
   }
 
   void setRefCounting(bool refcount) {
@@ -846,6 +864,10 @@ public:
     }
   }
 
+  static bool needsPrepare() {
+    return !traits_info->prepareClasses.empty();
+  }
+
   static T *getSubstitute()
   {
     if(traits_info->substitute) return traits_info->substitute->getPtr();
@@ -1070,6 +1092,9 @@ struct ClassTraits<EmptyClass>
   template <typename T>
   static size_t bufferSize(T *obj, ClassId *cid=nullptr) {
     return 0;
+  }
+  static bool needsPrepare() {
+    return false;
   }
   template <typename T>
   static size_t size(T *obj) {
