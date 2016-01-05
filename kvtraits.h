@@ -200,25 +200,20 @@ template<typename T, typename V, unsigned byteSize=TypeTraits<V>::byteSize> stru
 };
 
 /**
- * base class for value handler templates. Main task is determining storage size and serializing/deserializing
+ * base class for value handler templates.
  */
-struct ValueTraitsBase {
-  const bool fixed;
-  ValueTraitsBase(bool fixed) : fixed(fixed) {}
-  virtual size_t data_size(const byte_t *) = 0;
-};
-
 template <bool Fixed>
-struct ValueTraitsFixed : public ValueTraitsBase
+struct ValueTraitsBase
 {
-  ValueTraitsFixed() : ValueTraitsBase(Fixed) {}
+  const bool fixed;
+  ValueTraitsBase() : fixed(Fixed) {}
 };
 
 /**
  * base class for single-byte value handlers
  */
 template <typename T>
-struct ValueTraitsByte : public ValueTraitsFixed<true>
+struct ValueTraitsByte : public ValueTraitsBase<true>
 {
   static size_t size(const T &val) {
     return 1;
@@ -237,11 +232,8 @@ struct ValueTraitsByte : public ValueTraitsFixed<true>
  * base template value handler for fixed size values
  */
 template <typename T>
-struct ValueTraits : public ValueTraitsFixed<true>
+struct ValueTraits : public ValueTraitsBase<true>
 {
-  size_t data_size(const byte_t *) override {
-    return TypeTraits<T>::byteSize;
-  }
   static size_t size(const T &val) {
     return TypeTraits<T>::byteSize;
   }
@@ -261,7 +253,7 @@ struct ValueTraits : public ValueTraitsFixed<true>
  * value handler specialization for boolean values
  */
 template <>
-struct ValueTraits<bool> : public ValueTraitsFixed<true>
+struct ValueTraits<bool> : public ValueTraitsBase<true>
 {
   static size_t size(const bool &val) {
     return TypeTraits<bool>::byteSize;
@@ -280,11 +272,8 @@ struct ValueTraits<bool> : public ValueTraitsFixed<true>
  * value handler specialization for string values
  */
 template <>
-struct ValueTraits<std::string> : public ValueTraitsFixed<false>
+struct ValueTraits<std::string> : public ValueTraitsBase<false>
 {
-  size_t data_size(const byte_t *data) override {
-    return strlen((const char *)data) + 1;
-  }
   static size_t size(const std::string &val) {
     return val.length() + 1;
   }
@@ -301,11 +290,8 @@ struct ValueTraits<std::string> : public ValueTraitsFixed<false>
  * value handler specialization for C string values
  */
 template <>
-struct ValueTraits<const char *> : public ValueTraitsFixed<false>
+struct ValueTraits<const char *> : public ValueTraitsBase<false>
 {
-  size_t data_size(const byte_t *data) override {
-    return strlen((const char *)data) + 1;
-  }
   static size_t size(const char * const &val) {
     return strlen(val) + 1;
   }
@@ -321,11 +307,8 @@ struct ValueTraits<const char *> : public ValueTraitsFixed<false>
  * value handler base class for float values
  */
 template <typename T>
-struct ValueTraitsFloat : public ValueTraitsFixed<true>
+struct ValueTraitsFloat : public ValueTraitsBase<true>
 {
-  size_t data_size(const byte_t *data) override {
-    return TypeTraits<T>::byteSize;
-  }
   static size_t size(const T &val) {
     return TypeTraits<T>::byteSize;
   }
