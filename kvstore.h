@@ -1777,7 +1777,7 @@ public:
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
     byte_t *data;
-    size_t bufSz = vect.size()*ObjectKey::byteSize+4;
+    size_t bufSz = vect.size()*ObjectKey_sz+4;
 
     if(!allocData(key->classId, key->objectId, propertyId, bufSz, &data))
       throw persistence_error("allocData failed");
@@ -2546,7 +2546,7 @@ public:
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     if(m_lazy && mode == StoreMode::force_none) {
-      buf.read(ObjectKey::byteSize);
+      buf.read(ObjectKey_sz);
       return;
     }
 
@@ -2656,7 +2656,7 @@ public:
 
     auto ida = ClassTraits<V>::objectIdAccess();
     ClassId childClassId = ClassTraits<V>::traits_info->classId;
-    size_t psz = ObjectKey::byteSize * val.size();
+    size_t psz = ObjectKey_sz * val.size();
     WriteBuf propBuf(psz);
 
     //write new vector
@@ -2843,7 +2843,7 @@ public:
       loadStoredKeys(tr, classId, objectId, pa->id, oldKeys);
     updatePrepared = false;
 
-    size_t psz = ObjectKey::byteSize * val.size();
+    size_t psz = ObjectKey_sz * val.size();
     WriteBuf propBuf(psz);
 
     tr->pushWriteBuf();

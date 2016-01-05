@@ -323,7 +323,7 @@ protected:
     keyval.assign(sk, sizeof(sk));
 
     if(m_dbi.get(m_txn, keyval, m_vectordata)) {
-      m_size = m_vectordata.size() / ObjectKey::byteSize;
+      m_size = m_vectordata.size() / ObjectKey_sz;
 
       m_currentClassId = SK_CLASSID(m_vectordata.data<byte_t>());
       m_currentObjectId = SK_OBJID(m_vectordata.data<byte_t>());
@@ -336,7 +336,7 @@ protected:
   bool next() override
   {
     if(++m_index < m_size) {
-      byte_t *data = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+      byte_t *data = m_vectordata.data<byte_t>() + m_index * ObjectKey_sz;
       m_currentClassId = SK_CLASSID(data);
       m_currentObjectId = SK_OBJID(data);
       return true;
@@ -346,7 +346,7 @@ protected:
 
   void erase() override
   {
-    const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+    const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey_sz;
     SK_OBJK(keydata, kp);
     ::lmdb::val keyval;
     keyval.assign(keydata, StorageKey::byteSize);
@@ -360,7 +360,7 @@ protected:
   void get(ObjectKey &key, ReadBuf &rb) override
   {
     if(m_index < m_size) {
-      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey_sz;
       SK_OBJK(keydata, kp);
 
       ::lmdb::val keyval;
@@ -379,7 +379,7 @@ protected:
 
   void getObjectData(ObjectBuf &buf) override {
     if(m_index < m_size) {
-      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey::byteSize;
+      const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey_sz;
       SK_OBJK(keydata, kp);
 
       ::lmdb::val keyval;

@@ -57,7 +57,7 @@ struct PropertyType
   PropertyType(unsigned id, unsigned byteSize, bool isVector=false)
       : id(id), isVector(isVector), byteSize(byteSize), className(nullptr) {}
   PropertyType(const char *clsName, bool isVector=false) :
-      id(0), isVector(isVector), byteSize(ObjectKey::byteSize), className(clsName) {}
+      id(0), isVector(isVector), byteSize(ObjectKey_sz), className(clsName) {}
 
   bool operator == (const PropertyType &other) const {
     return id == other.id
@@ -176,10 +176,10 @@ struct StoreAccessBase
  */
 struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
-  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey::byteSize) {}
+  StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey_sz) {}
 
-  size_t size(ObjectBuf &buf) const override {return ObjectKey::byteSize;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey::byteSize;}
+  size_t size(ObjectBuf &buf) const override {return ObjectKey_sz;}
+  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey_sz;}
 };
 
 /**
@@ -242,7 +242,7 @@ struct ValueTraits : public ValueTraitsBase<true>
     const byte_t *data = buf.read(byteSize);
     val = read_integer<T>(data, byteSize);
   }
-  static void putBytes(WriteBuf &buf, T val) {
+  static void putBytes(WriteBuf &buf, T &val) {
     size_t byteSize = TypeTraits<T>::byteSize;
     byte_t *data = buf.allocate(byteSize);
     write_integer(data, val, byteSize);
@@ -281,7 +281,7 @@ struct ValueTraits<std::string> : public ValueTraitsBase<false>
     val = (const char *)buf.read(0);
     buf.read(val.length() +1); //move the pointer
   }
-  static void putBytes(WriteBuf &buf, std::string val) {
+  static void putBytes(WriteBuf &buf, std::string &val) {
     buf.append(val.data(), val.length()+1);
   }
 };
@@ -298,7 +298,7 @@ struct ValueTraits<const char *> : public ValueTraitsBase<false>
   static void getBytes(ReadBuf &buf, const char *&val) {
     val = buf.readCString();
   }
-  static void putBytes(WriteBuf &buf, const char *&val) {
+  static void putBytes(WriteBuf &buf, const char *val) {
     buf.appendCString(val);
   }
 };
@@ -506,7 +506,7 @@ public:
             fixedSize += pa->storage->fixedSize;
             break;
           case StoreLayout::embedded_key:
-            fixedSize += ObjectKey::byteSize;
+            fixedSize += ObjectKey_sz;
             break;
           case StoreLayout::property:
             break;

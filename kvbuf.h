@@ -9,6 +9,8 @@
 #include <string.h>
 #include <memory>
 
+#include "kvkey.h"
+
 namespace flexis {
 namespace persistence {
 namespace kv {
@@ -20,6 +22,8 @@ static const size_t ObjectId_sz = 4; //max 2^32 objects per class
 using PropertyId = uint16_t;
 static const size_t PropertyId_sz = 2; //max. 65535 properies per object
 
+static const size_t ObjectKey_sz = ClassId_sz + ObjectId_sz;
+
 //header preceding each object in collections (classId, ObjectId, size, delete marker)
 static const size_t ObjectHeader_sz = ClassId_sz + ObjectId_sz + 4 + 1;
 
@@ -27,61 +31,6 @@ static const size_t ObjectHeader_sz = ClassId_sz + ObjectId_sz + 4 + 1;
 static const size_t ChunkHeader_sz = 4 * 3;
 
 using byte_t = unsigned char;
-
-/**
- * Persistent object identifier
- */
-struct ObjectKey
-{
-  static const ObjectKey NIL;
-  static const unsigned byteSize = ClassId_sz + ObjectId_sz;
-
-  ClassId classId;
-  ObjectId objectId;
-  unsigned refcount;
-
-  ObjectKey() : classId(0), objectId(0), refcount(0) {}
-  ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId), refcount(0) {}
-  bool isNew() {return objectId == 0;}
-
-  bool operator <(const ObjectKey &other) const {
-    return classId < other.classId || (classId == other.classId && objectId < other.objectId);
-  }
-};
-
-/**
- * custom deleter used to store the objectId inside a std::shared_ptr
- */
-template <typename T> struct object_handler : public ObjectKey
-{
-  object_handler(ObjectKey key) : ObjectKey(key.classId, key.objectId) {}
-  object_handler(ClassId classId, ObjectId objectId) : ObjectKey(classId, objectId) {}
-  object_handler() : ObjectKey(0, 0) {}
-
-  void operator () (T *t) {
-    delete t;
-  }
-};
-
-/**
- * create an object wrapped by a shared_ptr ready to be input into the KV API. All shared_ptr objects passed
- * to the KV API must have been created through this method (or KV itself)
- */
-template <typename T, typename... Args>
-static auto make_obj(Args&&... args) -> decltype(std::make_shared<T>(std::forward<Args>(args)...))
-{
-  return std::shared_ptr<T>(new T(std::forward<Args>(args)...), object_handler<T>());
-}
-
-/**
- * create a shared_ptr ready to be input into the KV API. All shared_ptr objects passed to the KV API
- * must have been created through this method (or KV itself)
- */
-template <typename T>
-static std::shared_ptr<T> make_ptr(T *t)
-{
-  return std::shared_ptr<T>(t, object_handler<T>());
-}
 
 /*
  * save an integral value to a fixed size of bytes (max. 8)
@@ -199,7 +148,7 @@ public:
 
   bool read(ClassId &classId, ObjectId &objectId)
   {
-    if(m_size - (m_readptr - m_data) < ObjectKey::byteSize)
+    if(m_size - (m_readptr - m_data) < ObjectKey_sz)
       return false;
 
     classId = *(ClassId *)m_readptr;
@@ -362,7 +311,7 @@ public:
 
   void append(const ObjectKey &key)
   {
-    byte_t * buf = allocate(ObjectKey::byteSize);
+    byte_t * buf = allocate(ObjectKey_sz);
 
     *(ClassId *)buf = key.classId;
     buf += ClassId_sz;
