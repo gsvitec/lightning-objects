@@ -57,7 +57,7 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 /**
  * class cursor backend. Iterates over all instances of a given set of classes
  */
-class FlexisPersistence_EXPORT ClassCursorHelper : public flexis::persistence::kv::CursorHelper
+class ClassCursorHelper : public flexis::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -211,7 +211,7 @@ public:
 /**
  * collection cursor backend. Iterates over all elements in a top-level collection
  */
-class FlexisPersistence_EXPORT CollectionCursorHelper : public flexis::persistence::kv::CursorHelper
+class CollectionCursorHelper : public flexis::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -301,7 +301,7 @@ public:
 /**
  * LMDB-based class cursor backend. Iterates over all elements in a vector (member vaŕiable)
  */
-class FlexisPersistence_EXPORT VectorCursorHelper : public flexis::persistence::kv::CursorHelper
+class VectorCursorHelper : public flexis::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -405,7 +405,7 @@ public:
 /**
  * LMDB-based Transaction
  */
-class FlexisPersistence_EXPORT Transaction
+class Transaction
     : public flexis::persistence::kv::WriteTransaction,
       public flexis::persistence::kv::ExclusiveReadTransaction
 {

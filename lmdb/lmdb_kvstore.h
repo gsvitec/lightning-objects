@@ -11,7 +11,7 @@ namespace flexis {
 namespace persistence {
 namespace lmdb {
 
-class FlexisPersistence_EXPORT KeyValueStore : public flexis::persistence::KeyValueStore
+class KeyValueStore : public flexis::persistence::KeyValueStore
 {
 public:
   struct Options {
@@ -25,7 +25,7 @@ public:
         : initialMapSizeMB(mapSizeMB), lockFile(lockFile), writeMap(writeMap) {}
   };
 
-  struct FlexisPersistence_EXPORT Factory
+  struct Factory
   {
     const std::string location, name;
     const Options options;
