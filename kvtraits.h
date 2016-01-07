@@ -137,19 +137,61 @@ enum class StoreLayout {all_embedded, embedded_key, property, none};
 struct StoreAccessBase
 {
   const StoreLayout layout;
-  const size_t fixedSize;
+  size_t fixedSize;
 
   StoreAccessBase(StoreLayout layout=StoreLayout::all_embedded, size_t fixedSize=0)
       : layout(layout), fixedSize(fixedSize) {}
 
+  /**
+   * initialize the fixed size. Subclasses that need to calculate fixed size at schema initialization
+   * should override
+   *
+   * @return the ready initialized fixed size.
+   */
+  virtual size_t initFixedSize() {return fixedSize;}
+
+  /**
+   * determine whether this storage participates in update/delete preparation
+   *
+   * @return whether this mapping participates in update/delete preparation
+   */
   virtual bool preparesUpdates(ClassId classId) {return false;}
+
+  /**
+   * determine the size from a serialized buffer. The buffer's read position is at the start of this object's data
+   *
+   * @return the size of this object
+   */
   virtual size_t size(ObjectBuf &buf) const = 0;
+
+  /**
+   * determine the size from a live object
+   *
+   * @return the buffer size required to save the given property value
+   */
   virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
 
+  /**
+   * prepare an update for the given object property
+   *
+   * @param buf the object data as currently saved
+   * @param obj the object about to be saved
+   * @param pa the property about to be saved
+   * @return the same as size(buf)
+   */
   virtual size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) {
     return size(buf);
   }
 
+  /**
+   * prepare a delete for the given object property
+   *
+   * @param tr the write transaction
+   * @param buf the object data as currently saved
+   * @param obj the object about to be deleted
+   * @param pa the property represented by this storage
+   * @return the same as size(buf)
+   */
   virtual size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
     return size(buf);
   }
@@ -417,8 +459,7 @@ protected:
   unsigned startPos = 0;
 
   Properties(const PropertyAccessBase ** decl_props[], unsigned numProps)
-      : decl_props(decl_props),
-        numProps(numProps)
+      : decl_props(decl_props), numProps(numProps), fixedSize(0)
   {}
 
   Properties(const Properties& mit) = delete;
@@ -498,13 +539,14 @@ public:
       const PropertyAccessBase *pa = *decl_props[i];
       if(pa->enabled) {
         switch(pa->storage->layout) {
-          case StoreLayout::all_embedded:
-            if(!pa->storage->fixedSize) {
+          case StoreLayout::all_embedded: {
+            if (!pa->storage->initFixedSize()) {
               fixedSize = 0;
               return;
             }
             fixedSize += pa->storage->fixedSize;
             break;
+          }
           case StoreLayout::embedded_key:
             fixedSize += ObjectKey_sz;
             break;

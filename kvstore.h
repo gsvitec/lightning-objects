@@ -156,6 +156,7 @@ struct validate_info {
 template<typename... Sargs>
 struct register_type;
 
+//worker template
 template<typename S>
 struct register_type<S>
 {
@@ -171,6 +172,7 @@ struct register_type<S>
   }
 };
 
+//helper for working the variadic temnplate list
 template<typename S, typename... Sargs>
 struct register_helper
 {
@@ -180,6 +182,7 @@ struct register_helper
   }
 };
 
+//secondary template
 template<typename... Sargs>
 struct register_type {
   static void addTypes(std::vector<validate_info> &vinfos) {
@@ -1282,7 +1285,7 @@ public:
 template<typename T>
 static size_t calculateBuffer(T *obj, Properties *properties)
 {
-  //if(properties->fixedSize) return properties->fixedSize;
+  if(properties->fixedSize) return properties->fixedSize;
 
   size_t size = 0;
   for(unsigned i=0, sz=properties->full_size(); i<sz; i++) {
@@ -1293,7 +1296,6 @@ static size_t calculateBuffer(T *obj, Properties *properties)
     //calculate variable size
     ClassTraits<T>::addSize(obj, pa, size);
   }
-  if(properties->fixedSize && size != properties->fixedSize) throw persistence_error("TMP");
   return size;
 }
 
@@ -2426,12 +2428,15 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
  */
 template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public StoreAccessBase
 {
-  static size_t fixedSize() {
+  size_t initFixedSize() override {
+    //for circular dependencies, ClassTraits<V>::traits_properties will not have been intialized, and
+    //thus fixedSize is 0. Not a problem, only a failed optimization
     size_t fs = ClassTraits<V>::traits_properties->fixedSize;
-    return fs ? fs + 4 : 0;
+    fixedSize = fs ? fs + 4 : 0;
+    return fixedSize;
   }
 
-  ObjectPropertyStorageEmbedded() : StoreAccessBase(StoreLayout::all_embedded, fixedSize()) {}
+  ObjectPropertyStorageEmbedded() : StoreAccessBase(StoreLayout::all_embedded) {}
 
   size_t size(ObjectBuf &buf) const override {return buf.readInteger<unsigned>(4);}
   size_t size(void *obj, const PropertyAccessBase *pa) override {

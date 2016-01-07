@@ -149,11 +149,20 @@ struct RefCountingTest
   RefCountingTest() {}
 };
 
-struct SomethingWithAnEmbbededObjectVector
+struct SomethingWithEmbeddedObjects {
+  FixedSizeObject fso;
+  VariableSizeObject vso;
+
+  SomethingWithEmbeddedObjects() {}
+  SomethingWithEmbeddedObjects(unsigned nfso1, unsigned nfso2, unsigned nvso, const char *vso_name)
+      : fso(nfso1, nfso2), vso(nvso, vso_name) {}
+};
+struct SomethingWithEmbbededObjectVectors
 {
   std::string name;
-  std::vector<FixedSizeObject> objects;
-  std::vector<VariableSizeObject> objects2;
+  std::vector<SomethingWithEmbeddedObjects> sweos;
+  std::vector<FixedSizeObject> fsos;
+  std::vector<VariableSizeObject> vsos;
 };
 
 struct SomethingWithAnObjectIter
@@ -277,11 +286,17 @@ START_MAPPING(VariableSizeObject, objectId, number, name)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
 END_MAPPING(VariableSizeObject)
 
-START_MAPPING(SomethingWithAnEmbbededObjectVector, name, objects, objects2)
-  MAPPED_PROP(SomethingWithAnEmbbededObjectVector, BasePropertyAssign, std::string, name)
-  MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, objects)
-  MAPPED_PROP(SomethingWithAnEmbbededObjectVector, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, objects2)
-END_MAPPING(SomethingWithAnEmbbededObjectVector)
+START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)
+  MAPPED_PROP(SomethingWithEmbeddedObjects, ObjectPropertyEmbeddedAssign, FixedSizeObject, fso)
+  MAPPED_PROP(SomethingWithEmbeddedObjects, ObjectPropertyEmbeddedAssign, VariableSizeObject, vso)
+END_MAPPING(SomethingWithEmbeddedObjects)
+
+START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, vsos)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, SomethingWithEmbeddedObjects, sweos)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, fsos)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, vsos)
+END_MAPPING(SomethingWithEmbbededObjectVectors)
 
 START_MAPPING(flexis::player::SourceDisplayConfig, sourceIndex, attachedIndex, attached, window_x, window_y, window_width, window_height)
   MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, sourceIndex)

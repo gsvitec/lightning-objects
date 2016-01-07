@@ -650,35 +650,43 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
 {
   ObjectKey key;
   {
-    SomethingWithAnEmbbededObjectVector sweov;
-    sweov.name = "sweov";
+    SomethingWithEmbbededObjectVectors sov;
+    sov.name = "sweov";
 
-    sweov.objects.push_back(FixedSizeObject(1, 2));
-    sweov.objects.push_back(FixedSizeObject(3, 4));
-    sweov.objects.push_back(FixedSizeObject(5, 6));
-    sweov.objects.push_back(FixedSizeObject(7, 8));
+    sov.fsos.push_back(FixedSizeObject(1, 2));
+    sov.fsos.push_back(FixedSizeObject(3, 4));
+    sov.fsos.push_back(FixedSizeObject(5, 6));
+    sov.fsos.push_back(FixedSizeObject(7, 8));
 
-    size_t s = TypeTraits<unsigned int>::byteSize;
-    sweov.objects2.push_back(VariableSizeObject(1, "Frankfurt"));
-    sweov.objects2.push_back(VariableSizeObject(3, "München"));
-    sweov.objects2.push_back(VariableSizeObject(5, "Regensburg"));
+    sov.vsos.push_back(VariableSizeObject(1, "Frankfurt"));
+    sov.vsos.push_back(VariableSizeObject(3, "München"));
+    sov.vsos.push_back(VariableSizeObject(5, "Regensburg"));
+
+    SomethingWithEmbeddedObjects so(20, 21, 20, "so1.vso");
+    sov.sweos.push_back(so);
+
+    SomethingWithEmbeddedObjects so2(30, 31, 30, "so2.vso");
+    sov.sweos.push_back(so2);
 
     auto wtxn = kv->beginWrite();
-    wtxn->saveObject(sweov, key);
+    wtxn->saveObject(sov, key);
     wtxn->commit();
   }
   {
     auto rtxn = kv->beginRead();
 
-    SomethingWithAnEmbbededObjectVector *loaded = rtxn->getObject<SomethingWithAnEmbbededObjectVector>(key);
+    SomethingWithEmbbededObjectVectors *loaded = rtxn->getObject<SomethingWithEmbbededObjectVectors>(key);
 
-    assert(loaded && loaded->name == "sweov" && loaded->objects.size() == 4 \
-           && loaded->objects[0].number1 == 1 \
-           && loaded->objects[0].number2 == 2 \
-           && loaded->objects[1].number1 == 3 \
-           && loaded->objects[3].number1 == 7 \
-           && loaded->objects[3].number2 == 8);
-    assert(loaded->objects2.size() ==  3 && loaded->objects2[0].name == "Frankfurt" && loaded->objects2[2].name == "Regensburg");
+    assert(loaded && loaded->name == "sweov" && loaded->fsos.size() == 4 \
+           && loaded->fsos[0].number1 == 1 \
+           && loaded->fsos[0].number2 == 2 \
+           && loaded->fsos[1].number1 == 3 \
+           && loaded->fsos[3].number1 == 7 \
+           && loaded->fsos[3].number2 == 8);
+    assert(loaded->vsos.size() ==  3 && loaded->vsos[0].name == "Frankfurt" && loaded->vsos[2].name == "Regensburg");
+
+    assert(loaded->sweos.size() == 2 && loaded->sweos[0].fso.number1 == 20 && loaded->sweos[1].vso.name == "so2.vso");
+
     delete loaded;
   }
 }
@@ -1119,7 +1127,8 @@ int main()
       RefCountingTest,
       FixedSizeObject,
       VariableSizeObject,
-      SomethingWithAnEmbbededObjectVector,
+      SomethingWithEmbeddedObjects,
+      SomethingWithEmbbededObjectVectors,
       SomethingWithAnObjectIter,
       SomethingAbstract,
       SomethingConcrete1,
