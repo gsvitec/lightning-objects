@@ -658,6 +658,11 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
     sov.fsos.push_back(FixedSizeObject(5, 6));
     sov.fsos.push_back(FixedSizeObject(7, 8));
 
+    sov.fsos2.push_back(FixedSizeObject2(1.11, 2.22));
+    sov.fsos2.push_back(FixedSizeObject2(3.33, 4.44));
+    sov.fsos2.push_back(FixedSizeObject2(5.55, 6.66));
+    sov.fsos2.push_back(FixedSizeObject2(7.77, 8.88));
+
     sov.vsos.push_back(VariableSizeObject(1, "Frankfurt"));
     sov.vsos.push_back(VariableSizeObject(3, "München"));
     sov.vsos.push_back(VariableSizeObject(5, "Regensburg"));
@@ -683,6 +688,14 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
            && loaded->fsos[1].number1 == 3 \
            && loaded->fsos[3].number1 == 7 \
            && loaded->fsos[3].number2 == 8);
+
+    assert(loaded && loaded->name == "sweov" && loaded->fsos2.size() == 4 \
+           && loaded->fsos2[0].number1 == 1.11 \
+           && loaded->fsos2[0].number2 == 2.22 \
+           && loaded->fsos2[1].number1 == 3.33 \
+           && loaded->fsos2[3].number1 == 7.77 \
+           && loaded->fsos2[3].number2 == 8.88);
+
     assert(loaded->vsos.size() ==  3 && loaded->vsos[0].name == "Frankfurt" && loaded->vsos[2].name == "Regensburg");
 
     assert(loaded->sweos.size() == 2 && loaded->sweos[0].fso.number1 == 20 && loaded->sweos[1].vso.name == "so2.vso");
@@ -1126,6 +1139,7 @@ int main()
   kv->putSchema<ObjectPropertyTest,
       RefCountingTest,
       FixedSizeObject,
+      FixedSizeObject2,
       VariableSizeObject,
       SomethingWithEmbeddedObjects,
       SomethingWithEmbbededObjectVectors,

@@ -113,6 +113,15 @@ struct FixedSizeObject {
 };
 using FixedSizeObjectPtr = std::shared_ptr<FixedSizeObject>;
 
+struct FixedSizeObject2 {
+  unsigned objectId = 0; //for ObjectPropertyTest
+
+  double number1, number2;
+  FixedSizeObject2() : number1(0), number2(0) {}
+  FixedSizeObject2(double number1, double number2) : number1(number1), number2(number2) {}
+};
+using FixedSizeObject2Ptr = std::shared_ptr<FixedSizeObject2>;
+
 struct VariableSizeObject {
   unsigned objectId = 0; //for ObjectPropertyTest
 
@@ -162,6 +171,7 @@ struct SomethingWithEmbbededObjectVectors
   std::string name;
   std::vector<SomethingWithEmbeddedObjects> sweos;
   std::vector<FixedSizeObject> fsos;
+  std::vector<FixedSizeObject2> fsos2;
   std::vector<VariableSizeObject> vsos;
 };
 
@@ -280,6 +290,12 @@ START_MAPPING(FixedSizeObject, objectId, number1, number2)
   MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
+START_MAPPING(FixedSizeObject2, objectId, number1, number2)
+  OBJECT_ID(FixedSizeObject2, objectId)
+  MAPPED_PROP(FixedSizeObject2, BasePropertyAssign, double, number1)
+  MAPPED_PROP(FixedSizeObject2, BasePropertyAssign, double, number2)
+END_MAPPING(FixedSizeObject2)
+
 START_MAPPING(VariableSizeObject, objectId, number, name)
   OBJECT_ID(VariableSizeObject, objectId)
   MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
@@ -291,10 +307,11 @@ START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)
   MAPPED_PROP(SomethingWithEmbeddedObjects, ObjectPropertyEmbeddedAssign, VariableSizeObject, vso)
 END_MAPPING(SomethingWithEmbeddedObjects)
 
-START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, vsos)
+START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, vsos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, BasePropertyAssign, std::string, name)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, SomethingWithEmbeddedObjects, sweos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, fsos)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject2, fsos2)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, vsos)
 END_MAPPING(SomethingWithEmbbededObjectVectors)
 
