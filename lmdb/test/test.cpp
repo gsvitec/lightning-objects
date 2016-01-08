@@ -876,7 +876,7 @@ void testUpdate(KeyValueStore *kv)
     assert(ot->fso_vect.size() == 2);
 
     si->userOverlays.erase(si->userOverlays.begin());
-    ot->fso_vect.erase(ot->fso_vect.end());
+    ot->fso_vect.pop_back();
     si->displayConfig = nullptr;
 
     txn->saveObject(*si, siKey);
