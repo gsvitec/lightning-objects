@@ -5,7 +5,7 @@
 #ifndef FLEXIS_KVWRITEBUF_H
 #define FLEXIS_KVWRITEBUF_H
 
-#include <persistence_error.h>
+#include "../persistence_error.h"
 #include <string.h>
 #include <memory>
 
