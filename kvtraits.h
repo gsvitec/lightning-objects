@@ -15,7 +15,6 @@
 #include <stdint.h>
 #include <type_traits>
 #include "kvbuf.h"
-#include "FlexisPersistence_Export.h"
 
 namespace flexis {
 namespace persistence {

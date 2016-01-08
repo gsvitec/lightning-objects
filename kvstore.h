@@ -13,7 +13,6 @@
 #include <set>
 #include <unordered_map>
 #include <persistence_error.h>
-#include <FlexisPersistence_Export.h>
 #include <type_traits>
 
 #include "kvtraits.h"
@@ -70,7 +69,7 @@ class ExclusiveReadTransaction;
 class WriteTransaction;
 }
 
-class FlexisPersistence_EXPORT KeyValueStoreBase
+class KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
   friend class kv::WriteTransaction;
@@ -196,7 +195,7 @@ struct register_type {
  * high-performance key/value store interface. Most application-relevant functions are provided by ReadTransaction
  * and WriteTransaction, which can be obtined from this class
  */
-class FlexisPersistence_EXPORT KeyValueStore : public KeyValueStoreBase
+class KeyValueStore : public KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
   friend class kv::ExclusiveReadTransaction;
@@ -450,7 +449,7 @@ public:
 /**
  * Helper interface used by cursor, to be extended by implementors
  */
-class FlexisPersistence_EXPORT CursorHelper {
+class CursorHelper {
   template <typename T> friend class ClassCursor;
 
 protected:
@@ -796,7 +795,7 @@ public:
 /**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
-class FlexisPersistence_EXPORT ReadTransaction
+class ReadTransaction
 {
   template<typename T, typename V> friend class ValueVectorPropertyStorage;
   template<typename T, typename V> friend class ValueSetPropertyStorage;
@@ -1229,7 +1228,7 @@ public:
  * Transaction for exclusive read and operations. Opening write transactions while an exclusive read is open
  * will fail with an exception. Likewise creating an exclusive read transcation while a write is ongoing
  */
-class FlexisPersistence_EXPORT ExclusiveReadTransaction : public virtual ReadTransaction
+class ExclusiveReadTransaction : public virtual ReadTransaction
 {
   virtual bool _getCollectionData(
       CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
@@ -1303,7 +1302,7 @@ static size_t calculateBuffer(T *obj, Properties *properties)
  * Transaction for read and write operations. Only one write transaction can be active at a time, and it should
  * be accessed from one thread only
  */
-class FlexisPersistence_EXPORT WriteTransaction : public virtual ReadTransaction
+class WriteTransaction : public virtual ReadTransaction
 {
   template<typename T, typename V> friend class BasePropertyStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
