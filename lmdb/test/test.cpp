@@ -5,6 +5,7 @@
 #include <sstream>
 #include <kvstore/kvstore.h>
 #include <lmdb_kvstore.h>
+#include <medianflowtracker.h>
 #include "testclasses.h"
 
 using namespace flexis::persistence;
@@ -646,6 +647,99 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   delete si;
 }
 
+void testFredsMappings(KeyValueStore *kv)
+{
+  TrackResult r1, r2;
+  ObjectKey key;
+  {
+    TrackingRegion tr(894, 0, 1.11, 2.22);
+
+    r1 = tr.results[0];
+    r2 = tr.results[893];
+
+    auto wtxn = kv->beginWrite();
+    wtxn->saveObject(tr, key);
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    TrackingRegion *loaded = rtxn->getObject<TrackingRegion>(key);
+
+    assert(loaded->results.size() == 894);
+
+    TrackResult &rr1 = loaded->results[0];
+    TrackResult &rr2 = loaded->results[893];
+
+    assert(r1.currBB.height == r2.currBB.height && r1.currBB.x == r2.currBB.x && r1.currBB.y == r2.currBB.y);
+  }
+}
+
+flexis::data::recording::StreamPtr fillStream()
+{
+  flexis::data::recording::StreamPtr s = kv::make_obj<flexis::data::recording::Stream>();
+
+  flexis::StreamProcessors::MedianFlowTrackerProcPtr p = kv::make_obj<flexis::StreamProcessors::MedianFlowTrackerProc>();
+  s->processors.push_back(p);
+
+  for(int i=0; i<1000; i++) {
+    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(894, 0, 1.11, 2.22);
+    p->trackingRegions.push_back(ptr);
+  }
+  return s;
+}
+void testFredsMappings2(KeyValueStore *kv)
+{
+  {
+    flexis::data::recording::SourcePtr src = kv::make_obj<flexis::data::recording::Source>();
+    auto wtxn = kv->beginWrite();
+    wtxn->saveObject(src);
+    wtxn->commit();
+
+    vector<flexis::data::recording::StreamPtr> streams;
+    streams.push_back(fillStream());
+    streams.push_back(fillStream());
+    streams.push_back(fillStream());
+    streams.push_back(fillStream());
+    streams.push_back(fillStream());
+    streams.push_back(fillStream());
+
+    wtxn = kv->beginWrite();
+
+    for(auto &s : streams) {
+      wtxn->saveObject(s);
+    }
+
+    wtxn->putCollection(src, 99, streams);
+    for(auto &s : streams) {
+      std::vector<std::shared_ptr<flexis::data::recording::Stream>> cstreams;
+      cstreams.push_back(s);
+      wtxn->putCollection(src, 99, cstreams);
+
+      wtxn->updateMember(s, PROPERTY(flexis::data::recording::Stream, processors), false);
+    }
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+    auto cursor = rtxn->openCursor<flexis::data::recording::Stream>();
+    unsigned count = 0;
+    while(!cursor->atEnd()) {
+      count++;
+      auto str = cursor->get();
+
+      assert(str->processors.size() == 1);
+      flexis::StreamProcessors::MedianFlowTrackerProcPtr p =
+          dynamic_pointer_cast<flexis::StreamProcessors::MedianFlowTrackerProc>(str->processors[0]);
+
+      assert(p && p->trackingRegions.size() == 1000);
+      cursor->next();
+    }
+    assert(count == 6);
+  }
+}
+
 void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
 {
   ObjectKey key;
@@ -1171,7 +1265,17 @@ int main()
   kv->setRefCounting<FixedSizeObject>();
   kv->setRefCounting<player::SourceDisplayConfig>();
 
-#if 1
+  kv->putSchema<
+      flexis::data::recording::Source,
+      flexis::data::recording::Stream,
+      flexis::StreamProcessors::MedianFlowTrackerProc,
+      TrackingRegion, TrackResult,
+      flexis::Geometry::Rectangle>();
+
+  //testFredsMappings(kv);
+  testFredsMappings2(kv);
+
+#if 0
   testUpdate(kv);
   testDelete(kv);
   testRefCounting(kv);
