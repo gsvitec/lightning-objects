@@ -682,8 +682,8 @@ flexis::data::recording::StreamPtr fillStream()
   flexis::StreamProcessors::MedianFlowTrackerProcPtr p = kv::make_obj<flexis::StreamProcessors::MedianFlowTrackerProc>();
   s->processors.push_back(p);
 
-  for(int i=0; i<1000; i++) {
-    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(894, 0, 1.11, 2.22);
+  for(int i=0; i<100; i++) {
+    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(394, 0, 1.11, 2.22);
     p->trackingRegions.push_back(ptr);
   }
   return s;
@@ -733,7 +733,7 @@ void testFredsMappings2(KeyValueStore *kv)
       flexis::StreamProcessors::MedianFlowTrackerProcPtr p =
           dynamic_pointer_cast<flexis::StreamProcessors::MedianFlowTrackerProc>(str->processors[0]);
 
-      assert(p && p->trackingRegions.size() == 1000);
+      assert(p && p->trackingRegions.size() == 100);
       cursor->next();
     }
     assert(count == 6);

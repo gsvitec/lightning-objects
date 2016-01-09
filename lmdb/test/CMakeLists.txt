@@ -21,7 +21,7 @@ add_executable(LmdbBench bench.cpp testclasses.cpp ${DEP_SRC}
 add_dependencies(LmdbBench LmdbStore FlexisOverlays)
 
 target_link_libraries(LmdbTest FlexisBase ${OpenCV_LIBS})
-target_link_libraries(LmdbBench FlexisBase)
+target_link_libraries(LmdbBench FlexisBase ${OpenCV_LIBS})
 if(UNIX)
     target_link_libraries(LmdbTest pthread)
     target_link_libraries(LmdbBench pthread)
