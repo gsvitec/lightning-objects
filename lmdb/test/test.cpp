@@ -14,6 +14,18 @@ using namespace flexis;
 using namespace std;
 using namespace flexis::Overlays;
 
+template <typename T>
+unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=[](shared_ptr<T> t=nullptr)->bool{return true;})
+{
+  unsigned count = 0;
+  for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
+    if(predicate(curs->get())) {
+      count++;
+    }
+  }
+  return count;
+}
+
 void testColored2DPoint(KeyValueStore *kv) 
 {
   ObjectKey key;
@@ -682,14 +694,15 @@ flexis::data::recording::StreamPtr fillStream()
   flexis::StreamProcessors::MedianFlowTrackerProcPtr p = kv::make_obj<flexis::StreamProcessors::MedianFlowTrackerProc>();
   s->processors.push_back(p);
 
-  for(int i=0; i<100; i++) {
-    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(394, 0, 1.11, 2.22);
+  for(int i=0; i<10; i++) {
+    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(95, 0, 1.11, 2.22);
     p->trackingRegions.push_back(ptr);
   }
   return s;
 }
 void testFredsMappings2(KeyValueStore *kv)
 {
+  const ObjectId SOURCE_STREAMS = 99;
   {
     flexis::data::recording::SourcePtr src = kv::make_obj<flexis::data::recording::Source>();
     auto wtxn = kv->beginWrite();
@@ -710,15 +723,7 @@ void testFredsMappings2(KeyValueStore *kv)
       wtxn->saveObject(s);
     }
 
-    wtxn->putCollection(src, 99, streams);
-    for(auto &s : streams) {
-      std::vector<std::shared_ptr<flexis::data::recording::Stream>> cstreams;
-      cstreams.push_back(s);
-      wtxn->putCollection(src, 99, cstreams);
-
-      wtxn->updateMember(s, PROPERTY(flexis::data::recording::Stream, processors), false);
-    }
-
+    wtxn->putCollection(src, SOURCE_STREAMS, streams);
     wtxn->commit();
   }
   {
@@ -733,10 +738,42 @@ void testFredsMappings2(KeyValueStore *kv)
       flexis::StreamProcessors::MedianFlowTrackerProcPtr p =
           dynamic_pointer_cast<flexis::StreamProcessors::MedianFlowTrackerProc>(str->processors[0]);
 
-      assert(p && p->trackingRegions.size() == 100);
+      assert(p && p->trackingRegions.size() == 10);
+      assert(p && p->trackingRegions[0]->results.size() == 95);
+      assert(p && p->trackingRegions[9]->results.size() == 95);
+
       cursor->next();
     }
     assert(count == 6);
+    rtxn->abort();
+  }
+  {
+    auto txn = kv->beginWrite();
+    auto cursor = txn->openCursor<flexis::data::recording::Source>();
+    unsigned count = 0;
+    while(!cursor->atEnd()) {
+      count++;
+      auto src = cursor->get();
+
+      std::vector<std::shared_ptr<flexis::data::recording::Stream>> streams;
+      txn->getCollection(src, SOURCE_STREAMS, streams);
+      assert(streams.size() == 6);
+
+      txn->deleteCollection<flexis::data::recording::Source, flexis::data::recording::Stream>(src, SOURCE_STREAMS);
+      cursor->erase(txn);
+
+      cursor->next();
+    }
+    assert(count == 1);
+    txn->commit();
+  }
+  {
+    auto txn = kv->beginRead();
+
+    assert(countInstances<flexis::data::recording::Source>(txn) == 0);
+    assert(countInstances<flexis::data::recording::Stream>(txn) == 0);
+
+    txn->abort();
   }
 }
 
@@ -839,18 +876,6 @@ void testGrowDatabase(KeyValueStore *kv)
 
     rtxn->abort();
   }
-}
-
-template <typename T>
-unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate)
-{
-  unsigned count = 0;
-  for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
-    if(predicate(curs->get())) {
-      count++;
-    }
-  }
-  return count;
 }
 
 void testDelete(KeyValueStore *kv)
@@ -1272,10 +1297,10 @@ int main()
       TrackingRegion, TrackResult,
       flexis::Geometry::Rectangle>();
 
-  //testFredsMappings(kv);
+  testFredsMappings(kv);
   testFredsMappings2(kv);
 
-#if 0
+#if 1
   testUpdate(kv);
   testDelete(kv);
   testRefCounting(kv);

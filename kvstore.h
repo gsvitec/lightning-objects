@@ -388,6 +388,10 @@ public:
   ObjectKey key;
 
   ObjectBuf(bool makeCopy) : makeCopy(makeCopy) {}
+  ObjectBuf(byte_t *data, size_t size) {
+    dataChecked = true;
+    readBuf.start(data, size);
+  }
   ObjectBuf(ObjectKey key, bool makeCopy) : key(key), makeCopy(makeCopy) {}
   ObjectBuf(ReadTransaction *tr, ClassId classId, ObjectId objectId, bool makeCopy)
       : key({classId, objectId}), makeCopy(makeCopy) {
@@ -471,9 +475,11 @@ protected:
   virtual bool next() = 0;
 
   /**
-   * delete the object at the current cursor position. Cursor is not moved
+   * delete the object at the current cursor position. Cursor is moved
+   *
+   * @return true if the cursor is not at end
    */
-  virtual void erase() = 0;
+  virtual bool erase() = 0;
 
   /**
    * @return the objectId of the item at the current cursor position
@@ -676,9 +682,41 @@ public:
     delete m_helper;
   }
 
-  void erase()
+  void erase(WriteTransactionPtr tr)
   {
-    m_helper->erase();
+    ObjectKey key;
+
+    ReadBuf readBuf;
+    m_helper->get(key, readBuf);
+    if(readBuf.null()) return;
+    if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
+
+    using Traits = ClassTraits<T>;
+
+    if(Traits::needsPrepare()) {
+      Properties *props = Traits::getProperties(key.classId);
+      ObjectBuf obuf(readBuf.data(), readBuf.size());
+
+      for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+        const PropertyAccessBase *pa = props->get(px);
+
+        if(!pa->enabled) continue;
+
+        obuf.mark();
+        size_t psz = ClassTraits<T>::prepareDelete(tr.get(), obuf, pa);
+        obuf.unmark(psz);
+      }
+    }
+    //now remove the object proper
+    if(m_helper->erase()) {
+      bool hasData=true, clsFound;
+      do {
+        clsFound = hasData && validateClass();
+        hasData = m_helper->next();
+      } while(hasData && !clsFound);
+
+      m_hasData = hasData && clsFound;
+    }
   }
 
   /**
@@ -1373,6 +1411,12 @@ protected:
       return false;
     }
     else {
+      for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
+        const PropertyAccessBase *pa = props->get(px);
+
+        if(pa->enabled && pa->storage->layout == StoreLayout::property)
+          remove(classId, objectId, pa->id);
+      }
       return remove(classId, objectId);
     }
   }
@@ -1803,6 +1847,33 @@ public:
       }
       writeBuf().append(*key);
     }
+  }
+
+  /**
+   * delete an attached member collection.
+   *
+   * @param obj the object this collection is attached to
+   * @param propertyId a unique property Id
+   * @param deleteMembers if true (default), collection members will be deleted, too
+   */
+  template <typename T, typename V>
+  void deleteCollection(std::shared_ptr<T> &obj, PropertyId propertyId, bool deleteMembers=true)
+  {
+    ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
+
+    if(deleteMembers) {
+      ReadBuf buf;
+      getData(buf, key->classId, key->objectId, propertyId);
+      if(!buf.null()) {
+        size_t sz = buf.readInteger<size_t>(4);
+        for(size_t i=0; i<sz; i++) {
+          ObjectKey key;
+          buf.read(key);
+          deleteObject<V>(key);
+        }
+      }
+    }
+    remove(key->classId, key->objectId, propertyId);
   }
 
   /**
@@ -2808,8 +2879,12 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
       ReadBuf readBuf;
       tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
       if (!readBuf.null()) {
-        ObjectKey key;
-        while (readBuf.read(key)) {
+        size_t count = readBuf.size() / ObjectKey_sz;
+        std::vector<ObjectKey> oks(count);
+        for(size_t i=0; i<count; i++) readBuf.read(oks[i]);
+
+        for(size_t i=0; i<count; i++) {
+          ObjectKey &key = oks[i];
           if(tr->decrementRefCount(key.classId, key.objectId) == 0)
             tr->removeObject<V>(key.classId, key.objectId);
         }

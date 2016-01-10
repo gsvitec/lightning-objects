@@ -113,9 +113,21 @@ protected:
     }
   }
 
-  void erase() override
+  bool erase() override
   {
-    m_cursor.del();
+    bool gotten;
+    do {
+      m_cursor.del();
+      gotten = m_cursor.get(m_keyval, MDB_NEXT);
+    } while(
+        SK_CLASSID(m_keyval.data<byte_t>()) == m_currentClassId &&
+            SK_OBJID(m_keyval.data<byte_t>()) == m_currentObjectId);
+
+    if(!gotten)
+      return false;
+    else {
+      return (++m_index < m_classIds.size()) ? dostart() : false;
+    }
   }
 
   virtual void close() override {
@@ -261,7 +273,7 @@ protected:
     return true;
   }
 
-  void erase() {
+  bool erase() {
     throw persistence_error("not implemented");
   }
 
@@ -344,13 +356,15 @@ protected:
     return false;
   }
 
-  void erase() override
+  bool erase() override
   {
     const byte_t *kp = m_vectordata.data<byte_t>() + m_index * ObjectKey_sz;
     SK_OBJK(keydata, kp);
     ::lmdb::val keyval;
     keyval.assign(keydata, StorageKey::byteSize);
     m_dbi.del(m_txn, keyval);
+
+    return ++m_index < m_size;
   }
 
   virtual void close() override {
@@ -740,7 +754,7 @@ void Transaction::getData(ReadBuf &buf, ObjectKey &key, bool getRefount)
       k.assign(kv, sizeof(kv));
       ::lmdb::val r{};
       if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, r))
-        key.refcount = *(unsigned *)r.data();
+        key.refcount = *(uint16_t *)r.data();
     }
   }
 }
@@ -756,6 +770,7 @@ bool Transaction::remove(ClassId classId, ObjectId objectId)
   k.assign(kv, sizeof(kv));
   return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
 }
+
 bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId propertyId)
 {
   SK_CONSTR(kv, classId, objectId, propertyId);
@@ -771,8 +786,8 @@ unsigned Transaction::decrementRefCount(ClassId cid, ObjectId oid)
   SK_CONSTR(kv, cid, oid, 1);
   ::lmdb::val k{kv, sizeof(kv)};
   ::lmdb::val v{};
-  if(cursor.get(k, v, MDB_SET) && v.size() >= 4) {
-    unsigned refcnt = *((unsigned *)v.data<byte_t>());
+  if(cursor.get(k, v, MDB_SET)) {
+    uint16_t refcnt = *((uint16_t *)v.data<byte_t>());
     if(refcnt > 0) {
       refcnt--;
       v.assign(&refcnt, sizeof(refcnt));
