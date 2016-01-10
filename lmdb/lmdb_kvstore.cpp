@@ -455,7 +455,7 @@ protected:
   bool lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::val &data);
   ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd) override;
 
-  unsigned decrementRefCount(ClassId cid, ObjectId oid) override;
+  uint16_t decrementRefCount(ClassId cid, ObjectId oid) override;
 
 public:
   Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
@@ -779,7 +779,7 @@ bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId property
   return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
 }
 
-unsigned Transaction::decrementRefCount(ClassId cid, ObjectId oid)
+uint16_t Transaction::decrementRefCount(ClassId cid, ObjectId oid)
 {
   auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
 

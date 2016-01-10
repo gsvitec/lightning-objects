@@ -676,19 +676,25 @@ public:
       clsFound = hasData && validateClass();
     }
     m_hasData = hasData && clsFound;
+    if(!m_hasData) close();
   }
 
   virtual ~ClassCursor() {
     delete m_helper;
   }
 
-  void erase(WriteTransactionPtr tr)
+  /**
+   * delete the object at the current cursor position. The cursor is moved to the next valid position or atEnd == true.
+   * 
+   * @true true if the cursor has not reached the end
+   */
+  bool erase(WriteTransactionPtr tr)
   {
     ObjectKey key;
 
     ReadBuf readBuf;
     m_helper->get(key, readBuf);
-    if(readBuf.null()) return;
+    if(readBuf.null()) return m_hasData;
     if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
 
     using Traits = ClassTraits<T>;
@@ -716,7 +722,12 @@ public:
       } while(hasData && !clsFound);
 
       m_hasData = hasData && clsFound;
+      return true;
     }
+    else m_hasData = false;
+
+    if(!m_hasData) close();
+    return m_hasData;
   }
 
   /**
@@ -800,6 +811,8 @@ public:
     } while(hasData && !clsFound);
 
     m_hasData = hasData && clsFound;
+
+    if(!m_hasData) close();
     return m_hasData;
   }
 
@@ -989,7 +1002,7 @@ protected:
   virtual void doRenew() = 0;
   virtual void doAbort() = 0;
 
-  virtual unsigned decrementRefCount(ClassId cid, ObjectId oid) = 0;
+  virtual uint16_t decrementRefCount(ClassId cid, ObjectId oid) = 0;
 
   /**
    * retrieve info about a top-level collection
@@ -1869,7 +1882,10 @@ public:
         for(size_t i=0; i<sz; i++) {
           ObjectKey key;
           buf.read(key);
-          deleteObject<V>(key);
+          uint16_t refcount = ClassTraits<V>::traits_info->refcounting ?
+                              decrementRefCount(key.classId, key.objectId) : uint16_t(0);
+
+          if(refcount <= 1) removeObject<V>(key.classId, key.objectId);
         }
       }
     }
@@ -2879,10 +2895,12 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
       ReadBuf readBuf;
       tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
       if (!readBuf.null()) {
+        //first load all keys, because decrement/remove will invalidate the buffer
         size_t count = readBuf.size() / ObjectKey_sz;
         std::vector<ObjectKey> oks(count);
         for(size_t i=0; i<count; i++) readBuf.read(oks[i]);
 
+        //now work all keys by decrementing refcount and deleting
         for(size_t i=0; i<count; i++) {
           ObjectKey &key = oks[i];
           if(tr->decrementRefCount(key.classId, key.objectId) == 0)

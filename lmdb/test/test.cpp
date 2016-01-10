@@ -760,11 +760,10 @@ void testFredsMappings2(KeyValueStore *kv)
       assert(streams.size() == 6);
 
       txn->deleteCollection<flexis::data::recording::Source, flexis::data::recording::Stream>(src, SOURCE_STREAMS);
-      cursor->erase(txn);
-
-      cursor->next();
+      if(cursor->erase(txn)) cursor->next();
     }
     assert(count == 1);
+
     txn->commit();
   }
   {
