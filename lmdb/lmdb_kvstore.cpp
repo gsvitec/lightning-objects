@@ -496,8 +496,6 @@ class KeyValueStoreImpl : public KeyValueStore
   unsigned m_pageSize;
   unsigned m_writeBlocks = 0;
 
-  static int meta_dup_compare(const MDB_val *a, const MDB_val *b);
-
   PropertyMetaInfoPtr make_propertyinfo(MDB_val *mdbVal);
   MDB_val make_propertyval(unsigned id, const PropertyAccessBase *prop);
   ObjectId findMaxObjectId(::lmdb::txn &txn, ClassId classId);
@@ -540,7 +538,7 @@ KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
     static const char separator_char = '/';
 #endif
 
-int KeyValueStoreImpl::meta_dup_compare(const MDB_val *a, const MDB_val *b)
+int meta_dup_compare(const MDB_val *a, const MDB_val *b)
 {
   PropertyId id1 = read_integer<PropertyId>((byte_t *)a->mv_data, 2);
   PropertyId id2 = read_integer<PropertyId>((byte_t *)b->mv_data, 2);
@@ -1014,8 +1012,6 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     unsigned numProps,
     vector<PropertyMetaInfoPtr> &propertyInfos)
 {
-  using MetaInfo = KeyValueStoreBase::PropertyMetaInfoPtr;
-
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
 
   ::lmdb::val key, val;

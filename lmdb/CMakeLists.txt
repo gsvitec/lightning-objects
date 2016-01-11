@@ -1,10 +1,13 @@
 # LMDB
 
-set(SOURCE_FILES lmdb_kvstore.cpp liblmdb/mdb.c liblmdb/midl.c)
+set(LmdbStore_SOURCES lmdb_kvstore.cpp liblmdb/mdb.c liblmdb/midl.c)
+set(lo_dump_SOURCES lmdb_kvdump.cpp ../kvstore.cpp lmdb_kvstore.cpp liblmdb/mdb.c liblmdb/midl.c)
 
 add_definitions(-DFlexisPersistence_EXPORTS)
 
-add_library(LmdbStore OBJECT ${SOURCE_FILES})
+add_library(LmdbStore OBJECT ${LmdbStore_SOURCES})
+
+add_executable(lo_dump ${lo_dump_SOURCES})
 
 if(UNIX)
 set(MDBLOAD_SOURCES liblmdb/mdb_load.c liblmdb/mdb.c liblmdb/midl.c)
@@ -27,15 +30,21 @@ if(UNIX)
     target_link_libraries(LmdbLoad pthread)
     target_link_libraries(LmdbDump pthread)
     target_link_libraries(LmdbStat pthread)
+    target_link_libraries(lo_dump pthread)
 endif()
 if(WIN32)
     target_link_libraries(LmdbLoad ntdll)
     target_link_libraries(LmdbDump ntdll)
     target_link_libraries(LmdbStat ntdll)
+    target_link_libraries(lo_dump ntdll)
 endif()
 
 target_include_directories(LmdbStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 target_include_directories(LmdbStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_include_directories(LmdbStore PRIVATE liblmdb)
+
+target_include_directories(lo_dump PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+target_include_directories(lo_dump PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(lo_dump PRIVATE liblmdb)
 
 add_subdirectory(test)
