@@ -1837,10 +1837,7 @@ public:
     byte_t *data;
     size_t bufSz = vect.size()*ObjectKey_sz+4;
 
-    if(!allocData(key->classId, key->objectId, propertyId, bufSz, &data))
-      throw persistence_error("allocData failed");
-
-    writeBuf().start(data, bufSz);
+    writeBuf().start(bufSz);
     writeBuf().appendInteger<size_t>(vect.size(), 4);
 
     for(auto &v : vect) {
@@ -1860,6 +1857,9 @@ public:
       }
       writeBuf().append(*key);
     }
+
+    if(!putData(key->classId, key->objectId, propertyId, writeBuf()))
+      throw persistence_error("putData failed");
   }
 
   /**
