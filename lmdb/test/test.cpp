@@ -15,7 +15,10 @@ using namespace std;
 using namespace flexis::Overlays;
 
 template <typename T>
-unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=[](shared_ptr<T> t=nullptr)->bool{return true;})
+bool all_predicate(shared_ptr<T> t=nullptr) {return true;}
+
+template <typename T>
+unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
 {
   unsigned count = 0;
   for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
