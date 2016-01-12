@@ -16,6 +16,11 @@ public ClassTraitsBase<_cls>, public ClassTraitsConcrete<_cls>{ \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
 
 /** @see header traits_impl.h */
+#define START_MAPPING_R(_cls, _repl, ...) template <> struct ClassTraits<_cls> : \
+public ClassTraitsBase<_cls>, public ClassTraitsConcreteRepl<_cls, _repl>{ \
+static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
+
+/** @see header traits_impl.h */
 #define START_MAPPING_A(_cls, ...) template <> struct ClassTraits<_cls> : \
 public ClassTraitsBase<_cls>, public ClassTraitsAbstract<_cls>{ \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
@@ -23,6 +28,11 @@ static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
 /** @see header traits_impl.h */
 #define START_MAPPING_SUB(_cls, _sup, ...) \
 template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsConcrete<_cls> { \
+static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
+
+/** @see header traits_impl.h */
+#define START_MAPPING_SUB_R(_cls, _repl, _sup, ...) \
+template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsConcreteRepl<_cls, _repl> { \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
 
 /** @see header traits_impl.h */

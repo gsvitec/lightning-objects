@@ -93,6 +93,23 @@ template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__
 prop_impl_so(_cls, __VA_ARGS__);
 
 /**
+ * start the mapping with a replacement. The replacement class will be saved using the same mappings
+ * as the original class. Objects loaded from the database will be instances of the replacement class
+ *
+ * @param _cls the fully qualified class name
+ * @param _repl the name of a replacement class
+ * @param list of all mapped property names
+ */
+#define START_MAPPING_R(_cls, _repl, ...) template <> struct ClassTraits<_cls> : \
+public ClassTraitsBase<_cls>, public ClassTraitsConcreteRepl<_cls, _repl>{ \
+static const bool traits_has_objid; \
+static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
+template<> bool ClassTraitsBase<_cls>::traits_initialized = false; \
+template<> const unsigned ClassTraitsBase<_cls>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
+prop_impl_so(_cls, __VA_ARGS__); \
+template <> struct ClassTraits<_repl> : public ClassTraits<_cls> {};
+
+/**
  * start the mapping for an abstract class
  *
  * @param _cls the fully qualified class name
@@ -120,6 +137,23 @@ static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls, _sup>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls, _sup>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
 prop_impl_sub(_cls, _sup, __VA_ARGS__);
+
+/**
+ * start the mapping for a class with a superclass and a replacement class. The replacement class will be saved using the same
+ * mappings as the original class. Objects loaded from the database will be instances of the replacement class
+ *
+ * @param _cls the fully qualified class name
+ * @param _sup the fully qualified name of the superclass
+ * @param list of all mapped property names
+ */
+#define START_MAPPING_SUB_R(_cls, _repl, _sup, ...) \
+template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsConcreteRepl<_cls, _repl> { \
+static const bool traits_has_objid; \
+static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
+template<> bool ClassTraitsBase<_cls, _sup>::traits_initialized = false; \
+template<> const unsigned ClassTraitsBase<_cls, _sup>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
+prop_impl_sub(_cls, _sup, __VA_ARGS__); \
+template <> struct ClassTraits<_repl> : public ClassTraits<_cls> {};
 
 /**
  * start the mapping for an abstract class with a superclass

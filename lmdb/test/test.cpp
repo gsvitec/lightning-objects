@@ -26,7 +26,7 @@ unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> pre
   return count;
 }
 
-void testColored2DPoint(KeyValueStore *kv) 
+void testColored2DPoint(KeyValueStore *kv)
 {
   ObjectKey key;
 
@@ -704,7 +704,7 @@ void testFredsMappings2(KeyValueStore *kv)
 {
   const ObjectId SOURCE_STREAMS = 99;
   {
-    flexis::data::recording::SourcePtr src = kv::make_obj<flexis::data::recording::Source>();
+    flexis::data::recording::VideoSourcePtr src = kv::make_obj<flexis::data::recording::VideoSource>();
     auto wtxn = kv->beginWrite();
     wtxn->saveObject(src);
     wtxn->commit();
@@ -1291,6 +1291,7 @@ int main()
 
   kv->putSchema<
       flexis::data::recording::Source,
+      flexis::data::recording::VideoSource,
       flexis::data::recording::Stream,
       flexis::StreamProcessors::MedianFlowTrackerProc,
       TrackingRegion, TrackResult,

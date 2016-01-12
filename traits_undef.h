@@ -2,8 +2,10 @@
 // Created by cse on 12/3/15.
 //
 #undef START_MAPPING
+#undef START_MAPPING_R
 #undef START_MAPPING_A
 #undef START_MAPPING_SUB
+#undef START_MAPPING_SUB_R
 #undef START_MAPPING_SUB_A
 #undef END_MAPPING
 #undef END_MAPPING_SUB

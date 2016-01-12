@@ -1057,7 +1057,7 @@ public:
 };
 
 /**
- * ClassTraits extension for concrete classes
+ * ClassTraits extension for abstract (non-instantiable) classes
  */
 template <typename T> struct ClassTraitsAbstract
 {
@@ -1075,7 +1075,7 @@ template <typename T> struct ClassTraitsAbstract
 };
 
 /**
- * ClassTraits extension for abstract classes
+ * ClassTraits extension for concrete (instantiable) classes
  */
 template <typename T> struct ClassTraitsConcrete
 {
@@ -1085,6 +1085,24 @@ template <typename T> struct ClassTraitsConcrete
   {
     if(classId == ClassTraits<T>::traits_info->classId) {
       return new T();
+    }
+    else if(classId)
+      return RESOLVE_SUB(classId)->makeObject(classId);
+    return nullptr;
+  }
+};
+
+/**
+ * ClassTraits extension for concrete (instantiable) classes with replacement
+ */
+template <typename T, typename R> struct ClassTraitsConcreteRepl
+{
+  static const bool isAbstract = false;
+
+  static T *makeObject(ClassId classId)
+  {
+    if(classId == ClassTraits<T>::traits_info->classId) {
+      return new R();
     }
     else if(classId)
       return RESOLVE_SUB(classId)->makeObject(classId);
