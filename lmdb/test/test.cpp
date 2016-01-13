@@ -2,10 +2,10 @@
 // Created by cse on 10/10/15.
 //
 
+#include <cassert>
 #include <sstream>
-#include <kvstore/kvstore.h>
-#include <lmdb_kvstore.h>
-#include <medianflowtracker.h>
+#include <kvstore.h>
+#include <lmdb/lmdb_kvstore.h>
 #include "testclasses.h"
 
 using namespace flexis::persistence;
@@ -198,16 +198,16 @@ void testObjectMappings(KeyValueStore *kv)
   }
 }
 
-void testPolymorphism(KeyValueStore *kv)
+void testFlexisProperties(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
   auto ro = make_obj<RectangularOverlay>();
   auto to = make_obj<TimeCodeOverlay>();
 
-  ro->rangeInP->setValue(-1);
-  ro->rangeOutP->setValue(-1);
-  to->rangeInP->setValue(-1);
-  to->rangeOutP->setValue(-1);
+  ro->rangeIn = -1;
+  ro->rangeOut = -1;
+  to->rangeIn = -1;
+  to->rangeOut = -1;
   si.userOverlays.push_back(to);
   si.userOverlays.push_back(ro);
 
@@ -222,8 +222,8 @@ void testPolymorphism(KeyValueStore *kv)
   rtxn->abort();
 
   assert(loaded && loaded->userOverlays.size() == 2
-         && loaded->userOverlays[0]->rangeInP->getValue() == -1
-            && loaded->userOverlays[0]->rangeOutP->getValue() == -1);
+         && loaded->userOverlays[0]->rangeIn == -1
+            && loaded->userOverlays[0]->rangeOut == -1);
   for(auto &ovl : loaded->userOverlays)
     cout << ovl->type() << endl;
   delete loaded;
@@ -662,123 +662,6 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   delete si;
 }
 
-void testFredsMappings(KeyValueStore *kv)
-{
-  TrackResult r1, r2;
-  ObjectKey key;
-  {
-    TrackingRegion tr(894, 0, 1.11, 2.22);
-
-    r1 = tr.results[0];
-    r2 = tr.results[893];
-
-    auto wtxn = kv->beginWrite();
-    wtxn->saveObject(tr, key);
-    wtxn->commit();
-  }
-  {
-    auto rtxn = kv->beginRead();
-
-    TrackingRegion *loaded = rtxn->getObject<TrackingRegion>(key);
-
-    assert(loaded->results.size() == 894);
-
-    TrackResult &rr1 = loaded->results[0];
-    TrackResult &rr2 = loaded->results[893];
-
-    assert(r1.currBB.height == r2.currBB.height && r1.currBB.x == r2.currBB.x && r1.currBB.y == r2.currBB.y);
-  }
-}
-
-flexis::data::recording::StreamPtr fillStream()
-{
-  flexis::data::recording::StreamPtr s = kv::make_obj<flexis::data::recording::Stream>();
-
-  flexis::StreamProcessors::MedianFlowTrackerProcPtr p = kv::make_obj<flexis::StreamProcessors::MedianFlowTrackerProc>();
-  s->processors.push_back(p);
-
-  for(int i=0; i<10; i++) {
-    TrackingRegionPtr ptr = kv::make_obj<TrackingRegion>(95, 0, 1.11, 2.22);
-    p->trackingRegions.push_back(ptr);
-  }
-  return s;
-}
-void testFredsMappings2(KeyValueStore *kv)
-{
-  const ObjectId SOURCE_STREAMS = 99;
-  {
-    flexis::data::recording::VideoSourcePtr src = kv::make_obj<flexis::data::recording::VideoSource>();
-    auto wtxn = kv->beginWrite();
-    wtxn->saveObject(src);
-    wtxn->commit();
-
-    vector<flexis::data::recording::StreamPtr> streams;
-    streams.push_back(fillStream());
-    streams.push_back(fillStream());
-    streams.push_back(fillStream());
-    streams.push_back(fillStream());
-    streams.push_back(fillStream());
-    streams.push_back(fillStream());
-
-    wtxn = kv->beginWrite();
-
-    for(auto &s : streams) {
-      wtxn->saveObject(s);
-    }
-
-    wtxn->putCollection(src, SOURCE_STREAMS, streams);
-    wtxn->commit();
-  }
-  {
-    auto rtxn = kv->beginRead();
-    auto cursor = rtxn->openCursor<flexis::data::recording::Stream>();
-    unsigned count = 0;
-    while(!cursor->atEnd()) {
-      count++;
-      auto str = cursor->get();
-
-      assert(str->processors.size() == 1);
-      flexis::StreamProcessors::MedianFlowTrackerProcPtr p =
-          dynamic_pointer_cast<flexis::StreamProcessors::MedianFlowTrackerProc>(str->processors[0]);
-
-      assert(p && p->trackingRegions.size() == 10);
-      assert(p && p->trackingRegions[0]->results.size() == 95);
-      assert(p && p->trackingRegions[9]->results.size() == 95);
-
-      cursor->next();
-    }
-    assert(count == 6);
-    rtxn->abort();
-  }
-  {
-    auto txn = kv->beginWrite();
-    auto cursor = txn->openCursor<flexis::data::recording::Source>();
-    unsigned count = 0;
-    while(!cursor->atEnd()) {
-      count++;
-      auto src = cursor->get();
-
-      std::vector<std::shared_ptr<flexis::data::recording::Stream>> streams;
-      txn->getCollection(src, SOURCE_STREAMS, streams);
-      assert(streams.size() == 6);
-
-      txn->deleteCollection<flexis::data::recording::Source, flexis::data::recording::Stream>(src, SOURCE_STREAMS);
-      if(cursor->erase(txn)) cursor->next();
-    }
-    assert(count == 1);
-
-    txn->commit();
-  }
-  {
-    auto txn = kv->beginRead();
-
-    assert(countInstances<flexis::data::recording::Source>(txn) == 0);
-    assert(countInstances<flexis::data::recording::Stream>(txn) == 0);
-
-    txn->abort();
-  }
-}
-
 void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
 {
   ObjectKey key;
@@ -888,11 +771,11 @@ void testDelete(KeyValueStore *kv)
     si.sourceIndex = 123456789;
 
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name.setValue("testDelete");
+    ro->name = "testDelete";
     si.userOverlays.push_back(ro);
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name.setValue("testDelete");
+    to->name = "testDelete";
     si.userOverlays.push_back(to);
 
     RefCountingTest ot;
@@ -914,7 +797,7 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 1);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete";});
     assert(ov == 2);
 
     unsigned ot = countInstances<RefCountingTest>(
@@ -944,7 +827,7 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 0);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testDelete";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete";});
     assert(ov == 0);
 
     unsigned ot = countInstances<RefCountingTest>(
@@ -969,11 +852,11 @@ void testUpdate(KeyValueStore *kv)
     si.sourceIndex = 2233445;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name.setValue("testUpdate");
+    ro->name = "testUpdate";
     si.userOverlays.push_back(ro);
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name.setValue("testUpdate");
+    to->name = "testUpdate";
     si.userOverlays.push_back(to);
 
     RefCountingTest ot;
@@ -1017,7 +900,7 @@ void testUpdate(KeyValueStore *kv)
     assert(ot->fso_vect.size() == 1);
 
     unsigned cov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name.getValue() == "testUpdate";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testUpdate";});
     assert(cov == 1);
     unsigned vo = countInstances<player::SourceDisplayConfig>(
         txn, [](shared_ptr<player::SourceDisplayConfig> v)->bool {return v->sourceIndex == 1;});
@@ -1045,10 +928,10 @@ void testRefCounting(KeyValueStore *kv)
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
 
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name.setValue("testRefCounting.RectangularOverlay");
+    ro->name = "testRefCounting.RectangularOverlay";
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name.setValue("testRefCounting.TimeCodeOverlay");
+    to->name = "testRefCounting.TimeCodeOverlay";
 
     si.userOverlays.push_back(to);
     si.userOverlays.push_back(ro);
@@ -1079,10 +962,10 @@ void testRefCounting(KeyValueStore *kv)
     auto txn = kv->beginRead();
 
     unsigned rov = countInstances<RectangularOverlay>(
-        txn, [](shared_ptr<RectangularOverlay> o)->bool {return o->name.getValue() == "testRefCounting.RectangularOverlay";});
+        txn, [](shared_ptr<RectangularOverlay> o)->bool {return o->name == "testRefCounting.RectangularOverlay";});
     assert(rov == 1);
     unsigned tov = countInstances<TimeCodeOverlay>(
-        txn, [](shared_ptr<TimeCodeOverlay> o)->bool {return o->name.getValue() == "testRefCounting.TimeCodeOverlay";});
+        txn, [](shared_ptr<TimeCodeOverlay> o)->bool {return o->name == "testRefCounting.TimeCodeOverlay";});
     assert(tov == 0);
 
     txn->abort();
@@ -1278,7 +1161,6 @@ int main()
       ColoredPolygon,
       player::SourceDisplayConfig,
       player::SourceInfo,
-      flexis::data::recording::StreamProcessor,
       flexis::Overlays::IFlexisOverlay,
       flexis::Overlays::RectangularOverlay,
       flexis::Overlays::TimeCodeOverlay,
@@ -1292,17 +1174,6 @@ int main()
   kv->setRefCounting<FixedSizeObject>();
   kv->setRefCounting<player::SourceDisplayConfig>();
 
-  kv->putSchema<
-      flexis::data::recording::Source,
-      flexis::data::recording::VideoSource,
-      flexis::data::recording::Stream,
-      flexis::StreamProcessors::MedianFlowTrackerProc,
-      TrackingRegion, TrackResult,
-      flexis::Geometry::Rectangle>();
-
-  testFredsMappings(kv);
-  testFredsMappings2(kv);
-
 #if 1
   testUpdate(kv);
   testDelete(kv);
@@ -1311,7 +1182,7 @@ int main()
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);
-  testPolymorphism(kv);
+  testFlexisProperties(kv);
   testLazyPolymorphicCursor(kv);
   testObjectCollection(kv);
   testValueCollection(kv);

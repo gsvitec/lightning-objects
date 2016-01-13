@@ -5,19 +5,111 @@
 #ifndef FLEXIS_TESTCLASSES_H
 #define FLEXIS_TESTCLASSES_H
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <memory>
-#include <kvstore/kvstore.h>
-#include <kv/kvlibtraits.h>
+#include <kvstore.h>
 
 #ifdef TESTCLASSES_IMPL
-#include <kvstore/traits_impl.h>
+#include <traits_impl.h>
 #else
-#include <kvstore/traits_decl.h>
+#include <traits_decl.h>
 #endif
 
+using namespace std;
+
 namespace flexis {
+
+namespace Overlays {
+
+template <class T> class ObjectHistory {
+
+public:
+  virtual T& getHistoryValue(uint64_t bufferPos) = 0;
+
+
+  virtual ObjectHistory<T>* clone() = 0;
+};
+template <class T> using ObjectHistoryPtr = shared_ptr<ObjectHistory<T>>;
+
+class Colored2DPoint {
+
+public:
+
+  float x;
+  float y;
+
+  float r;
+  float g;
+  float b;
+  float a;
+
+  Colored2DPoint() {}
+  Colored2DPoint(float x_, float y_, float r_, float g_, float b_, float a_) : x(x_), y(y_), r(r_), g(g_), b(b_), a(a_)
+  {}
+
+  void set(float x_, float y_, float r_, float g_, float b_, float a_) {
+    x = x_;
+    y = y_;
+    r = r_;
+    g = g_;
+    b = b_;
+    a = a_;
+  }
+};
+
+struct ColoredPolygon {
+  vector<Colored2DPoint> pts;
+  bool visible;
+};
+
+class IFlexisOverlay
+{
+
+public:
+  long id;
+  string name;
+
+  bool userVisible;
+  double opacity;
+  long rangeIn;
+  long rangeOut;
+  bool selectable;
+
+  virtual string type() const = 0;
+};
+using IFlexisOverlayPtr = shared_ptr<IFlexisOverlay>;
+
+class RectangularOverlay : public IFlexisOverlay {
+
+public:
+  double ovlX;
+  double ovlY;
+  double ovlW;
+  double ovlH;
+
+  string type() const override {return "RectangularOverlay";}
+};
+
+using RectangularOverlayPtr = shared_ptr<RectangularOverlay>;
+
+
+class TimeCodeOverlay : public IFlexisOverlay {
+
+public:
+  double ovlX;
+  double ovlY;
+  int fontSize;
+
+  string text;
+
+  string type() const override {return "TimeCodeOverlay";}
+};
+using TimeCodeOverlayPtr = shared_ptr<TimeCodeOverlay>;
+
+} //Overlays
+
 namespace player {
 
 /**
@@ -71,6 +163,7 @@ struct SourceInfo {
 };
 
 } //player
+
 } //flexis
 
 struct OtherThing {
@@ -254,16 +347,51 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory2 : public ObjectHistory<T>, public KVPropertyBackend
+struct KVObjectHistory2 : public flexis::Overlays::ObjectHistory<T>, public KVPropertyBackend
 {
   T t;
   T& getHistoryValue(uint64_t bufferPos) override {
     return t;
   }
-  ObjectHistory<T>* clone() override {
+  flexis::Overlays::ObjectHistory<T>* clone() override {
     return nullptr;
   }
 };
+START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, x)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, y)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, r)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, g)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, b)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, a)
+END_MAPPING(flexis::Overlays::Colored2DPoint)
+
+START_MAPPING(flexis::Overlays::ColoredPolygon, pts, visible)
+  MAPPED_PROP(flexis::Overlays::ColoredPolygon, ObjectVectorPropertyEmbeddedAssign, flexis::Overlays::Colored2DPoint, pts)
+  MAPPED_PROP(flexis::Overlays::ColoredPolygon, BasePropertyAssign, bool, visible)
+END_MAPPING(flexis::Overlays::ColoredPolygon)
+
+START_MAPPING_A(flexis::Overlays::IFlexisOverlay, name, userVisible, opacity, rangeIn, rangeOut)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, bool, userVisible)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, double, opacity)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, long, rangeIn)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, long, rangeOut)
+END_MAPPING(flexis::Overlays::IFlexisOverlay)
+
+START_MAPPING_SUB(flexis::Overlays::RectangularOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
+  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlX)
+  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlY)
+  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlW)
+  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlH)
+END_MAPPING_SUB(flexis::Overlays::RectangularOverlay, flexis::Overlays::IFlexisOverlay)
+
+START_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, fontSize)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, double, ovlX)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, double, ovlY)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, int, fontSize)
+END_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay)
+
 START_MAPPING_A(OtherThing, name, dvalue)
   MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)
   MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
@@ -332,7 +460,7 @@ START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverla
 END_MAPPING(flexis::player::SourceInfo)
 
 START_MAPPING(SomethingWithAnObjectIter, history)
-  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistory2, ObjectHistory, history)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistory2, flexis::Overlays::ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPING_A(SomethingAbstract, name)
