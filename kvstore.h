@@ -12,7 +12,6 @@
 #include <functional>
 #include <set>
 #include <unordered_map>
-#include <persistence_error.h>
 #include <type_traits>
 
 #include "kvtraits.h"
@@ -310,6 +309,9 @@ namespace kv {
 
 void readChunkHeader(ReadBuf &buf, size_t *dataSize, size_t *startIndex, size_t *elementCount);
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size=nullptr, bool *deleted=nullptr);
+
+template <typename T>
+bool all_predicate(std::shared_ptr<T> t=nullptr) {return true;}
 
 /**
  * read object data polymorphically
@@ -1122,6 +1124,25 @@ public:
   }
 
   /**
+   * convenience function to retrieve all instances of a given mapped class (including mapped subclasses) that
+   * match an (optional) predicate
+   *
+   * @param predicate a function that is applied to each object read from the database. Defaults to always-true
+   */
+  template <typename T>
+  std::vector<std::shared_ptr<T>> getInstances(std::function<bool(std::shared_ptr<T>)> predicate=all_predicate<T>)
+  {
+    std::vector<std::shared_ptr<T>> result;
+    for(auto curs = openCursor<T>(); !curs->atEnd(); curs->next()) {
+      auto instance = curs->get();
+      if(predicate(instance)) {
+        result.push_back(instance);
+      }
+    }
+    return result;
+  }
+
+  /**
    * retrieve an attached member collection. Attached mebers are stored under a key that is derived from
    * the object they are attached to. The key is the same as if the member was a property member of the
    * attached-to object, but the property does not exist. Instead, the attached member must be loaded and saved
@@ -1770,12 +1791,14 @@ public:
    *
    * @param obj a persistent object pointer, which must have been obtained from KV
    * @param setRefCount set refcount to 1 for newly created objects. Defaults to true;
+   * @return the object ID
    */
   template <typename T>
-  void saveObject(const std::shared_ptr<T> &obj, bool setRefCount=true)
+  ObjectId saveObject(const std::shared_ptr<T> &obj, bool setRefCount=true)
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
     saveObject<T>(*key, *obj, setRefCount);
+    return key->objectId;
   }
 
   /**
