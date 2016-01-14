@@ -22,12 +22,13 @@ string incompatible_schema_error::make_what(const char *className)
   ss << "saved class schema for " << className << " is incompatible with application class mapping" << endl;
   return ss.str();
 }
-string incompatible_schema_error::make_detail(vector<string> &errs)
+string incompatible_schema_error::make_detail(vector<Property> &errs)
 {
   stringstream ss;
+  ss << errs.size() << " property incompatibilities: ";
   for(auto it=errs.cbegin(); it!=errs.cend();) {
-    ss << *it;
-    if(it++ != errs.cend()) ss << endl;
+    ss << it->name << "[" << it->position << "]: " << it->description << " runtime: " << it->runtime << " saved: " << it->saved;
+    if(++it != errs.cend()) ss << ", ";
     else break;
   }
   return ss.str();
@@ -38,46 +39,97 @@ inline bool streq(string s1, const char *s2) {
   return s1 == s2;
 }
 
+inline bool is_integer(unsigned typeId) {
+  return typeId == TypeTraits<short>::id ||
+      typeId == TypeTraits<unsigned short>::id ||
+      typeId == TypeTraits<int>::id ||
+      typeId == TypeTraits<unsigned int>::id ||
+      typeId == TypeTraits<long>::id ||
+      typeId == TypeTraits<unsigned long>::id ||
+      typeId == TypeTraits<long long>::id ||
+      typeId == TypeTraits<unsigned long long>::id;
+}
+
 bool KeyValueStoreBase::updateClassSchema(
     AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[], unsigned numProperties,
-    vector<string> &errors)
+    vector<incompatible_schema_error::Property> &errors)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
   loadSaveClassMeta(classInfo, properties, numProperties, propertyInfos);
+
+  bool hasSubclasses = !classInfo->subs.empty();
+
+  auto layout_msg = [](StoreLayout l) -> const char * {
+    switch(l) {
+    case StoreLayout::all_embedded:
+      return "all_embedded";
+    case StoreLayout::embedded_key:
+      return "embedded_key";
+    default:
+      return "not embedded";
+    }
+  };
 
   //if previous class schema found in db, check compatibility
   if(!propertyInfos.empty()) {
     //1. all available properties must still be in the same sequence and of the same type
     size_t index=0;
-    unsigned dbShallowCount=0;
+
     for(size_t sz=propertyInfos.size(); index < sz && index < numProperties; index++) {
       PropertyMetaInfoPtr &pi = propertyInfos[index];
-      if(pi->storeLayout != StoreLayout::property) dbShallowCount++;
 
       const PropertyAccessBase * pa = *properties[index];
-      if(pa->type.id != pi->typeId
-         || pa->type.byteSize != pi->byteSize || !streq(pi->className, pa->type.className)
-         || pi->isVector != pa->type.isVector) {
+
+      incompatible_schema_error::Property err(pa->name, index);
+      if(hasSubclasses && pa->storage->layout != pi->storeLayout &&
+         ((pa->storage->layout == StoreLayout::all_embedded || pa->storage->layout == StoreLayout::embedded_key)
+          || (pi->storeLayout == StoreLayout::all_embedded || pi->storeLayout != StoreLayout::embedded_key)))
+      {
+        err.description = "shallow storage";
+        err.runtime = layout_msg(pa->storage->layout);
+        err.saved = layout_msg(pi->storeLayout);
+      }
+      else if(pa->type.id != pi->typeId && (!is_integer(pa->type.id) || !is_integer(pi->typeId))) {
+        err.description = "typeId";
+        err.runtime = to_string(pa->type.id);
+        err.saved = to_string(pi->typeId);
+      }
+      else if(pa->type.byteSize != pi->byteSize) {
+        err.description = "byteSize";
+        err.runtime = to_string(pa->type.byteSize);
+        err.saved = to_string(pi->byteSize);
+      }
+      else if(!streq(pi->className, pa->type.className)) {
+        err.description = "className";
+        err.runtime = pa->type.className;
+        err.saved = pi->className;
+      }
+      else if(pi->isVector != pa->type.isVector) {
+        err.description = "isVector";
+        err.runtime = to_string(pa->type.isVector);
+        err.saved = to_string(pi->isVector);
+      }
+      if(!err.description.empty()) {
         classInfo->compatibility = SchemaCompatibility::none;
-        stringstream ss;
-        ss << "class " << classInfo->name << ": property at position '" << index << "' has changed";
-        errors.push_back(ss.str());
+        errors.push_back(err);
       }
     }
 
     //2. we cannot cope with deleted shallow properties in non-leaf classes
-    if(!classInfo->subs.empty()) {
-      unsigned shallowCount = 0;
-      for(unsigned i=0; i<numProperties; i++) if((*properties[i])->storage->layout != StoreLayout::property)
-          shallowCount++;
-      if(dbShallowCount > shallowCount) {
-        classInfo->compatibility = SchemaCompatibility::none;
-        stringstream ss;
-        ss << "class " << classInfo->name << ": shallow properties in non-leaf class were deleted";
-        errors.push_back(ss.str());
+    if(hasSubclasses) {
+      for(unsigned i=numProperties; i<propertyInfos.size(); i++) {
+        if(propertyInfos[i]->storeLayout == StoreLayout::all_embedded || propertyInfos[i]->storeLayout == StoreLayout::embedded_key){
+          incompatible_schema_error::Property err(propertyInfos[i]->name, index);
+          err.description = "deleted shallow storage property in non-leaf class";
+          err.runtime = "--";
+          err.saved = layout_msg(propertyInfos[i]->storeLayout);
+
+          classInfo->compatibility = SchemaCompatibility::none;
+          errors.push_back(err);
+        }
       }
     }
-    //3. properties that were added can safely be disabled (during read)
+    //3. properties that were added can safely be disabled (during read, that is)
     if(index < numProperties) {
       classInfo->compatibility = SchemaCompatibility::read;
       for(; index < numProperties; index++) {

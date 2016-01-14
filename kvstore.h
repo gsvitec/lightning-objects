@@ -47,12 +47,23 @@ static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data 
 
 class incompatible_schema_error : public persistence_error
 {
-  static std::string make_what(const char *cls);
-  static std::string make_detail(std::vector<std::string> &errs);
-
 public:
-  incompatible_schema_error(const char *className, std::vector<std::string> errs)
-      : persistence_error(make_what(className), make_detail(errs)) {}
+  struct Property {
+    std::string name;
+    unsigned position;
+    std::string description;
+    std::string runtime, saved;
+
+    Property(std::string nm, unsigned pos) : name(nm), position(pos) {}
+  };
+  std::vector<Property> properties;
+
+  incompatible_schema_error(const char *className, std::vector<Property> errs)
+      : persistence_error(make_what(className), make_detail(errs)), properties(errs) {}
+
+private:
+  static std::string make_what(const char *cls);
+  static std::string make_detail(std::vector<Property> &errs);
 };
 
 class class_not_registered_error : public persistence_error
@@ -90,11 +101,14 @@ protected:
 
   /**
    * check if class schema already exists. If so, check compatibility. If not, create
+   * @param classInfo the runtime classInfo to check
+   * @param properties the runtime class properties
+   * @param numProperties size of the former
+   * @errors (out) compatibility errors detected during check
    * @return true if the class already existed
-   * @throws incompatible_schema_error
    */
   bool updateClassSchema(AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[], unsigned numProperties,
-                         std::vector<std::string> &errors);
+                         std::vector<incompatible_schema_error::Property> &errors);
 
   /**
    * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
@@ -227,7 +241,7 @@ public:
 
     //first process individual classes
     for(auto &info : vinfos) {
-      std::vector<std::string> errs;
+      std::vector<incompatible_schema_error::Property> errs;
       updateClassSchema(info.classInfo, info.decl_props, info.num_decl_props, errs);
       if(throwIfIncompatible && !errs.empty()) {
         throw incompatible_schema_error(info.classInfo->name, errs);
