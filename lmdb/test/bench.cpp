@@ -3,11 +3,12 @@
 //
 
 #include <kvstore.h>
-#include <kv/kvlibtraits.h>
 #include <lmdb++.h>
-#include <lmdb_kvstore.h>
+#include <lmdb/lmdb_kvstore.h>
 #include <iostream>
 #include <chrono>
+#include <cassert>
+#include "testclasses.h"
 
 using namespace flexis::persistence;
 using namespace flexis::persistence::kv;
