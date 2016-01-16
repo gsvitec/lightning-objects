@@ -2551,12 +2551,11 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
  */
 template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public StoreAccessBase
 {
-  size_t initFixedSize() override {
-    //for circular dependencies, ClassTraits<V>::traits_properties will not have been intialized, and
+  void init(const PropertyAccessBase *pa) override {
+    //in case of circular dependencies, ClassTraits<V>::traits_properties will not have been intialized, and
     //thus fixedSize is 0. Not a problem, only a failed optimization
     size_t fs = ClassTraits<V>::traits_properties->fixedSize;
     fixedSize = fs ? fs + 4 : 0;
-    return fixedSize;
   }
 
   ObjectPropertyStorageEmbedded() : StoreAccessBase(StoreLayout::all_embedded) {}
@@ -2916,6 +2915,7 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
 {
   bool m_lazy;
   bool updatePrepared = false;
+  const PropertyAccessBase *inverse = nullptr;
 
   bool preparesUpdates(ClassId classId) override
   {
@@ -2961,6 +2961,10 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
 
 public:
   ObjectPtrVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
+
+  void init(const PropertyAccessBase *pa) override {
+    inverse = ClassTraits<V>::getInverseAccess(pa);
+  }
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -3011,6 +3015,7 @@ public:
     if(m_lazy && mode == StoreMode::force_none) return;
 
     std::vector<std::shared_ptr<V>> val;
+    T *tp = reinterpret_cast<T *>(obj);
 
     //load vector base (array of object keys) data from property key
     ReadBuf readBuf;
@@ -3029,11 +3034,13 @@ public:
         }
         else {
           V *obj = tr->loadObject<V>(handler);
-          if(obj) val.push_back(std::shared_ptr<V>(obj, handler));
+          if(obj) {
+            if(inverse) ClassTraits<V>::get(*obj, inverse, tp);
+            val.push_back(std::shared_ptr<V>(obj, handler));
+          }
         }
       }
     }
-    T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::get(*tp, pa, val);
   }
 };
@@ -3312,6 +3319,13 @@ template <typename O, typename P, std::vector<std::shared_ptr<P>> O::*p>
 struct ObjectPtrVectorPropertyEmbeddedAssign : public PropertyAssign<O, std::vector<std::shared_ptr<P>>, p> {
   ObjectPtrVectorPropertyEmbeddedAssign(const char * name)
       : PropertyAssign<O, std::vector<std::shared_ptr<P>>, p>(name, new ObjectPtrVectorPropertyStorageEmbedded<O, P>(), object_vector_t<P>()) {}
+};
+/**
+ * mapping configuration for a property which holds the inverse pointer for a mapped object vector
+ */
+template <typename O, typename P, P * O::*p>
+struct ObjectVectorInverseAssign : public PropertyAssign<O, P *, p> {
+  ObjectVectorInverseAssign(const char * name, const char *inverse_name) : PropertyAssign<O, P *, p>(name, inverse_name, object_t<P>()) {}
 };
 /**
  * mapping configuration for a property which holds an object iterator. An object iterator has access to a collectionId which refers to

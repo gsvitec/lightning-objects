@@ -142,12 +142,9 @@ struct StoreAccessBase
       : layout(layout), fixedSize(fixedSize) {}
 
   /**
-   * initialize the fixed size. Subclasses that need to calculate fixed size at schema initialization
-   * should override
-   *
-   * @return the ready initialized fixed size.
+   * called at schema initialization. Override if applicable
    */
-  virtual size_t initFixedSize() {return fixedSize;}
+  virtual void init(const PropertyAccessBase *pa) {}
 
   /**
    * determine whether this storage participates in update/delete preparation
@@ -209,6 +206,23 @@ struct StoreAccessBase
   virtual void * initMember(void *obj, const PropertyAccessBase *pa) {
     return nullptr;
   }
+};
+
+struct NullStorage : public StoreAccessBase {
+  NullStorage() : StoreAccessBase(StoreLayout::none, 0) { }
+
+  size_t size(ObjectBuf &buf) const override { return 0; };
+
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId,
+            void *obj, const PropertyAccessBase *pa,
+            StoreMode mode = StoreMode::force_none) { }
+
+  void load(ReadTransaction *tr,
+            ReadBuf &buf,
+            ClassId classId, ObjectId objectId,
+            void *obj, const PropertyAccessBase *pa,
+            StoreMode mode = StoreMode::force_none) { }
 };
 
 /**
@@ -391,9 +405,13 @@ struct PropertyAccessBase
   PropertyId id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
+  const char *inverse_name;
 
   PropertyAccessBase(const char * name, StoreAccessBase *storage, const PropertyType &type)
-      : name(name), storage(storage), type(type) {}
+      : name(name), storage(storage), type(type), inverse_name(nullptr) {}
+
+  PropertyAccessBase(const char * name, const char * inverse, const PropertyType &type)
+      : name(name), storage(new NullStorage()), type(type), inverse_name(inverse) {}
 
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
@@ -412,6 +430,8 @@ template <typename O, typename P>
 struct PropertyAccess : public PropertyAccessBase {
   PropertyAccess(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : PropertyAccessBase(name, storage, type) {}
+  PropertyAccess(const char * name, const char * inverse, const PropertyType &type)
+      : PropertyAccessBase(name, inverse, type) {}
   virtual void set(O &o, P val) const = 0;
   virtual P get(O &o) const = 0;
 };
@@ -422,6 +442,8 @@ struct PropertyAccess : public PropertyAccessBase {
 template <typename O, typename P, P O::*p> struct PropertyAssign : public PropertyAccess<O, P> {
   PropertyAssign(const char * name, StoreAccessBase *storage, const PropertyType &type)
       : PropertyAccess<O, P>(name, storage, type) {}
+  PropertyAssign(const char * name, const char * inverse, const PropertyType &type)
+      : PropertyAccess<O, P>(name, inverse, type) {}
   void set(O &o, P val) const override { o.*p = val;}
   P get(O &o) const override { return o.*p;}
 };
@@ -528,6 +550,14 @@ public:
     superIter = ClassTraits<S>::traits_properties;
     startPos = superIter ? superIter->full_size() : 0;
 
+    //general storage initialization
+    for(unsigned i=0; i<numProps; i++) {
+      const PropertyAccessBase *pa = *decl_props[i];
+      if (pa->enabled && pa->storage) {
+        pa->storage->init(pa);
+      }
+    }
+
     //see if we're fixed size
     fixedSize = 0;
     if(superIter) {
@@ -539,7 +569,7 @@ public:
       if(pa->enabled) {
         switch(pa->storage->layout) {
           case StoreLayout::all_embedded: {
-            if (!pa->storage->initFixedSize()) {
+            if (!pa->storage->fixedSize) {
               fixedSize = 0;
               return;
             }
@@ -913,6 +943,17 @@ public:
     return nullptr;
   }
 
+  static const PropertyAccessBase *getInverseAccess(const PropertyAccessBase *pa)
+  {
+    for(unsigned i=0; i<num_decl_props; i++) {
+      const char *inverse = (*decl_props[i])->inverse_name;
+      if (inverse && !strcmp(inverse, pa->name)) {
+        return *decl_props[i];
+      }
+    }
+    return nullptr;
+  }
+
   static Properties * getProperties(ClassId classId)
   {
     if(classId == traits_info->classId)
@@ -942,7 +983,6 @@ public:
     if(!get_objectkey(obj, key) && force) throw invalid_pointer_error();
     return key;
   }
-
   static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags=FLAGS_ALL)
   {
     object_handler<T> *handler = std::get_deleter<object_handler<T>>(obj);
@@ -1148,6 +1188,9 @@ struct ClassTraits<EmptyClass>
   }
   template <typename T>
   static void * initMember(T *obj, const PropertyAccessBase *pa) {
+    return nullptr;
+  }
+  static const PropertyAccessBase *getInverseAccess(const PropertyAccessBase *pa) {
     return nullptr;
   }
   template <typename T>
