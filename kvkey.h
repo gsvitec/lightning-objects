@@ -27,7 +27,7 @@ struct ObjectKey
   ObjectKey() : classId(0), objectId(0), refcount(0) {}
   ObjectKey(ClassId classId, ObjectId objectId) : classId(classId), objectId(objectId), refcount(0) {}
   bool isNew() {return objectId == 0;}
-
+  bool isValid() {return classId > 0;}
   bool operator <(const ObjectKey &other) const {
     return classId < other.classId || (classId == other.classId && objectId < other.objectId);
   }

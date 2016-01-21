@@ -2117,6 +2117,7 @@ public:
 
   template <typename T>
   void deleteObject(ObjectKey &key) {
+    if(!key.isValid()) return;
     if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
     removeObject<T>(key.classId, key.objectId);
   }
@@ -2124,6 +2125,7 @@ public:
   template <typename T>
   void deleteObject(std::shared_ptr<T> &obj) {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
+    if(!key->isValid()) return;
     if(key->refcount > 1) throw persistence_error("removeObject: refcount > 1");
     removeObject<T>(key->classId, key->objectId);
   }
