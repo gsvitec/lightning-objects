@@ -391,6 +391,8 @@ using IterPropertyBackendPtr = std::shared_ptr<KVPropertyBackend>;
  */
 class ObjectBuf
 {
+  template<typename T, typename V> friend struct BasePropertyStorage;
+
 protected:
   const bool makeCopy = false;
   bool dataChecked = false;
@@ -2305,9 +2307,20 @@ struct BasePropertyStorage : public StoreAccessBase
 {
   BasePropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, TypeTraits<V>::byteSize) {}
 
-  size_t size(ObjectBuf &buf) const override {return TypeTraits<V>::byteSize;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return TypeTraits<V>::byteSize;}
+  size_t size(ObjectBuf &buf) const override
+  {
+    if(TypeTraits<V>::byteSize) return TypeTraits<V>::byteSize;
+    return ValueTraits<V>::size(buf.readBuf);
+  }
+  size_t size(void *obj, const PropertyAccessBase *pa) override
+  {
+    if(TypeTraits<V>::byteSize) return TypeTraits<V>::byteSize;
 
+    V val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(*tp, pa, val);
+    return ValueTraits<V>::size(val);
+  }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {

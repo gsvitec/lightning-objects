@@ -270,6 +270,9 @@ struct ValueTraitsBase
 template <typename T>
 struct ValueTraitsByte : public ValueTraitsBase<true>
 {
+  static size_t size(ReadBuf &buf) {
+    return 1;
+  }
   static size_t size(const T &val) {
     return 1;
   }
@@ -289,6 +292,9 @@ struct ValueTraitsByte : public ValueTraitsBase<true>
 template <typename T>
 struct ValueTraits : public ValueTraitsBase<true>
 {
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<T>::byteSize;
+  }
   static size_t size(const T &val) {
     return TypeTraits<T>::byteSize;
   }
@@ -310,6 +316,9 @@ struct ValueTraits : public ValueTraitsBase<true>
 template <>
 struct ValueTraits<bool> : public ValueTraitsBase<true>
 {
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<bool>::byteSize;
+  }
   static size_t size(const bool &val) {
     return TypeTraits<bool>::byteSize;
   }
@@ -329,6 +338,9 @@ struct ValueTraits<bool> : public ValueTraitsBase<true>
 template <>
 struct ValueTraits<std::string> : public ValueTraitsBase<false>
 {
+  static size_t size(ReadBuf &buf) {
+    return buf.strlen() +1;
+  }
   static size_t size(const std::string &val) {
     return val.length() + 1;
   }
@@ -347,6 +359,9 @@ struct ValueTraits<std::string> : public ValueTraitsBase<false>
 template <>
 struct ValueTraits<const char *> : public ValueTraitsBase<false>
 {
+  static size_t size(ReadBuf &buf) {
+    return buf.strlen() +1;
+  }
   static size_t size(const char * const &val) {
     return strlen(val) + 1;
   }
@@ -364,6 +379,9 @@ struct ValueTraits<const char *> : public ValueTraitsBase<false>
 template <typename T>
 struct ValueTraitsFloat : public ValueTraitsBase<true>
 {
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<T>::byteSize;
+  }
   static size_t size(const T &val) {
     return TypeTraits<T>::byteSize;
   }
