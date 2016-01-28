@@ -739,7 +739,7 @@ void Transaction::getData(ReadBuf &buf, ClassId classId, ObjectId objectId, Prop
     buf.start(v.data<byte_t>(), v.size());
 }
 
-void Transaction::getData(ReadBuf &buf, ObjectKey &key, bool getRefount)
+void Transaction::getData(ReadBuf &buf, ObjectKey &key, bool getRefcount)
 {
   SK_CONSTR(kv, key.classId, key.objectId, 0);
   ::lmdb::val k{kv, sizeof(kv)};
@@ -747,7 +747,7 @@ void Transaction::getData(ReadBuf &buf, ObjectKey &key, bool getRefount)
   if(::lmdb::dbi_get(m_txn, m_dbi.handle(), k, v)) {
     buf.start(v.data<byte_t>(), v.size());
 
-    if(getRefount) {
+    if(getRefcount) {
       SK_PROPID(kv) = 1;
       k.assign(kv, sizeof(kv));
       ::lmdb::val r{};

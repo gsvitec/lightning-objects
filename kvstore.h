@@ -3005,7 +3005,7 @@ public:
 
       if(mode != StoreMode::force_buffer) {
         if(ClassTraits<V>::traits_info->refcounting && !childKey->isNew()) {
-          if(oldKeys.empty() || oldKeys.erase(*childKey)) childKey->refcount++;
+          if(oldKeys.empty() || !oldKeys.erase(*childKey)) childKey->refcount++;
         }
         tr->saveObject<V>(*childKey, *v, true);
       }
