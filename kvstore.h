@@ -273,7 +273,6 @@ public:
           objectClassInfos[op.first]->prepareClasses.insert(cid);
         else
           objectClassInfos[op.first]->prepareClasses.erase(cid);
-        break;
       }
     }
   }
