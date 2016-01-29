@@ -4,9 +4,11 @@
 
 #include <iostream>
 #include <fstream>
-#include <string>
+#include <iomanip>
 #include <vector>
 #include <kvstore.h>
+#include <functional>
+#include <algorithm>
 #include "lmdb_kvstore.h"
 #include "liblmdb/lmdb++.h"
 
@@ -207,12 +209,23 @@ std::ifstream::pos_type filesize(const char* filename)
 int main(int argc, char* argv[])
 {
   if(argc < 3)
-    cout << "usage: lo_dump <path> <name>" << endl;
+    cout << "usage: lo_dump <path> <name> [c|n]" << endl;
+
+  string path(argv[1]);
+  string name(argv[2]);
+
+  string opt = argc > 3 ? argv[3] : "";
+
+  std::function<bool(flexis::persistence::kvdump::ClassInfo, flexis::persistence::kvdump::ClassInfo)> sortByName =
+      [](flexis::persistence::kvdump::ClassInfo ci1, flexis::persistence::kvdump::ClassInfo ci2) ->bool {
+        return ci1.name > ci2.name;
+      };
+  std::function<bool(flexis::persistence::kvdump::ClassInfo, flexis::persistence::kvdump::ClassInfo)> sortByCount =
+      [](flexis::persistence::kvdump::ClassInfo ci1, flexis::persistence::kvdump::ClassInfo ci2) ->bool {
+        return ci1.num_objects > ci2.num_objects;
+      };
 
   try {
-    string path(argv[1]);
-    string name(argv[2]);
-
     string fullpath = path + "/" + name;
     size_t freeSpace = (size_t)filesize(fullpath.c_str());
 
@@ -220,9 +233,21 @@ int main(int argc, char* argv[])
 
     dbinfo.loadClassMeta();
 
+    size_t len = 0;
     for(auto &ci : dbinfo.classInfos) {
+      if(len < ci.name.length()) len = ci.name.length();
       dbinfo.loadClassData(ci);
-      cout << ci.name << "(" << ci.num_objects << ", " << ci.sum_objects_size << ")" << endl;
+    }
+    if(opt == "n") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByName);
+    if(opt == "c") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByCount);
+
+    for(auto &ci : dbinfo.classInfos) {
+      cout << setw(len) <<
+          std::resetiosflags(std::ios::adjustfield) <<
+          setiosflags(std::ios::left) <<
+          ci.name << " (" << ci.classId << ")" <<
+          std::resetiosflags(std::ios::adjustfield) <<
+          setw(10) << " count: " << ci.num_objects << "  bytes: " << ci.sum_objects_size << endl;
     }
   }
   catch(::lmdb::runtime_error e) {
