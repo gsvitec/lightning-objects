@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <vector>
+#include <map>
 #include <kvstore.h>
 #include <functional>
 #include <algorithm>
@@ -66,6 +67,7 @@ struct ClassInfo
   size_t num_objects = 0;
   size_t max_object_size = 0;
   size_t sum_objects_size = 0;
+  map<uint16_t, uint16_t> refcounts;
 
   vector<PropertyInfo> propertyInfos;
 
@@ -185,7 +187,17 @@ public:
         if(SK_PROPID(key.data<byte_t>()) == 0) ci.num_objects++;
 
         cursor.get(key, val, MDB_GET_CURRENT);
-        ci.sum_objects_size += val.size();
+
+        if(SK_PROPID(key.data<byte_t>()) == 1) {
+          uint16_t refcount = *(uint16_t *)val.data();
+          if(refcount > 0) {
+            if(ci.refcounts.count(refcount))
+              ci.refcounts[refcount]++;
+            else
+              ci.refcounts[refcount] = 1;
+          }
+        }
+        else ci.sum_objects_size += val.size();
       }
     }
     cursor.close();
@@ -208,8 +220,11 @@ std::ifstream::pos_type filesize(const char* filename)
 
 int main(int argc, char* argv[])
 {
-  if(argc < 3)
+  if(argc < 3) {
     cout << "usage: lo_dump <path> <name> [c|n]" << endl;
+    cout << "c: sort by instance count, n: sort by class name" << endl;
+    return -1;
+  }
 
   string path(argv[1]);
   string name(argv[2]);
@@ -246,8 +261,14 @@ int main(int argc, char* argv[])
           std::resetiosflags(std::ios::adjustfield) <<
           setiosflags(std::ios::left) <<
           ci.name << " (" << ci.classId << ")" <<
-          std::resetiosflags(std::ios::adjustfield) <<
-          setw(10) << " count: " << ci.num_objects << "  bytes: " << ci.sum_objects_size << endl;
+          "  count: " << setw(7) << ci.num_objects << "  bytes: " <<
+          setw(10) << setiosflags(std::ios::left) << ci.sum_objects_size;
+
+      if(!ci.refcounts.empty()) cout << "rcnt: ";
+      for(auto &r : ci.refcounts) {
+        cout << r.first << "(" << r.second << ")";
+      }
+      cout << endl;
     }
   }
   catch(::lmdb::runtime_error e) {
