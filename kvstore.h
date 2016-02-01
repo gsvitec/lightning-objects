@@ -79,8 +79,6 @@ class ExclusiveReadTransaction;
 class WriteTransaction;
 }
 
-static StoreId store_id_count = 0;
-
 class KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
@@ -88,9 +86,10 @@ class KeyValueStoreBase
 
 public:
   /** 0-based id to distinguish multiple stores using the same mappings */
-  unsigned const id = store_id_count++;
+  unsigned const id;
 
 protected:
+  KeyValueStoreBase(StoreId _id) : id(_id) {}
   virtual ~KeyValueStoreBase() {}
 
   //property info stored in database
@@ -235,6 +234,36 @@ protected:
   ObjectId m_maxCollectionId = 0;
 
 public:
+  /**
+   * create a new store object.
+   * <p>Each new store can be assigned a storeId. If multiple databases are to be used in the same process with
+   * different but overlapping schema setup, each must be assigned a 0-based, consecutive ID. A difference in schema
+   * setup occurs when the sequence of putSchema calls differs for classes whose mappings are used in both stores.
+   * A schema setup is equal if the classes that are common to all participating stores are declared at the exact same
+   * point.
+   * </p>
+   * Say you have classes A and B in header "mappings1.h", and class C in "mappings2.h". Database 1 sees header
+   * "mappings1.h", while database 2 sees headers "mappings1.h" and "mappings2.h". Now, if the declaration code for both
+   * databases starts with
+   * <pre>
+   * store->putSchema<A, B>();
+   * </pre>
+   * all is well, there is no need to maintain storeIds. However, if database 2 was to declare schema like this:
+   * <pre>
+   * store->putSchema<C>();
+   * store->putSchema<A, B>();
+   * </pre>
+   * schema setup for classes A and B would be different between database 1 and database 2. Now you have the choice to
+   * either mend the setup, or assign storeIds 0 and 1 to the databases.</p>
+   * <p>
+   * Note: storeIds are in-memory only. They are not saved in any way, and there is no need to keep them identical across
+   * process creation. Store IDs are not required if there are no common mappings between databases.
+   * If used, store IDs must be 0-based, consecutive up to a maximum of MAX_DATABASES (kvtraits.h)
+   *
+   * @param storeId the unique, 0-based store ID
+   */
+  KeyValueStore(StoreId storeId=0) : KeyValueStoreBase(storeId) {}
+
   /**
    * register and validate the class schema for this store
    * @param throwIfIncompatible if true (default), throw an incompatible_schema_error if any schema incompatibility
