@@ -502,6 +502,7 @@ class KeyValueStoreImpl : public KeyValueStore
 
 protected:
   void loadSaveClassMeta(
+      StoreId storeId,
       AbstractClassInfo *classInfo,
       const PropertyAccessBase ** currentProps[],
       unsigned numProps,
@@ -1007,12 +1008,15 @@ MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBas
 }
 
 void KeyValueStoreImpl::loadSaveClassMeta(
+    StoreId storeId,
     AbstractClassInfo *classInfo,
     const PropertyAccessBase ** currentProps[],
     unsigned numProps,
     vector<PropertyMetaInfoPtr> &propertyInfos)
 {
   auto txn = ::lmdb::txn::begin(m_env, nullptr);
+
+  ClassData &cdata = classInfo->data[storeId];
 
   ::lmdb::val key, val;
   key.assign(classInfo->name);
@@ -1023,7 +1027,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
         //first record is [propertyId == 0, classId]
-        classInfo->classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
+        cdata.classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
         first = false;
       }
       else //rest is properties
@@ -1031,7 +1035,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     }
     cursor.close();
 
-    classInfo->maxObjectId = findMaxObjectId(txn, classInfo->classId);
+    classInfo->data[id].maxObjectId = findMaxObjectId(txn, cdata.classId);
 
     txn.abort();
   }
@@ -1039,12 +1043,12 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     //class appears for the first time
     cursor.close();
 
-    classInfo->classId = ++m_maxClassId;
+    cdata.classId = ++m_maxClassId;
 
     //save the first record [0, classId]
     byte_t buf[4];
     write_integer<PropertyId>(buf, 0, 2);
-    write_integer<ClassId>(buf+2, classInfo->classId, 2);
+    write_integer<ClassId>(buf+2, cdata.classId, 2);
     key.assign(classInfo->name);
     val.assign(buf, 4);
     m_dbi_meta.put(txn, key, val);
@@ -1058,7 +1062,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     }
     txn.commit();
 
-    classInfo->maxObjectId = 0;
+    classInfo->data[id].maxObjectId = 0;
   }
 }
 

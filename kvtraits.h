@@ -21,6 +21,9 @@ namespace persistence {
 
 namespace kv {
 
+/** constant designating the maximum number of databases allowed within one OS process */
+unsigned const MAX_DATABASES = 5;
+
 #define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
 
 class invalid_pointer_error : public persistence_error
@@ -151,21 +154,21 @@ struct StoreAccessBase
    *
    * @return whether this mapping participates in update/delete preparation
    */
-  virtual bool preparesUpdates(ClassId classId) {return false;}
+  virtual bool preparesUpdates(StoreId storeId, ClassId classId) {return false;}
 
   /**
    * determine the size from a serialized buffer. The buffer's read position is at the start of this object's data
    *
    * @return the size of this object
    */
-  virtual size_t size(ObjectBuf &buf) const = 0;
+  virtual size_t size(StoreId storeId, ObjectBuf &buf) const = 0;
 
   /**
    * determine the size from a live object
    *
    * @return the buffer size required to save the given property value
    */
-  virtual size_t size(void *obj, const PropertyAccessBase *pa) {return 0;}
+  virtual size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) {return 0;}
 
   /**
    * prepare an update for the given object property
@@ -175,8 +178,8 @@ struct StoreAccessBase
    * @param pa the property about to be saved
    * @return the same as size(buf)
    */
-  virtual size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) {
-    return size(buf);
+  virtual size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) {
+    return size(storeId, buf);
   }
 
   /**
@@ -188,8 +191,8 @@ struct StoreAccessBase
    * @param pa the property represented by this storage
    * @return the same as size(buf)
    */
-  virtual size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
-    return size(buf);
+  virtual size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
+    return size(storeId, buf);
   }
 
   virtual void save(WriteTransaction *tr,
@@ -203,7 +206,7 @@ struct StoreAccessBase
                     void *obj, const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
 
-  virtual void * initMember(void *obj, const PropertyAccessBase *pa) {
+  virtual void * initMember(StoreId storeId, void *obj, const PropertyAccessBase *pa) {
     return nullptr;
   }
 };
@@ -211,7 +214,7 @@ struct StoreAccessBase
 struct NullStorage : public StoreAccessBase {
   NullStorage() : StoreAccessBase(StoreLayout::none, 0) { }
 
-  size_t size(ObjectBuf &buf) const override { return 0; };
+  size_t size(StoreId storeId, ObjectBuf &buf) const override { return 0; };
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId,
@@ -233,8 +236,8 @@ struct StoreAccessEmbeddedKey : public StoreAccessBase
 {
   StoreAccessEmbeddedKey() : StoreAccessBase(StoreLayout::embedded_key, ObjectKey_sz) {}
 
-  size_t size(ObjectBuf &buf) const override {return ObjectKey_sz;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectKey_sz;}
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {return ObjectKey_sz;}
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return ObjectKey_sz;}
 };
 
 /**
@@ -245,8 +248,8 @@ struct StoreAccessPropertyKey: public StoreAccessBase
 {
   StoreAccessPropertyKey() : StoreAccessBase(StoreLayout::property) {}
 
-  size_t size(ObjectBuf &buf) const override {return 0;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {return 0;}
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
 template<typename T, typename V, unsigned byteSize=TypeTraits<V>::byteSize> struct PropertyStorage
@@ -434,8 +437,8 @@ struct PropertyAccessBase
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
 
-  void *initMember(void *obj) const {
-    return storage->initMember(obj, this);
+  void *initMember(StoreId storeId, void *obj) const {
+    return storage->initMember(storeId, obj, this);
   }
 
   virtual void setup(Properties *props) const {}
@@ -516,9 +519,9 @@ public:
       return superIter ? superIter->objectIdAccess<O>() : nullptr;
   }
 
-  bool preparesUpdates(ClassId classId) {
+  bool preparesUpdates(StoreId storeId, ClassId classId) {
     for(int i=0; i<numProps; i++)
-      if((*decl_props[i])->storage->preparesUpdates(classId))
+      if((*decl_props[i])->storage->preparesUpdates(storeId, classId))
         return true;
     return false;
   }
@@ -608,7 +611,22 @@ public:
 enum class SchemaCompatibility {write, read, none};
 
 /**
- * non-templated superclass for ClassInfo
+ * mutable class metadata that is maintained per-database
+ */
+struct ClassData
+{
+  ClassData(const ClassData &other) = delete;
+  ClassData() : classId(0), maxObjectId(0), refcounting(false) {}
+
+  ClassId classId = 0;
+  ObjectId maxObjectId = 0;
+  bool refcounting = false;
+
+  std::set<ClassId> prepareClasses;
+};
+
+/**
+ * metadata for mapped classes. Non-templated superclass for ClassInfo
  */
 struct AbstractClassInfo {
   static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
@@ -619,15 +637,13 @@ struct AbstractClassInfo {
 
   const char *name;
   const std::type_info &typeinfo;
-  ClassId classId = 0;
-  ObjectId maxObjectId = 0;
-  bool refcounting = false;
 
-  std::set<ClassId> prepareClasses;
+  //mutable metadata
+  ClassData data[MAX_DATABASES];
+
   std::vector<AbstractClassInfo *> subs;
 
-  AbstractClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId)
-      : name(name), typeinfo(typeinfo), classId(classId) {}
+  AbstractClassInfo(const char *name, const std::type_info &typeinfo) : name(name), typeinfo(typeinfo) {}
 
   void addSub(AbstractClassInfo *rsub) {
     subs.push_back(rsub);
@@ -637,35 +653,35 @@ struct AbstractClassInfo {
     return !subs.empty();
   }
 
-  bool hasClassId(ClassId cid) {
-    if(classId == cid) return true;
+  bool hasClassId(StoreId storeId, ClassId cid) {
+    if(data[storeId].classId == cid) return true;
     for(auto &sub : subs)
-      if(sub->hasClassId(cid)) return true;
+      if(sub->hasClassId(storeId, cid)) return true;
     return false;
   }
 
-  void setRefCounting(bool refcount) {
-    refcounting = refcount;
+  void setRefCounting(StoreId storeId, bool refcount) {
+    data[storeId].refcounting = refcount;
     for(auto &sub : subs) {
-      sub->setRefCounting(refcount);
+      sub->setRefCounting(storeId, refcount);
     }
   }
 
-  bool isInstance(ClassId _classId) {
-    if(classId == _classId) return true;
+  bool isInstance(StoreId storeId, ClassId _classId) {
+    if(data[storeId].classId == _classId) return true;
     for(auto s : subs) {
-      if(s->isInstance(_classId)) return true;
+      if(s->isInstance(storeId, _classId)) return true;
     }
     return false;
   }
 
-  AbstractClassInfo *resolve(ClassId otherClassId)
+  AbstractClassInfo *resolve(StoreId storeId, ClassId otherClassId)
   {
-    if(otherClassId == classId) {
+    if(otherClassId == data[storeId].classId) {
       return this;
     }
     for(auto res : subs) {
-      AbstractClassInfo *r = res->resolve(otherClassId);
+      AbstractClassInfo *r = res->resolve(storeId, otherClassId);
       if(r) return r;
     }
     return nullptr;
@@ -690,9 +706,9 @@ struct AbstractClassInfo {
    * @return the classinfo
    * @throw persistence_error if not found
    */
-  AbstractClassInfo *doresolve(ClassId otherClassId)
+  AbstractClassInfo *doresolve(StoreId storeId, ClassId otherClassId)
   {
-    AbstractClassInfo *resolved = resolve(otherClassId);
+    AbstractClassInfo *resolved = resolve(storeId, otherClassId);
     if(!resolved) {
       throw persistence_error("unknow classId. Class missing from registry");
     }
@@ -713,14 +729,14 @@ struct AbstractClassInfo {
     return resolved;
   }
 
-  std::vector<ClassId> allClassIds() {
+  std::vector<ClassId> allClassIds(StoreId storeId) {
     std::vector<ClassId> ids;
-    addClassIds(ids);
+    addClassIds(storeId, ids);
     return ids;
   }
-  void addClassIds(std::vector<ClassId> &ids) {
-    ids.push_back(classId);
-    for(auto &sub : subs) sub->addClassIds(ids);
+  void addClassIds(StoreId storeId, std::vector<ClassId> &ids) {
+    ids.push_back(data[storeId].classId);
+    for(auto &sub : subs) sub->addClassIds(storeId, ids);
   }
 };
 
@@ -784,29 +800,29 @@ struct SubstituteImpl : public Substitute<T> {
 } //sub
 
 /**
- * peer object for the ClassTraitsBase below which contains class metadata and references subclasses
+ * peer object for the ClassTraitsBase below which contains class metadata
  */
 template <typename T, typename ... Sup>
 struct ClassInfo : public AbstractClassInfo
 {
   T *(* const getSubstitute)();
-  size_t (* const size)(T *obj);
-  void * (* const initMember)(T *obj, const PropertyAccessBase *pa);
-  T * (* const makeObject)(ClassId classId);
-  Properties * (* const getProperties)(ClassId classId);
-  bool (* const addSize)(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  size_t (* const size)(StoreId storeId, T *obj);
+  void * (* const initMember)(StoreId storeId, T *obj, const PropertyAccessBase *pa);
+  T * (* const makeObject)(StoreId storeId, ClassId classId);
+  Properties * (* const getProperties)(StoreId storeId, ClassId classId);
+  bool (* const addSize)(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
-  bool (* const prep_delete)(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const prep_update)(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const save)(WriteTransaction *wtr,
+  bool (* const prep_delete)(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const prep_update)(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const save)(StoreId storeId, WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
-  bool (* const load)(ReadTransaction *tr, ReadBuf &buf,
+  bool (* const load)(StoreId storeId, ReadTransaction *tr, ReadBuf &buf,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
   sub::Substitute<T> *substitute = nullptr;
 
-  ClassInfo(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
-      : AbstractClassInfo(name, typeinfo, classId),
+  ClassInfo(const char *name, const std::type_info &typeinfo)
+      : AbstractClassInfo(name, typeinfo),
         getSubstitute(&ClassTraits<T>::getSubstitute),
         size(&ClassTraits<T>::size),
         initMember(&ClassTraits<T>::initMember),
@@ -827,10 +843,10 @@ struct ClassInfo : public AbstractClassInfo
   }
 
   template <typename ... Sup2>
-  static ClassInfo<T, Sup...> *subclass(const char *name, const std::type_info &typeinfo, ClassId classId=MIN_USER_CLSID)
+  static ClassInfo<T, Sup...> *subclass(const char *name, const std::type_info &typeinfo)
   {
     //create a classinfo
-    return new ClassInfo<T, Sup2...>(name, typeinfo, classId);
+    return new ClassInfo<T, Sup2...>(name, typeinfo);
   }
 
   void publish() {
@@ -839,8 +855,8 @@ struct ClassInfo : public AbstractClassInfo
   }
 };
 
-#define FIND_CLS(__Tpl, __cid) static_cast<ClassInfo<__Tpl> *>(ClassTraits<__Tpl>::traits_info->resolve(__cid))
-#define RESOLVE_SUB(__cid) static_cast<ClassInfo<T> *>(ClassTraits<T>::traits_info->doresolve(__cid))
+#define FIND_CLS(__Tpl, __sid, __cid) static_cast<ClassInfo<__Tpl> *>(ClassTraits<__Tpl>::traits_info->resolve(__sid, __cid))
+#define RESOLVE_SUB(__cid) static_cast<ClassInfo<T> *>(ClassTraits<T>::traits_info->doresolve(storeId, __cid))
 #define RESOLVE_SUB_TI(__ti) static_cast<ClassInfo<T> *>(ClassTraits<T>::traits_info->doresolve(__ti))
 
 /**
@@ -880,7 +896,7 @@ class ClassTraitsBase
   /**
    * determine the buffer size for the given object. Non-polymorpic
    */
-  static size_t size(T *obj)
+  static size_t size(StoreId storeId, T *obj)
   {
     if(traits_properties->fixedSize) return traits_properties->fixedSize;
 
@@ -890,7 +906,7 @@ class ClassTraitsBase
 
       if(!pa->enabled) continue;
 
-      addSize(obj, pa, size);
+      addSize(storeId, obj, pa, size);
     }
     return size;
   }
@@ -902,6 +918,10 @@ public:
   static Properties * traits_properties;
   static const PropertyAccessBase ** decl_props[];
   static const unsigned num_decl_props;
+
+  static inline ClassData &traits_data(StoreId storeId) {
+    return traits_info->data[storeId];
+  }
 
   /**
    * perform lazy initialization of static structures (only once).
@@ -922,22 +942,22 @@ public:
     return traits_properties->objectIdAccess<T>();
   }
 
-  static size_t bufferSize(T *obj, ClassId *clsId=nullptr)
+  static size_t bufferSize(StoreId storeId, T *obj, ClassId *clsId=nullptr)
   {
     const std::type_info &ti = typeid(*obj);
     if(ti == traits_info->typeinfo) {
-      if(clsId) *clsId = traits_info->classId;
-      return size(obj);
+      if(clsId) *clsId = traits_data(storeId).classId;
+      return size(storeId, obj);
     }
     else {
       ClassInfo<T> *sub = RESOLVE_SUB_TI(ti);
-      if(clsId) *clsId = sub->classId;
-      return sub->size(obj);
+      if(clsId) *clsId = sub->data[storeId].classId;
+      return sub->size(storeId, obj);
     }
   }
 
-  static bool needsPrepare() {
-    return !traits_info->prepareClasses.empty();
+  static bool needsPrepare(StoreId storeId) {
+    return !traits_data(storeId).prepareClasses.empty();
   }
 
   static T *getSubstitute()
@@ -952,12 +972,12 @@ public:
     return nullptr;
   }
 
-  static void * initMember(T *obj, const PropertyAccessBase *pa)
+  static void * initMember(StoreId storeId, T *obj, const PropertyAccessBase *pa)
   {
-    if(pa->classId == traits_info->classId)
-      return pa->initMember(obj);
+    if(pa->classId == traits_data(storeId).classId)
+      return pa->initMember(storeId, obj);
     else if(pa->classId)
-      return RESOLVE_SUB(pa->classId)->initMember(obj, pa);
+      return RESOLVE_SUB(pa->classId)->initMember(storeId, obj, pa);
     return nullptr;
   }
 
@@ -972,25 +992,25 @@ public:
     return nullptr;
   }
 
-  static Properties * getProperties(ClassId classId)
+  static Properties * getProperties(StoreId storeId, ClassId classId)
   {
-    if(classId == traits_info->classId)
+    if(classId == traits_data(storeId).classId)
       return traits_properties;
     else if(classId)
-      return RESOLVE_SUB(classId)->getProperties(classId);
+      return RESOLVE_SUB(classId)->getProperties(storeId, classId);
     return nullptr;
   }
 
-  static bool addSize(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool addSize(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_info->classId) {
-      size += pa->storage->size(obj, pa);
+    if(pa->classId == traits_data(storeId).classId) {
+      size += pa->storage->size(storeId, obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::addSize(obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::addSize(storeId, obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->addSize(obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->addSize(storeId, obj, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -1020,80 +1040,80 @@ public:
     return false;
   }
 
-  static size_t prepareUpdate(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa)
+  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa)
   {
     size_t size;
-    if(!prep_update(buf, obj, pa, size)) throw invalid_classid_error(pa->classId);
+    if(!prep_update(storeId, buf, obj, pa, size)) throw invalid_classid_error(pa->classId);
     return size;
   }
-  static bool prep_update(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool prep_update(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_info->classId) {
-      size = pa->storage->prepareUpdate(buf, obj, pa);
+    if(pa->classId == traits_data(storeId).classId) {
+      size = pa->storage->prepareUpdate(storeId, buf, obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::prep_update(buf, obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::prep_update(storeId, buf, obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prep_update(buf, obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->prep_update(storeId, buf, obj, pa, size, FLAG_DN);
     }
     return false;
   }
 
-  static size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa)
+  static size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa)
   {
     size_t size;
-    if(!prep_delete(tr, buf, pa, size)) throw invalid_classid_error(pa->classId);
+    if(!prep_delete(storeId, tr, buf, pa, size)) throw invalid_classid_error(pa->classId);
     return size;
   }
-  static bool prep_delete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool prep_delete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_info->classId) {
-      size = pa->storage->prepareDelete(tr, buf, pa);
+    if(pa->classId == traits_data(storeId).classId) {
+      size = pa->storage->prepareDelete(storeId, tr, buf, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::prep_delete(tr, buf, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::prep_delete(storeId, tr, buf, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prep_delete(tr, buf, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->prep_delete(storeId, tr, buf, pa, size, FLAG_DN);
     }
     return false;
   }
 
-  static bool save(WriteTransaction *wtr,
+  static bool save(StoreId storeId, WriteTransaction *tr,
                    ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_info->classId) {
-      pa->storage->save(wtr, classId, objectId, obj, pa, mode);
+    if(pa->classId == traits_data(storeId).classId) {
+      pa->storage->save(tr, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::save(wtr, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::save(storeId, tr, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->save(wtr, classId, objectId, obj, pa, mode, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->save(storeId, tr, classId, objectId, obj, pa, mode, FLAG_DN);
     }
     return false;
   }
 
-  static bool load(ReadTransaction *tr,
+  static bool load(StoreId storeId, ReadTransaction *tr,
                    ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa,
                    StoreMode mode=StoreMode::force_none, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_info->classId) {
+    if(pa->classId == traits_data(storeId).classId) {
       pa->storage->load(tr, buf, classId, objectId, obj, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::load(tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::load(storeId, tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->load(tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->load(storeId, tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
     }
     return false;
   }
 
   template <typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != traits_info->classId)
+  static void put(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
+    if(pa->classId != traits_data(storeId).classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
@@ -1105,8 +1125,8 @@ public:
    * that pa->classId == info->classId
    */
   template <typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != traits_info->classId)
+  static void get(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
+    if(pa->classId != traits_data(storeId).classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
@@ -1121,13 +1141,13 @@ template <typename T> struct ClassTraitsAbstract
 {
   static const bool isAbstract = true;
 
-  static T *makeObject(ClassId classId)
+  static T *makeObject(StoreId storeId, ClassId classId)
   {
-    if(classId == ClassTraits<T>::traits_info->classId) {
+    if(classId == ClassTraits<T>::traits_data(storeId).classId) {
       throw persistence_error("abstract class cannot be instantiated");
     }
     else if(classId)
-      return RESOLVE_SUB(classId)->makeObject(classId);
+      return RESOLVE_SUB(classId)->makeObject(storeId, classId);
     return nullptr;
   }
 };
@@ -1139,13 +1159,13 @@ template <typename T> struct ClassTraitsConcrete
 {
   static const bool isAbstract = false;
 
-  static T *makeObject(ClassId classId)
+  static T *makeObject(StoreId storeId, ClassId classId)
   {
-    if(classId == ClassTraits<T>::traits_info->classId) {
+    if(classId == ClassTraits<T>::traits_data(storeId).classId) {
       return new T();
     }
     else if(classId)
-      return RESOLVE_SUB(classId)->makeObject(classId);
+      return RESOLVE_SUB(classId)->makeObject(storeId, classId);
     return nullptr;
   }
 };
@@ -1157,13 +1177,13 @@ template <typename T, typename R> struct ClassTraitsConcreteRepl
 {
   static const bool isAbstract = false;
 
-  static T *makeObject(ClassId classId)
+  static T *makeObject(StoreId storeId, ClassId classId)
   {
-    if(classId == ClassTraits<T>::traits_info->classId) {
+    if(classId == ClassTraits<T>::traits_data(storeId).classId) {
       return new R();
     }
     else if(classId)
-      return RESOLVE_SUB(classId)->makeObject(classId);
+      return RESOLVE_SUB(classId)->makeObject(storeId, classId);
     return nullptr;
   }
 };
@@ -1180,8 +1200,12 @@ struct ClassTraits<EmptyClass>
   static const unsigned num_decl_props = 0;
   static const PropertyAccessBase ** decl_props[0];
 
-  static EmptyClass *makeObject(ClassId classId) {return nullptr;}
-  static Properties * getProperties(ClassId classId) {return nullptr;}
+  static EmptyClass *makeObject(StoreId storeId, ClassId classId) {return nullptr;}
+  static Properties * getProperties(StoreId storeId, ClassId classId) {return nullptr;}
+
+  static inline ClassData &traits_data(StoreId storeId) {
+    return traits_info->data[storeId];
+  }
 
   static void init() {}
 
@@ -1190,14 +1214,14 @@ struct ClassTraits<EmptyClass>
     return nullptr;
   }
   template <typename T>
-  static size_t bufferSize(T *obj, ClassId *cid=nullptr) {
+  static size_t bufferSize(StoreId storeId, T *obj, ClassId *cid=nullptr) {
     return 0;
   }
-  static bool needsPrepare() {
+  static bool needsPrepare(StoreId storeId) {
     return false;
   }
   template <typename T>
-  static size_t size(T *obj) {
+  static size_t size(StoreId storeId, T *obj) {
     return 0;
   }
   template <typename T>
@@ -1205,14 +1229,14 @@ struct ClassTraits<EmptyClass>
     return nullptr;
   }
   template <typename T>
-  static void * initMember(T *obj, const PropertyAccessBase *pa) {
+  static void * initMember(StoreId storeId, T *obj, const PropertyAccessBase *pa) {
     return nullptr;
   }
   static const PropertyAccessBase *getInverseAccess(const PropertyAccessBase *pa) {
     return nullptr;
   }
   template <typename T>
-  static bool addSize(T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static bool addSize(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
@@ -1223,27 +1247,27 @@ struct ClassTraits<EmptyClass>
   static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {
     return false;
   }
-  static size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
+  static size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) {
     return 0;
   }
-  static bool prep_delete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static bool prep_delete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static size_t prepareUpdate(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa) {
+  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa) {
     return 0;
   }
   template <typename T>
-  static bool prep_update(ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static bool prep_update(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static bool save(WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj,
+  static bool save(StoreId storeId, WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj,
                    const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static bool load(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
+  static bool load(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
                    const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }

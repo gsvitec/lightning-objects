@@ -9,6 +9,7 @@ namespace flexis {
 namespace persistence {
 namespace kv {
 
+using StoreId = uint16_t;
 using ClassId = uint16_t;
 using ObjectId = uint32_t;
 using PropertyId = uint16_t;

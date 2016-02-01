@@ -1055,22 +1055,22 @@ void testCompatibleDatabase(ObjectKey key)
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   //need to cleanup static data for test only
-  ClassTraits<SomethingAbstract>::traits_info->classId = 0;
+  ClassTraits<SomethingAbstract>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingAbstract>::traits_info->subs.clear();
   ClassTraits<SomethingAbstract>::traits_initialized = false;
-  ClassTraits<SomethingConcrete1>::traits_info->classId = 0;
+  ClassTraits<SomethingConcrete1>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingConcrete1>::traits_initialized = false;
-  ClassTraits<SomethingConcrete2>::traits_info->classId = 0;
+  ClassTraits<SomethingConcrete2>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingConcrete2>::traits_initialized = false;
-  ClassTraits<SomethingVirtual>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingVirtual>::traits_info->subs.clear();
   ClassTraits<SomethingVirtual>::traits_initialized = false;
-  ClassTraits<SomethingVirtual1>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual1>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingVirtual1>::traits_initialized = false;
-  ClassTraits<SomethingVirtual2>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual2>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingVirtual2>::traits_info->subs.clear();
   ClassTraits<SomethingVirtual2>::traits_initialized = false;
-  ClassTraits<SomethingVirtual3>::traits_info->classId = 0;
+  ClassTraits<SomethingVirtual3>::traits_data(kv->id).classId = 0;
   ClassTraits<SomethingVirtual3>::traits_initialized = false;
 
   kv->putSchema<SomethingAbstract, SomethingVirtual, SomethingVirtual2, Wonderful>();

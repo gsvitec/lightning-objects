@@ -79,10 +79,16 @@ class ExclusiveReadTransaction;
 class WriteTransaction;
 }
 
+static StoreId store_id_count = 0;
+
 class KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
   friend class kv::WriteTransaction;
+
+public:
+  /** 0-based id to distinguish multiple stores using the same mappings */
+  unsigned const id = store_id_count++;
 
 protected:
   virtual ~KeyValueStoreBase() {}
@@ -107,8 +113,8 @@ protected:
    * @errors (out) compatibility errors detected during check
    * @return true if the class already existed
    */
-  bool updateClassSchema(AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[], unsigned numProperties,
-                         std::vector<incompatible_schema_error::Property> &errors);
+  bool updateClassSchema(AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[],
+                         unsigned numProperties, std::vector<incompatible_schema_error::Property> &errors);
 
   /**
    * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
@@ -120,6 +126,7 @@ protected:
    * @param (out) the persistent propertyInfos. This will be empty if the class was newly declared
    */
   virtual void loadSaveClassMeta(
+      StoreId storeId,
       AbstractClassInfo *classInfo,
       const PropertyAccessBase ** currentProps[],
       unsigned numProps,
@@ -156,12 +163,14 @@ namespace put_schema {
 
 struct validate_info {
   AbstractClassInfo * const classInfo;
+  ClassData * const cdata;
   const PropertyAccessBase *** const decl_props;
   Properties * const properties;
   const unsigned num_decl_props;
 
-  validate_info(AbstractClassInfo *classInfo, Properties *properties, const PropertyAccessBase ** decl_props[], unsigned num_decl_props)
-      : classInfo(classInfo), properties(properties), decl_props(decl_props), num_decl_props(num_decl_props) {}
+  validate_info(AbstractClassInfo *classInfo, ClassData *cdata, Properties *properties, const PropertyAccessBase ** decl_props[],
+                unsigned num_decl_props)
+      : classInfo(classInfo), cdata(cdata), properties(properties), decl_props(decl_props), num_decl_props(num_decl_props) {}
 };
 
 //primary template
@@ -174,11 +183,12 @@ struct register_type<S>
 {
   using Traits = ClassTraits<S>;
 
-  static void addTypes(std::vector<validate_info> &vinfos)
+  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos)
   {
     //collect infos
     vinfos.push_back(
-        validate_info(Traits::traits_info, Traits::traits_properties, Traits::decl_props, Traits::num_decl_props));
+        validate_info(Traits::traits_info, &Traits::traits_data(storeId), Traits::traits_properties,
+                      Traits::decl_props, Traits::num_decl_props));
 
     Traits::init();
   }
@@ -188,17 +198,17 @@ struct register_type<S>
 template<typename S, typename... Sargs>
 struct register_helper
 {
-  static void addTypes(std::vector<validate_info> &vinfos) {
-    register_type<S>().addTypes(vinfos);
-    register_type<Sargs...>().addTypes(vinfos);
+  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos) {
+    register_type<S>().addTypes(storeId, vinfos);
+    register_type<Sargs...>().addTypes(storeId, vinfos);
   }
 };
 
 //secondary template
 template<typename... Sargs>
 struct register_type {
-  static void addTypes(std::vector<validate_info> &vinfos) {
-    register_helper<Sargs...>().addTypes(vinfos);
+  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos) {
+    register_helper<Sargs...>().addTypes(storeId, vinfos);
   }
 };
 
@@ -214,8 +224,6 @@ class KeyValueStore : public KeyValueStoreBase
   friend class kv::ExclusiveReadTransaction;
   friend class kv::WriteTransaction;
 
-  ClassId minAbstractClassId = UINT32_MAX;
-
   //backward mapping from ClassId, used during polymorphic operations
   ObjectProperties objectProperties;
   ObjectClassInfos objectClassInfos;
@@ -227,7 +235,6 @@ protected:
   ObjectId m_maxCollectionId = 0;
 
 public:
-
   /**
    * register and validate the class schema for this store
    * @param throwIfIncompatible if true (default), throw an incompatible_schema_error if any schema incompatibility
@@ -237,7 +244,7 @@ public:
   void putSchema(bool throwIfIncompatible=true)
   {
     std::vector<put_schema::validate_info> vinfos;
-    put_schema::register_type<Cls...>::addTypes(vinfos);
+    put_schema::register_type<Cls...>::addTypes(id, vinfos);
 
     //first process individual classes
     for(auto &info : vinfos) {
@@ -249,12 +256,12 @@ public:
 
       //make sure all propertyaccessors have correct classId
       for(int i=0; i<info.num_decl_props; i++)
-        const_cast<PropertyAccessBase *>(*info.decl_props[i])->classId = info.classInfo->classId;
+        const_cast<PropertyAccessBase *>(*info.decl_props[i])->classId = info.classInfo->data[id].classId;
 
       //initialize lookup maps
-      objectProperties[info.classInfo->classId] = info.properties;
-      objectClassInfos[info.classInfo->classId] = info.classInfo;
-      objectTypeInfos[info.classInfo->typeinfo] = info.classInfo->classId;
+      objectProperties[info.classInfo->data[id].classId] = info.properties;
+      objectClassInfos[info.classInfo->data[id].classId] = info.classInfo;
+      objectTypeInfos[info.classInfo->typeinfo] = info.classInfo->data[id].classId;
     }
   }
 
@@ -265,14 +272,14 @@ public:
    */
   template <typename T> void setRefCounting(bool refcount=true)
   {
-    ClassTraits<T>::traits_info->setRefCounting(refcount);
-    ClassId cid = ClassTraits<T>::traits_info->classId;
+    ClassTraits<T>::traits_info->setRefCounting(id, refcount);
+    ClassId cid = ClassTraits<T>::traits_data(id).classId;
     for(auto &op : objectProperties) {
-      if(op.first != cid && op.second->preparesUpdates(cid)) {
+      if(op.first != cid && op.second->preparesUpdates(id, cid)) {
         if(refcount)
-          objectClassInfos[op.first]->prepareClasses.insert(cid);
+          objectClassInfos[op.first]->data[id].prepareClasses.insert(cid);
         else
-          objectClassInfos[op.first]->prepareClasses.erase(cid);
+          objectClassInfos[op.first]->data[id].prepareClasses.erase(cid);
       }
     }
   }
@@ -329,23 +336,23 @@ bool all_predicate(std::shared_ptr<T> t=nullptr) {return true;}
 /**
  * read object data polymorphically
  */
-template<typename T> void readObject(ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj)
+template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj)
 {
-  Properties *props = ClassTraits<T>::getProperties(classId);
+  Properties *props = ClassTraits<T>::getProperties(storeId, classId);
   if(!props) throw persistence_error("unknown classId. Class not registered");
 
   for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
     const PropertyAccessBase *p = props->get(px);
     if(!p->enabled) continue;
 
-    ClassTraits<T>::load(tr, buf, classId, objectId, obj, p);
+    ClassTraits<T>::load(storeId, tr, buf, classId, objectId, obj, p);
   }
 }
 
 /**
  * read object data non-polymorphically
  */
-template<typename T> void readObject(ReadTransaction *tr, ReadBuf &buf, T &obj,
+template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, T &obj,
                                      ClassId classId, ObjectId objectId, StoreMode mode = StoreMode::force_none)
 {
   Properties *props = ClassTraits<T>::traits_properties;
@@ -354,7 +361,7 @@ template<typename T> void readObject(ReadTransaction *tr, ReadBuf &buf, T &obj,
     const PropertyAccessBase *p = props->get(px);
     if(!p->enabled) continue;
 
-    ClassTraits<T>::load(tr, buf, classId, objectId, &obj, p, mode);
+    ClassTraits<T>::load(storeId, tr, buf, classId, objectId, &obj, p, mode);
   }
 }
 
@@ -371,7 +378,7 @@ public:
   template <typename O>
   static void assign(KeyValueStore &store, O &o, const PropertyAccessBase *pa, ObjectId objectId)
   {
-    void * ib = ClassTraits<O>::initMember(&o, pa);
+    void * ib = ClassTraits<O>::initMember(store.id, &o, pa);
     if(!ib) throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
 
     //bad luck if pa->storage was not an CollectionIterPropertyStorage
@@ -580,6 +587,7 @@ class CollectionCursorBase
 protected:
   ChunkCursor::Ptr m_chunkCursor;
   ReadTransaction * const m_tr;
+  const unsigned m_storeId;
   const ObjectId m_collectionId;
 
   ReadBuf m_readBuf;
@@ -606,7 +614,7 @@ protected:
   {
     if(!read_integer<byte_t>(m_readBuf.data() + ObjectHeader_sz - 1, 1)) { //check deleted flag
       ClassId cid = read_integer<ClassId>(m_readBuf.cur(), ClassId_sz);
-      m_curClassInfo = FIND_CLS(T, cid);
+      m_curClassInfo = FIND_CLS(T, m_storeId, cid);
 
       return m_curClassInfo != nullptr || ClassTraits<T>::traits_info->substitute != nullptr;
     }
@@ -616,8 +624,8 @@ protected:
 public:
   using Ptr = std::shared_ptr<ObjectCollectionCursor<T>>;
 
-  ObjectCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
-      : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::traits_info->classId)
+  ObjectCollectionCursor(StoreId storeId, ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+      : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::traits_data(storeId).classId)
   {
     if(!isValid()) next();
   }
@@ -629,13 +637,13 @@ public:
     readObjectHeader(m_readBuf, &classId, &objectId);
 
     if(m_curClassInfo) {
-      T *tp = m_curClassInfo->makeObject(classId);
-      readObject<T>(m_tr, m_readBuf, classId, objectId, tp);
+      T *tp = m_curClassInfo->makeObject(m_storeId, classId);
+      readObject<T>(m_storeId, m_tr, m_readBuf, classId, objectId, tp);
       return tp;
     }
     else {
       T *sp = ClassTraits<T>::getSubstitute();
-      readObject<T>(m_tr, m_readBuf, *sp, classId, objectId);
+      readObject<T>(m_storeId, m_tr, m_readBuf, *sp, classId, objectId);
       return sp;
     }
   }
@@ -671,19 +679,20 @@ class ClassCursor
   ClassCursor(ClassCursor<T> &other) = delete;
 
   CursorHelper * const m_helper;
+  unsigned const m_storeId;
   ReadTransaction * const m_tr;
   bool m_hasData;
   ClassInfo<T> *m_classInfo;
 
   bool validateClass() {
-    m_classInfo = FIND_CLS(T, m_helper->currentClassId());
+    m_classInfo = FIND_CLS(T, m_storeId, m_helper->currentClassId());
     return m_classInfo != nullptr || ClassTraits<T>::traits_info->substitute != nullptr;
   }
 
 public:
   using Ptr = std::shared_ptr<ClassCursor<T>>;
 
-  ClassCursor(CursorHelper *helper, ReadTransaction *tr) : m_helper(helper), m_tr(tr)
+  ClassCursor(CursorHelper *helper, StoreId storeId, ReadTransaction *tr) : m_helper(helper), m_storeId(storeId), m_tr(tr)
   {
     bool hasData = helper->start();
     bool clsFound = validateClass();
@@ -716,8 +725,8 @@ public:
 
     using Traits = ClassTraits<T>;
 
-    if(Traits::needsPrepare()) {
-      Properties *props = Traits::getProperties(key.classId);
+    if(Traits::needsPrepare(m_storeId)) {
+      Properties *props = Traits::getProperties(m_storeId, key.classId);
       ObjectBuf obuf(readBuf.data(), readBuf.size());
 
       for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
@@ -726,7 +735,7 @@ public:
         if(!pa->enabled) continue;
 
         obuf.mark();
-        size_t psz = ClassTraits<T>::prepareDelete(tr.get(), obuf, pa);
+        size_t psz = ClassTraits<T>::prepareDelete(m_storeId, tr.get(), obuf, pa);
         obuf.unmark(psz);
       }
     }
@@ -778,7 +787,7 @@ public:
         return;
       }
       objectBuf.mark();
-      size_t psz = pa->storage->size(objectBuf);
+      size_t psz = pa->storage->size(m_storeId, objectBuf);
       objectBuf.unmark(psz);
     }
   }
@@ -797,13 +806,13 @@ public:
     if(readBuf.null()) return nullptr;
 
     if(m_classInfo) {
-      T *obj = m_classInfo->makeObject(key.classId);
-      readObject<T>(m_tr, readBuf, key.classId, key.objectId, obj);
+      T *obj = m_classInfo->makeObject(m_storeId, key.classId);
+      readObject<T>(m_storeId, m_tr, readBuf, key.classId, key.objectId, obj);
       return obj;
     }
     else {
       T *sp = ClassTraits<T>::getSubstitute();
-      readObject<T>(m_tr, readBuf, *sp, key.classId, key.objectId);
+      readObject<T>(m_storeId, m_tr, readBuf, *sp, key.classId, key.objectId);
       return sp;
     }
   }
@@ -865,6 +874,7 @@ public:
  */
 class ReadTransaction
 {
+  template<typename T, typename V> friend class BasePropertyStorage;
   template<typename T, typename V> friend class ValueVectorPropertyStorage;
   template<typename T, typename V> friend class ValueSetPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
@@ -878,6 +888,8 @@ class ReadTransaction
   template<typename T, typename V, typename KVIter, typename Iter> friend struct CollectionIterPropertyStorage;
   template<typename V> friend class AbstractObjectVectorStorage;
   friend class CollectionCursorBase;
+  template<typename T> friend class ObjectIdStorage;
+  template <typename T> friend class ObjectCollectionCursor;
   template <typename T> friend class ClassCursor;
   friend class CollectionAppenderBase;
   friend class ObjectBuf;
@@ -910,7 +922,7 @@ protected:
 
     if(readBuf.null()) return false;
 
-    readObject<T>(this, readBuf, classId, objectId, &obj);
+    readObject<T>(store.id, this, readBuf, classId, objectId, &obj);
 
     return true;
   }
@@ -925,12 +937,12 @@ protected:
   template<typename T> T *loadObject(ObjectKey &key)
   {
     ReadBuf readBuf;
-    getData(readBuf, key, ClassTraits<T>::traits_info->refcounting);
+    getData(readBuf, key, ClassTraits<T>::traits_data(store.id).refcounting);
 
     if(readBuf.null()) return nullptr;
 
-    T *obj = ClassTraits<T>::makeObject(key.classId);
-    readObject<T>(this, readBuf, key.classId, key.objectId, obj);
+    T *obj = ClassTraits<T>::makeObject(store.id, key.classId);
+    readObject<T>(store.id, this, readBuf, key.classId, key.objectId, obj);
 
     return obj;
   }
@@ -952,7 +964,7 @@ protected:
 
     if(readBuf.null()) return false;
 
-    readObject<T>(this, readBuf, subst, missingClassId, objectId);
+    readObject<T>(store.id, this, readBuf, subst, missingClassId, objectId);
     return true;
   }
 
@@ -977,17 +989,17 @@ protected:
         readObjectHeader(buf, &cid, &oid, nullptr, &deleted);
 
         if(!deleted) {
-          ClassInfo<T> *ti = FIND_CLS(T, cid);
+          ClassInfo<T> *ti = FIND_CLS(T, store.id, cid);
           if(!ti) {
             T *sp = ClassTraits<T>::getSubstitute();
             if(sp) {
-              readObject<T>(this, buf, *sp, cid, oid);
+              readObject<T>(store.id, this, buf, *sp, cid, oid);
               result.push_back(std::shared_ptr<T>(sp));
             }
           }
           else {
-            T *obj = ti->makeObject(cid);
-            readObject<T>(this, buf, cid, oid, obj);
+            T *obj = ti->makeObject(store.id, cid);
+            readObject<T>(store.id, this, buf, cid, oid, obj);
             result.push_back(std::shared_ptr<T>(obj));
           }
         }
@@ -1037,6 +1049,8 @@ protected:
 public:
   virtual ~ReadTransaction();
 
+  StoreId storeId() {return store.id;}
+
   /**
    * load an object from the KV store using the key generated by a previous call to WriteTransaction::putObject().
    * Non-polymorphical, T must be the exact type of the object. The object is allocated on the heap.
@@ -1047,12 +1061,12 @@ public:
   template<typename T> T *getObject(ObjectKey &key)
   {
     ReadBuf readBuf;
-    getData(readBuf, key, ClassTraits<T>::traits_info->refcounting);
+    getData(readBuf, key, ClassTraits<T>::traits_data(store.id).refcounting);
 
     if(readBuf.null()) return nullptr;
 
     T *tp = new T();
-    readObject<T>(this, readBuf, *tp, key.classId, key.objectId);
+    readObject<T>(store.id, this, readBuf, *tp, key.classId, key.objectId);
 
     return tp;
   }
@@ -1066,7 +1080,7 @@ public:
    */
   template<typename T> std::shared_ptr<T> getObject(ObjectId objectId)
   {
-    object_handler<T> handler(ClassTraits<T>::traits_info->classId, objectId);
+    object_handler<T> handler(ClassTraits<T>::traits_data(store.id).classId, objectId);
     T *t = loadObject<T>(handler);
     return std::shared_ptr<T>(t, handler);
   }
@@ -1090,9 +1104,9 @@ public:
    */
   template <typename T> typename ClassCursor<T>::Ptr openCursor() {
     using Traits = ClassTraits<T>;
-    std::vector<ClassId> classIds = Traits::traits_info->allClassIds();
+    std::vector<ClassId> classIds = Traits::traits_info->allClassIds(store.id);
 
-    return typename ClassCursor<T>::Ptr(new ClassCursor<T>(_openCursor(classIds), this));
+    return typename ClassCursor<T>::Ptr(new ClassCursor<T>(_openCursor(classIds), store.id, this));
   }
 
   /**
@@ -1102,9 +1116,9 @@ public:
    * given property is not vector-valued
    */
   template <typename T, typename V> typename ClassCursor<V>::Ptr openCursor(ObjectId objectId, PropertyId propertyId) {
-    ClassId t_classId = ClassTraits<T>::traits_info->classId;
+    ClassId t_classId = ClassTraits<T>::traits_data(store.id).classId;
 
-    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(t_classId, objectId, propertyId), this));
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(t_classId, objectId, propertyId), store.id, this));
   }
 
   /**
@@ -1114,10 +1128,10 @@ public:
    * given property is not vector-valued
    */
   template <typename T, typename V> typename ClassCursor<V>::Ptr openCursor(std::shared_ptr<T> obj, PropertyId propertyId) {
-    ClassId cid = ClassTraits<T>::traits_info->classId;
+    ClassId cid = ClassTraits<T>::traits_data(store.id).classId;
     ObjectId oid = ClassTraits<T>::getObjectKey(obj)->objectId;
 
-    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(cid, oid, propertyId), this));
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(cid, oid, propertyId), store.id, this));
   }
 
   /**
@@ -1126,7 +1140,7 @@ public:
    */
   template <typename V> typename ObjectCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
     return typename ObjectCollectionCursor<V>::Ptr(
-        new ObjectCollectionCursor<V>( collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId)));
+        new ObjectCollectionCursor<V>(store.id, collectionId, this, _openChunkCursor(COLLECTION_CLSID, collectionId)));
   }
 
   /**
@@ -1183,7 +1197,7 @@ public:
       object_handler<V> hdl;
       buf.read(hdl);
 
-      ClassInfo<V> *vi = FIND_CLS(V, hdl.classId);
+      ClassInfo<V> *vi = FIND_CLS(V, store.id, hdl.classId);
       if(!vi) {
         V *vp = ClassTraits<V>::getSubstitute();
         if(vp) {
@@ -1266,7 +1280,7 @@ public:
     using Traits = ClassTraits<T>;
 
     ReadBuf rb;
-    ClassTraits<T>::load(this, rb, Traits::traits_info->classId, objId, &obj, pa, StoreMode::force_all);
+    ClassTraits<T>::load(store.id, this, rb, Traits::traits_data(store.id).classId, objId, &obj, pa, StoreMode::force_all);
   }
 
   /**
@@ -1285,7 +1299,7 @@ public:
     ObjectId objId = ClassTraits<T>::getObjectId(obj);
 
     ReadBuf rb;
-    ClassTraits<T>::load(this, rb, Traits::traits_info->classId, objId, &obj, pa, StoreMode::force_all);
+    ClassTraits<T>::load(store.id, this, rb, Traits::traits_data(store.id).classId, objId, &obj, pa, StoreMode::force_all);
   }
 
   ClassId getClassId(const std::type_info &ti) {
@@ -1352,7 +1366,7 @@ class CollectionAppenderBase
 protected:
   CollectionInfo *m_collectionInfo;
   const size_t m_chunkSize;
-  WriteTransaction * const m_wtxn;
+  WriteTransaction * const m_tr;
 
   WriteBuf &m_writeBuf;
   size_t m_elementCount;
@@ -1369,7 +1383,7 @@ public:
  * an individual key
  */
 template<typename T>
-static size_t calculateBuffer(T *obj, Properties *properties)
+static size_t calculateBuffer(StoreId storeId, T *obj, Properties *properties)
 {
   if(properties->fixedSize) return properties->fixedSize;
 
@@ -1380,7 +1394,7 @@ static size_t calculateBuffer(T *obj, Properties *properties)
     if(!pa->enabled) continue;
 
     //calculate variable size
-    ClassTraits<T>::addSize(obj, pa, size);
+    ClassTraits<T>::addSize(storeId, obj, pa, size);
   }
   return size;
 }
@@ -1440,9 +1454,9 @@ protected:
   bool removeObject(ClassId classId, ObjectId objectId)
   {
     using Traits = ClassTraits<T>;
-    Properties *props = Traits::getProperties(classId);
+    Properties *props = Traits::getProperties(store.id, classId);
 
-    if(Traits::needsPrepare()) {
+    if(Traits::needsPrepare(store.id)) {
       ObjectBuf prepBuf(this, classId, objectId, true);
       if(!prepBuf.null()) {
         for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
@@ -1451,7 +1465,7 @@ protected:
           if(!pa->enabled) continue;
 
           prepBuf.mark();
-          size_t psz = ClassTraits<T>::prepareDelete(this, prepBuf, pa);
+          size_t psz = ClassTraits<T>::prepareDelete(store.id, this, prepBuf, pa);
           prepBuf.unmark(psz);
         }
         //now remove the object proper
@@ -1481,7 +1495,7 @@ protected:
       const PropertyAccessBase *pa = properties->get(px);
       if(!pa->enabled) continue;
 
-      ClassTraits<T>::save(this, classId, objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_none);
+      ClassTraits<T>::save(store.id, this, classId, objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_none);
     }
   }
 
@@ -1496,7 +1510,7 @@ protected:
       if(!pa->enabled) continue;
 
       prepBuf.mark();
-      size_t psz = ClassTraits<T>::prepareUpdate(prepBuf, obj, pa);
+      size_t psz = ClassTraits<T>::prepareUpdate(store.id, prepBuf, obj, pa);
       prepBuf.unmark(psz);
     }
   }
@@ -1511,16 +1525,16 @@ protected:
   template <typename T>
   ObjectId saveValueObject(ObjectId objectId, T &obj, bool shallow=false)
   {
-    auto classInfo = ClassTraits<T>::traits_info;
+    auto &cdata = ClassTraits<T>::traits_data(store.id);
     Properties *properties = ClassTraits<T>::traits_properties;
 
-    size_t size = calculateBuffer(&obj, properties);
-    if(!objectId) objectId = ++classInfo->maxObjectId;
+    size_t size = calculateBuffer(store.id, &obj, properties);
+    if(!objectId) objectId = ++cdata.maxObjectId;
 
     writeBuf().start(size);
-    writeObject(classInfo->classId, objectId, obj, properties, shallow);
+    writeObject(cdata.classId, objectId, obj, properties, shallow);
 
-    if(!putData(classInfo->classId, objectId, 0, writeBuf()))
+    if(!putData(cdata.classId, objectId, 0, writeBuf()))
       throw persistence_error("data was not saved");
 
     writeBuf().reset();
@@ -1551,28 +1565,28 @@ protected:
         AbstractClassInfo *classInfo = store.objectClassInfos.at(key.classId);
         if(!classInfo) throw persistence_error("class not registered");
 
-        if(setRefcount && classInfo->refcounting) key.refcount =  1;
+        if(setRefcount && classInfo->data[store.id].refcounting) key.refcount =  1;
 
-        key.objectId = ++classInfo->maxObjectId;
+        key.objectId = ++classInfo->data[store.id].maxObjectId;
         properties = store.objectProperties[key.classId];
       }
       else {
-        key.classId = Traits::traits_info->classId;
-        key.objectId = ++Traits::traits_info->maxObjectId;
-        if(setRefcount && Traits::traits_info->refcounting) key.refcount =  1;
+        key.classId = Traits::traits_data(store.id).classId;
+        key.objectId = ++Traits::traits_data(store.id).maxObjectId;
+        if(setRefcount && Traits::traits_data(store.id).refcounting) key.refcount =  1;
         properties = Traits::traits_properties;
       }
     }
     else {
       properties = poly ? store.objectProperties[key.classId] : Traits::traits_properties;
-      if(Traits::needsPrepare()) prepareUpdate(key, &obj, properties);
+      if(Traits::needsPrepare(store.id)) prepareUpdate(key, &obj, properties);
     }
 
     if(pa && shallow)
-      Traits::save(this, key.classId, key.objectId, &obj, pa, StoreMode::force_property);
+      Traits::save(store.id, this, key.classId, key.objectId, &obj, pa, StoreMode::force_property);
 
     //create the data buffer
-    size = calculateBuffer(&obj, properties);
+    size = calculateBuffer(store.id, &obj, properties);
     writeBuf().start(size);
     writeObject(key.classId, key.objectId, obj, properties, shallow);
 
@@ -1616,9 +1630,9 @@ protected:
       ClassId classId = getClassId(typeid(*vect[i]));
       Properties *properties = store.objectProperties[classId];
       AbstractClassInfo *classInfo = store.objectClassInfos[classId];
-      ObjectId objectId = ++classInfo->maxObjectId;
+      ObjectId objectId = ++classInfo->data[store.id].maxObjectId;
 
-      size_t sz = calculateBuffer(&(*vect[i]), properties) + ObjectHeader_sz;
+      size_t sz = calculateBuffer(store.id, &(*vect[i]), properties) + ObjectHeader_sz;
       helpers[i].set(classId, objectId, sz, properties);
       chunkSize += sz;
     }
@@ -1657,7 +1671,7 @@ protected:
       size_t *sizes = new size_t[vect.size()];
 
       for(size_t i=0, vectSize = vect.size(); i<vectSize; i++) {
-        sizes[i] = calculateBuffer(&(*vect[i]), ClassTraits<T>::traits_properties) + ObjectHeader_sz;
+        sizes[i] = calculateBuffer(store.id, &(*vect[i]), ClassTraits<T>::traits_properties) + ObjectHeader_sz;
         chunkSize += sizes[i];
       }
       startChunk(collectionInfo, chunkSize, vect.size());
@@ -1665,9 +1679,9 @@ protected:
       for(size_t i=0, vectSize = vect.size(); i<vectSize; i++) {
         using Traits = ClassTraits<T>;
 
-        AbstractClassInfo *classInfo = Traits::traits_info;
-        ClassId classId = classInfo->classId;
-        ObjectId objectId = ++classInfo->maxObjectId;
+        ClassData &cdata = Traits::traits_data(store.id);
+        ClassId classId = cdata.classId;
+        ObjectId objectId = ++cdata.maxObjectId;
 
         size_t size = sizes[i];
         writeObjectHeader(classId, objectId, size);
@@ -1831,7 +1845,7 @@ public:
     switch(pa->storage->layout) {
       case StoreLayout::property:
         //property goes to a separate key, no need to touch the object buffer
-        ClassTraits<T>::save(this, key.classId, key.objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
+        ClassTraits<T>::save(store.id, this, key.classId, key.objectId, &obj, pa, shallow ? StoreMode::force_buffer : StoreMode::force_all);
         break;
       case StoreLayout::embedded_key:
         //save property value and shallow buffer
@@ -1920,7 +1934,7 @@ public:
         for(size_t i=0; i<sz; i++) {
           ObjectKey key;
           buf.read(key);
-          uint16_t refcount = ClassTraits<V>::traits_info->refcounting ?
+          uint16_t refcount = ClassTraits<V>::traits_data(store.id).refcounting ?
                               decrementRefCount(key.classId, key.objectId) : uint16_t(0);
 
           if(refcount <= 1) removeObject<V>(key.classId, key.objectId);
@@ -2146,6 +2160,7 @@ public:
   class ObjectCollectionAppender : public CollectionAppenderBase
   {
     const bool m_poly;
+
     ObjectClassInfos * const m_objectClassInfos;
     ObjectProperties * const m_objectProperties;
 
@@ -2157,23 +2172,23 @@ public:
 
       Properties *properties;
       if(m_poly) {
-        cid = m_wtxn->getClassId(typeid(obj));
+        cid = m_tr->getClassId(typeid(obj));
 
         AbstractClassInfo *classInfo = m_objectClassInfos->at(cid);
-        oid = ++classInfo->maxObjectId;
+        oid = ++classInfo->data[m_tr->store.id].maxObjectId;
         properties = m_objectProperties->at(cid);
       }
       else {
-        cid = ClassTraits<T>::traits_info->classId;
-        oid = ++ClassTraits<T>::traits_info->maxObjectId;
+        cid = ClassTraits<T>::traits_data(m_tr->store.id).classId;
+        oid = ++ClassTraits<T>::traits_data(m_tr->store.id).maxObjectId;
         properties = ClassTraits<T>::traits_properties;
       }
-      size_t size = calculateBuffer(&obj, properties) + ObjectHeader_sz;
+      size_t size = calculateBuffer(m_tr->store.id, &obj, properties) + ObjectHeader_sz;
 
       if(m_writeBuf.avail() < size) startChunk(size);
 
-      m_wtxn->writeObjectHeader(cid, oid, size);
-      m_wtxn->writeObject(cid, oid, obj, properties, false);
+      m_tr->writeObjectHeader(cid, oid, size);
+      m_tr->writeObject(cid, oid, obj, properties, false);
 
       m_elementCount++;
     }
@@ -2306,18 +2321,18 @@ struct BasePropertyStorage : public StoreAccessBase
 {
   BasePropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, TypeTraits<V>::byteSize) {}
 
-  size_t size(ObjectBuf &buf) const override
+  size_t size(StoreId storeId, ObjectBuf &buf) const override
   {
     if(TypeTraits<V>::byteSize) return TypeTraits<V>::byteSize;
     return ValueTraits<V>::size(buf.readBuf);
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override
   {
     if(TypeTraits<V>::byteSize) return TypeTraits<V>::byteSize;
 
     V val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
     return ValueTraits<V>::size(val);
   }
   void save(WriteTransaction *tr,
@@ -2325,7 +2340,7 @@ struct BasePropertyStorage : public StoreAccessBase
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<V>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
@@ -2334,7 +2349,7 @@ struct BasePropertyStorage : public StoreAccessBase
     V val;
     T *tp = reinterpret_cast<T *>(obj);
     ValueTraits<V>::getBytes(buf, val);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -2349,7 +2364,7 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
   size_t size(const byte_t *buf) const override {
     return strlen(buf)+1;
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(*tp, pa, val);
@@ -2379,13 +2394,13 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
 template<typename T>
 struct BasePropertyStorage<T, std::string> : public StoreAccessBase
 {
-  size_t size(ObjectBuf &buf) const override {
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {
     return buf.strlen()+1;
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
     return val.length() + 1;
   }
   void save(WriteTransaction *tr,
@@ -2393,7 +2408,7 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
   {
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<std::string>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
@@ -2402,7 +2417,7 @@ struct BasePropertyStorage<T, std::string> : public StoreAccessBase
     std::string val;
     T *tp = reinterpret_cast<T *>(obj);
     ValueTraits<std::string>::getBytes(buf, val);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -2415,8 +2430,8 @@ struct ObjectIdStorage : public StoreAccessBase
 {
   ObjectIdStorage() : StoreAccessBase(StoreLayout::none) {}
 
-  size_t size(ObjectBuf &buf) const override {return 0;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return 0;}
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {return 0;}
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return 0;}
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2427,7 +2442,7 @@ struct ObjectIdStorage : public StoreAccessBase
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, objectId);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, objectId);
   }
 };
 
@@ -2443,7 +2458,7 @@ struct ValueVectorPropertyStorage : public StoreAccessPropertyKey
   {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     size_t psz = 0;
     for(auto &v : val) psz += ValueTraits<V>::size(v);
@@ -2470,7 +2485,7 @@ struct ValueVectorPropertyStorage : public StoreAccessPropertyKey
       val.push_back(v);
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -2531,9 +2546,9 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
-    ClassId childClassId  = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId  = ClassTraits<V>::traits_data(tr->store.id).classId;
     auto ida = ClassTraits<V>::objectIdAccess();
 
     //save the value object
@@ -2554,7 +2569,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     V v;
     tr->loadObject<V>(cid, oid, v);
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, v);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, v);
   }
 };
 
@@ -2574,26 +2589,26 @@ template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public S
 
   ObjectPropertyStorageEmbedded() : StoreAccessBase(StoreLayout::all_embedded) {}
 
-  size_t size(ObjectBuf &buf) const override {return buf.readInteger<unsigned>(4);}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {return buf.readInteger<unsigned>(4);}
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
     if(sz)  return sz + 4;
 
     V v;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, v);
-    return calculateBuffer(&v, ClassTraits<V>::traits_properties) + 4;
+    ClassTraits<T>::put(storeId, *tp, pa, v);
+    return calculateBuffer(storeId, &v, ClassTraits<V>::traits_properties) + 4;
   }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     V val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
-    if(!sz) sz = calculateBuffer(&val, ClassTraits<V>::traits_properties);
+    if(!sz) sz = calculateBuffer(tr->store.id, &val, ClassTraits<V>::traits_properties);
 
     tr->writeBuf().appendInteger(sz, 4);
     tr->writeObject(childClassId, 1, val, ClassTraits<V>::traits_properties, true);
@@ -2601,14 +2616,14 @@ template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public S
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
 
     V v;
     buf.readInteger<unsigned>(4);
-    readObject(tr, buf, v, childClassId, 1);
+    readObject(tr->store.id, tr, buf, v, childClassId, 1);
 
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, v);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, v);
   }
 };
 
@@ -2626,25 +2641,25 @@ protected:
 public:
   ObjectPtrPropertyStorage(bool lazy=false) : m_lazy(lazy) {}
 
-  bool preparesUpdates(ClassId classId) override
+  bool preparesUpdates(StoreId storeId, ClassId classId) override
   {
-    return ClassTraits<V>::traits_info->hasClassId(classId);
+    return ClassTraits<V>::traits_info->hasClassId(storeId, classId);
   }
-  size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
+  size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
-    if(ClassTraits<V>::traits_info->refcounting) {
+    if(ClassTraits<V>::traits_data(storeId).refcounting) {
       //read pre-update state
       buf.read(prepCid, prepOid);
     }
-    return size(buf);
+    return size(storeId, buf);
   }
-  size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override {
-    if(ClassTraits<V>::traits_info->refcounting) {
+  size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override {
+    if(ClassTraits<V>::traits_data(storeId).refcounting) {
       ClassId cid; ObjectId oid;
       buf.read(cid, oid);
       if(cid && oid && tr->decrementRefCount(cid, oid) == 0) tr->removeObject<V>(cid, oid);
     }
-    return size(buf);
+    return size(storeId, buf);
   }
 
   void save(WriteTransaction *tr,
@@ -2652,9 +2667,9 @@ public:
   {
     std::shared_ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
-    bool refcount = ClassTraits<V>::traits_info->refcounting;
+    bool refcount = ClassTraits<V>::traits_data(tr->store.id).refcounting;
     if(val) {
       //save the pointed-to object
       ObjectKey *childKey = ClassTraits<V>::getObjectKey(val);
@@ -2695,7 +2710,7 @@ public:
     buf.read(handler);
 
     std::shared_ptr<V> vp;
-    ClassInfo<V> *vi = FIND_CLS(V, handler.classId);
+    ClassInfo<V> *vi = FIND_CLS(V, tr->store.id, handler.classId);
     if(!vi) {
       V *v = ClassTraits<V>::getSubstitute();
       if(v) {
@@ -2708,7 +2723,7 @@ public:
       vp = std::shared_ptr<V>(v, handler);
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, vp);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, vp);
   }
 };
 
@@ -2719,32 +2734,32 @@ public:
  */
 template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : public StoreAccessBase
 {
-  size_t size(ObjectBuf &buf) const override {
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {
     buf.read(ClassId_sz);
     unsigned objSize = buf.readInteger<unsigned>(4);
     return ClassId_sz + 4 + objSize;
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     std::shared_ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
 
-    return ClassTraits<V>::bufferSize(&(*val)) + ClassId_sz + 4;
+    return ClassTraits<V>::bufferSize(storeId, &(*val)) + ClassId_sz + 4;
   }
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::shared_ptr<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     ClassId childClassId = 0;
-    size_t sz = val ? ClassTraits<V>::bufferSize(&(*val), &childClassId) : 0;
+    size_t sz = val ? ClassTraits<V>::bufferSize(tr->store.id, &(*val), &childClassId) : 0;
 
     tr->writeBuf().appendInteger(childClassId, ClassId_sz);
     tr->writeBuf().appendInteger(sz, 4);
 
-    if(val) tr->writeObject(childClassId, 1, *val, ClassTraits<V>::getProperties(childClassId), true);
+    if(val) tr->writeObject(childClassId, 1, *val, ClassTraits<V>::getProperties(tr->store.id, childClassId), true);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2753,23 +2768,23 @@ template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : publi
     ClassId childClassId = buf.readInteger<ClassId>(ClassId_sz);
     unsigned sz = buf.readInteger<unsigned>(4);
     if(sz) {
-      ClassInfo<V> *vi = FIND_CLS(V, childClassId);
+      ClassInfo<V> *vi = FIND_CLS(V, tr->store.id, childClassId);
       if(!vi) {
         buf.mark();
         V *vp = ClassTraits<V>::getSubstitute();
         if(vp) {
-          readObject<V>(tr, buf, *vp, childClassId, 1, StoreMode::force_buffer);
+          readObject<V>(tr->store.id, tr, buf, *vp, childClassId, 1, StoreMode::force_buffer);
           val.reset(vp);
         }
         buf.unmark(sz);
       }
       else {
-        V *vp = vi->makeObject(childClassId);
-        readObject<V>(tr, buf, childClassId, 1, vp);
+        V *vp = vi->makeObject(tr->store.id, childClassId);
+        readObject<V>(tr->store.id, tr, buf, childClassId, 1, vp);
         val.reset(vp);
       }
       T *tp = reinterpret_cast<T *>(obj);
-      ClassTraits<T>::get(*tp, pa, val);
+      ClassTraits<T>::get(tr->store.id, *tp, pa, val);
     }
   }
 };
@@ -2793,10 +2808,10 @@ public:
 
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     auto ida = ClassTraits<V>::objectIdAccess();
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
     size_t psz = ObjectKey_sz * val.size();
     WriteBuf propBuf(psz);
 
@@ -2837,7 +2852,7 @@ public:
       }
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -2851,7 +2866,7 @@ public:
 template<typename T, typename V> class ObjectVectorPropertyStorageEmbedded : public StoreAccessBase
 {
 public:
-  size_t size(ObjectBuf &buf) const override {
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {
     unsigned vectSize = buf.readInteger<unsigned>(4);
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
     if(sz) {
@@ -2866,16 +2881,16 @@ public:
       return sz + 4;
     }
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
 
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
     if(sz) return val.size() * (sz + 4) + 4;
 
     for(V &v : val)
-      sz += calculateBuffer(&v, ClassTraits<V>::traits_properties) + 4;
+      sz += calculateBuffer(storeId, &v, ClassTraits<V>::traits_properties) + 4;
     return sz + 4;
   }
 
@@ -2884,14 +2899,14 @@ public:
   {
     std::vector<V> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     tr->writeBuf().appendInteger((unsigned)val.size(), 4);
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
     PropertyId childObjectId = 0;
     size_t fsz = ClassTraits<V>::traits_properties->fixedSize;
     for(V &v : val) {
-      size_t sz = fsz ? fsz : calculateBuffer(&v, ClassTraits<V>::traits_properties);
+      size_t sz = fsz ? fsz : calculateBuffer(tr->store.id, &v, ClassTraits<V>::traits_properties);
 
       tr->writeBuf().appendInteger(sz, 4);
       tr->writeObject(childClassId, ++childObjectId, v, ClassTraits<V>::traits_properties, true);
@@ -2903,18 +2918,18 @@ public:
   {
     std::vector<V> val;
 
-    ClassId childClassId = ClassTraits<V>::traits_info->classId;
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
     PropertyId childObjectId = 0;
 
     unsigned sz = buf.readInteger<unsigned>(4);
     for(size_t i=0; i< sz; i++) {
       V v;
       buf.readInteger<unsigned>(4);
-      readObject(tr, buf, v, childClassId, ++childObjectId);
+      readObject(tr->store.id, tr, buf, v, childClassId, ++childObjectId);
       val.push_back(v);
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -2931,18 +2946,18 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
   bool updatePrepared = false;
   const PropertyAccessBase *inverse = nullptr;
 
-  bool preparesUpdates(ClassId classId) override
+  bool preparesUpdates(StoreId storeId, ClassId classId) override
   {
-    return ClassTraits<V>::traits_info->classId == classId;
+    return ClassTraits<V>::traits_data(storeId).classId == classId;
   }
-  size_t prepareUpdate(ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
+  size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) override
   {
-    updatePrepared = ClassTraits<V>::traits_info->refcounting;
-    return size(buf);
+    updatePrepared = ClassTraits<V>::traits_data(storeId).refcounting;
+    return size(storeId, buf);
   }
-  size_t prepareDelete(WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
+  size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
   {
-    if(ClassTraits<V>::traits_info->refcounting) {
+    if(ClassTraits<V>::traits_data(storeId).refcounting) {
       ReadBuf readBuf;
       tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
       if (!readBuf.null()) {
@@ -2960,7 +2975,7 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
       }
     }
     tr->remove(buf.key.classId, buf.key.objectId, pa->id);
-    return size(buf);
+    return size(storeId, buf);
   }
 
   void loadStoredKeys(ReadTransaction *tr, ClassId cid, ObjectId oid, PropertyId pid, std::set<ObjectKey> &keys)
@@ -2987,7 +3002,7 @@ public:
 
     std::vector<std::shared_ptr<V>> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     std::set<ObjectKey> oldKeys;
 
@@ -3003,7 +3018,7 @@ public:
       ObjectKey *childKey = ClassTraits<V>::getObjectKey(v);
 
       if(mode != StoreMode::force_buffer) {
-        if(ClassTraits<V>::traits_info->refcounting && !childKey->isNew()) {
+        if(ClassTraits<V>::traits_data(tr->store.id).refcounting && !childKey->isNew()) {
           if(oldKeys.empty() || !oldKeys.erase(*childKey)) childKey->refcount++;
         }
         tr->saveObject<V>(*childKey, *v, true);
@@ -3038,7 +3053,7 @@ public:
     if(!readBuf.null()) {
       object_handler<V> handler;
       while(readBuf.read(handler)) {
-        ClassInfo<V> *vi = FIND_CLS(V, handler.classId);
+        ClassInfo<V> *vi = FIND_CLS(V, tr->store.id, handler.classId);
         if(!vi) {
           V *vp = ClassTraits<V>::getSubstitute();
           if(vp) {
@@ -3049,13 +3064,13 @@ public:
         else {
           V *obj = tr->loadObject<V>(handler);
           if(obj) {
-            if(inverse) ClassTraits<V>::get(*obj, inverse, tp);
+            if(inverse) ClassTraits<V>::get(tr->store.id, *obj, inverse, tp);
             val.push_back(std::shared_ptr<V>(obj, handler));
           }
         }
       }
     }
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -3069,7 +3084,7 @@ public:
 template<typename T, typename V> class ObjectPtrVectorPropertyStorageEmbedded : public StoreAccessBase
 {
 public:
-  size_t size(ObjectBuf &buf) const override {
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {
     unsigned vectSize = buf.readInteger<unsigned>(4);
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
     if(sz) {
@@ -3085,16 +3100,16 @@ public:
       return sz + 4;
     }
   }
-  size_t size(void *obj, const PropertyAccessBase *pa) override {
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     std::vector<std::shared_ptr<V>> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
 
     size_t sz = ClassTraits<V>::traits_properties->fixedSize;
     if(sz) return val.size() * (sz + ClassId_sz + 4) + 4;
 
     for(std::shared_ptr<V> &v : val) {
-      sz += ClassTraits<V>::bufferSize(&(*v)) + ClassId_sz + 4;
+      sz += ClassTraits<V>::bufferSize(storeId, &(*v)) + ClassId_sz + 4;
     }
     return sz + 4;
   }
@@ -3104,17 +3119,17 @@ public:
   {
     std::vector<std::shared_ptr<V>> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     tr->writeBuf().appendInteger((unsigned)val.size(), 4);
     PropertyId childObjectId = 0;
     for(std::shared_ptr<V> &v : val) {
       ClassId childClassId;
-      size_t sz = ClassTraits<V>::bufferSize(&(*v), &childClassId);
+      size_t sz = ClassTraits<V>::bufferSize(tr->store.id, &(*v), &childClassId);
 
       tr->writeBuf().appendInteger(childClassId, ClassId_sz);
       tr->writeBuf().appendInteger(sz, 4);
-      tr->writeObject(childClassId, ++childObjectId, *v, ClassTraits<V>::getProperties(childClassId), true);
+      tr->writeObject(childClassId, ++childObjectId, *v, ClassTraits<V>::getProperties(tr->store.id, childClassId), true);
     }
   }
 
@@ -3130,24 +3145,24 @@ public:
       ClassId childClassId = buf.readInteger<ClassId>(ClassId_sz);
       unsigned sz = buf.readInteger<unsigned>(4);
 
-      ClassInfo<V> *vi = FIND_CLS(V, childClassId);
+      ClassInfo<V> *vi = FIND_CLS(V, tr->store.id, childClassId);
       if(!vi) {
         buf.mark();
         V *vp = ClassTraits<V>::getSubstitute();
         if(vp) {
-          readObject<V>(tr, buf, *vp, childClassId, ++childObjectId, StoreMode::force_buffer);
+          readObject<V>(tr->store.id, tr, buf, *vp, childClassId, ++childObjectId, StoreMode::force_buffer);
           val.push_back(std::shared_ptr<V>(vp));
         }
         buf.unmark(sz);
       }
       else {
-        V *vp = vi->makeObject(childClassId);
-        readObject<V>(tr, buf, childClassId, ++childObjectId, vp);
+        V *vp = vi->makeObject(tr->store.id, childClassId);
+        readObject<V>(tr->store.id, tr, buf, childClassId, ++childObjectId, vp);
         val.push_back(std::shared_ptr<V>(vp));
       }
     }
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
@@ -3163,15 +3178,15 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
 
   CollectionIterPropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, ObjectId_sz) {}
 
-  size_t size(ObjectBuf &buf) const override {return ObjectId_sz;}
-  size_t size(void *obj, const PropertyAccessBase *pa) override {return ObjectId_sz;}
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {return ObjectId_sz;}
+  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return ObjectId_sz;}
 
-  void *initMember(void *obj, const PropertyAccessBase *pa) override
+  void *initMember(StoreId storeId, void *obj, const PropertyAccessBase *pa) override
   {
     T *tp = reinterpret_cast<T *>(obj);
     KVIter *it = new KVIter();
     auto ib = std::shared_ptr<KVIter>(it);
-    ClassTraits<T>::get(*tp, pa, ib);
+    ClassTraits<T>::get(storeId, *tp, pa, ib);
 
     return static_cast<KVPropertyBackend *>(it);
   }
@@ -3181,7 +3196,7 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
   {
     std::shared_ptr<Iter> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
     IterPropertyBackendPtr ib = std::dynamic_pointer_cast<KVPropertyBackend>(val);
     tr->writeBuf().appendRaw(ib ? ib->getObjectId() : 0);
@@ -3196,7 +3211,7 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
     std::shared_ptr<KVIter> it = std::make_shared<KVIter>();
     it->setObjectId(collectionId);
 
-    ClassTraits<T>::get(*tp, pa, it);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, it);
   }
 };
 

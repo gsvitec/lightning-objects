@@ -14,7 +14,7 @@ using namespace std;
 const ObjectKey ObjectKey::NIL;
 
 Properties * ClassTraits<kv::EmptyClass>::traits_properties {nullptr};
-ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass), 0);
+ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass));
 
 string incompatible_schema_error::make_what(const char *className)
 {
@@ -55,7 +55,7 @@ bool KeyValueStoreBase::updateClassSchema(
     vector<incompatible_schema_error::Property> &errors)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
-  loadSaveClassMeta(classInfo, properties, numProperties, propertyInfos);
+  loadSaveClassMeta(id, classInfo, properties, numProperties, propertyInfos);
 
   bool hasSubclasses = !classInfo->subs.empty();
 
@@ -296,7 +296,7 @@ void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSi
 }
 
 CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
-: m_collectionId(collectionId), m_tr(tr), m_chunkCursor(chunkCursor)
+  : m_collectionId(collectionId), m_tr(tr), m_chunkCursor(chunkCursor), m_storeId(tr->store.id)
 {
   if(!m_chunkCursor->atEnd()) {
     m_chunkCursor->get(m_readBuf);
@@ -321,9 +321,9 @@ bool CollectionCursorBase::next()
 }
 
 CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
-    : m_chunkSize(chunkSize), m_wtxn(wtxn), m_writeBuf(wtxn->writeBuf())
+    : m_chunkSize(chunkSize), m_tr(wtxn), m_writeBuf(wtxn->writeBuf())
 {
-  m_collectionInfo = m_wtxn->getCollectionInfo(collectionId);
+  m_collectionInfo = m_tr->getCollectionInfo(collectionId);
   m_elementCount = 0;
 }
 
@@ -336,13 +336,13 @@ void CollectionAppenderBase::startChunk(size_t size)
     ci.dataSize = m_writeBuf.size();
     ci.elementCount = m_elementCount;
 
-    m_wtxn->writeChunkHeader(ci.startIndex, ci.elementCount);
+    m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
     m_collectionInfo->nextStartIndex += m_elementCount;
   }
   //allocate a new chunk
   byte_t * data = nullptr;
   size_t sz = size + ChunkHeader_sz < m_chunkSize ? m_chunkSize : size;
-  if(m_wtxn->allocData(COLLECTION_CLSID, m_collectionInfo->collectionId, m_collectionInfo->nextChunkId, sz, &data)) {
+  if(m_tr->allocData(COLLECTION_CLSID, m_collectionInfo->collectionId, m_collectionInfo->nextChunkId, sz, &data)) {
     m_collectionInfo->chunkInfos.push_back(ChunkInfo(m_collectionInfo->nextChunkId));
 
     m_writeBuf.start(data, sz);
@@ -362,7 +362,7 @@ void CollectionAppenderBase::close()
   ci.elementCount += m_elementCount;
   ci.dataSize = m_writeBuf.size();
 
-  m_wtxn->writeChunkHeader(ci.startIndex, ci.elementCount);
+  m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
 }
 
 } //kv
