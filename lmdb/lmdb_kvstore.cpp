@@ -1026,8 +1026,10 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     bool first = true;
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
-        //first record is [propertyId == 0, classId]
-        cdata.classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
+        //first record is [propertyId == 0, classId, subclass...]
+        ReadBuf buf(val.data<byte_t>(), val.size());
+        buf.read(PropertyId_sz);
+        cdata.classId = buf.readInteger<ClassId>(ClassId_sz);
         first = false;
       }
       else //rest is properties
@@ -1048,12 +1050,17 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     cdata.classId = ++m_maxClassId;
 
-    //save the first record [0, classId]
-    byte_t buf[4];
-    write_integer<PropertyId>(buf, 0, 2);
-    write_integer<ClassId>(buf+2, cdata.classId, 2);
+    //save the first record [0, classId, subclass...]
+    size_t sz = PropertyId_sz + ClassId_sz;
+    for(auto &sub : classInfo->subs) sz += strlen(sub->name) + 1;
+
+    WriteBuf buf(sz);
+    buf.appendInteger(0, PropertyId_sz);
+    buf.appendInteger(cdata.classId, ClassId_sz);
+    for(auto &sub : classInfo->subs) buf.appendCString(sub->name);
+
     key.assign(classInfo->name);
-    val.assign(buf, 4);
+    val.assign(buf.data(), sz);
     m_dbi_meta.put(txn, key, val);
 
     //Save properties

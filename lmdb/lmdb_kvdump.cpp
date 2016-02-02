@@ -153,7 +153,10 @@ public:
       for (bool read = cursor.get(dupkey, val, MDB_FIRST_DUP); read; read = cursor.get(dupkey, val, MDB_NEXT_DUP)) {
         if(first) {
           //first record is [propertyId == 0, classId]
-          ci.classId = read_integer<ClassId>(val.data<byte_t>()+2, 2);
+          ReadBuf buf(val.data<byte_t>(), val.size());
+          buf.read(PropertyId_sz);
+          ci.classId = buf.readInteger<ClassId>(ClassId_sz);
+          while(!buf.atEnd()) ci.subclasses.push_back(buf.readCString());
           first = false;
         }
         else {//rest is properties
@@ -218,18 +221,51 @@ std::ifstream::pos_type filesize(const char* filename)
   return in.tellg();
 }
 
+void dumpClassesMeta(DatabaseInfo &dbinfo, string opt);
+void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId);
+
 int main(int argc, char* argv[])
 {
-  if(argc < 3) {
-    cout << "usage: lo_dump <path> <name> [c|n]" << endl;
-    cout << "c: sort by instance count, n: sort by class name" << endl;
+  string opt = argc > 3 ? argv[3] : "";
+  unsigned minArgs = opt == "m" ? 5 : 3;
+
+  if(argc < minArgs) {
+    cout << "usage: lo_dump <path> <name> [c|n|m <classId>]" << endl;
+    cout << "c: sort by instance count" << endl;
+    cout << "n: sort by class name" << endl;
+    cout << "m: dump metadata for class <classId>" << endl;
     return -1;
   }
 
   string path(argv[1]);
   string name(argv[2]);
 
-  string opt = argc > 3 ? argv[3] : "";
+  try {
+    string fullpath = path + "/" + name;
+    size_t freeSpace = (size_t)filesize(fullpath.c_str());
+
+    DatabaseInfo dbinfo(path, name, freeSpace);
+    dbinfo.loadClassMeta();
+
+    if(opt == "m") {
+      ClassId classId = (ClassId)atoi(argv[4]);
+      dumpClassMeta(dbinfo, classId);
+    }
+    else
+      dumpClassesMeta(dbinfo, opt);
+  }
+  catch(::lmdb::runtime_error e) {
+    cout <<"database error " << e.what() << endl;
+  }
+}
+
+void dumpClassesMeta(DatabaseInfo &dbinfo, string opt)
+{
+  size_t len = 0;
+  for(auto &ci : dbinfo.classInfos) {
+    if(len < ci.name.length()) len = ci.name.length();
+    dbinfo.loadClassData(ci);
+  }
 
   std::function<bool(flexis::persistence::kvdump::ClassInfo, flexis::persistence::kvdump::ClassInfo)> sortByName =
       [](flexis::persistence::kvdump::ClassInfo ci1, flexis::persistence::kvdump::ClassInfo ci2) ->bool {
@@ -240,38 +276,67 @@ int main(int argc, char* argv[])
         return ci1.num_objects > ci2.num_objects;
       };
 
-  try {
-    string fullpath = path + "/" + name;
-    size_t freeSpace = (size_t)filesize(fullpath.c_str());
+  if(opt == "n") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByName);
+  else if(opt == "c") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByCount);
 
-    DatabaseInfo dbinfo(path, name, freeSpace);
+  for(auto &ci : dbinfo.classInfos) {
+    cout << setw(len) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) << ci.name <<
+        " (" << ci.classId << ")" << "  count: " << setw(7) << ci.num_objects << "  bytes: " << setw(10) <<
+        setiosflags(std::ios::left) << ci.sum_objects_size;
 
-    dbinfo.loadClassMeta();
-
-    size_t len = 0;
-    for(auto &ci : dbinfo.classInfos) {
-      if(len < ci.name.length()) len = ci.name.length();
-      dbinfo.loadClassData(ci);
+    if(!ci.refcounts.empty()) cout << "rcnt: ";
+    for(auto &r : ci.refcounts) {
+      cout << r.first << "(" << r.second << ")";
     }
-    if(opt == "n") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByName);
-    if(opt == "c") sort(dbinfo.classInfos.begin(), dbinfo.classInfos.end(), sortByCount);
+    cout << endl;
+  }
+}
 
-    for(auto &ci : dbinfo.classInfos) {
-      cout << setw(len) <<
-          std::resetiosflags(std::ios::adjustfield) <<
-          setiosflags(std::ios::left) <<
-          ci.name << " (" << ci.classId << ")" <<
-          "  count: " << setw(7) << ci.num_objects << "  bytes: " <<
-          setw(10) << setiosflags(std::ios::left) << ci.sum_objects_size;
-
-      if(!ci.refcounts.empty()) cout << "rcnt: ";
-      for(auto &r : ci.refcounts) {
-        cout << r.first << "(" << r.second << ")";
-      }
-      cout << endl;
+void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId)
+{
+  flexis::persistence::kvdump::ClassInfo *ci = nullptr;
+  for(auto &cls : dbinfo.classInfos) {
+    if(cls.classId == classId) {
+      ci = &cls;
+      break;
     }
   }
-  catch(::lmdb::runtime_error e) {
-    cout <<"database error " << e.what() << endl;
+  if(!ci) {
+    cout << "invalid classId" << endl;
+    return;
+  }
+  size_t nameLen = 0;
+  for(auto &pi : ci->propertyInfos) {
+    if(pi.name.length() >nameLen) nameLen = pi.name.length();
+  }
+
+  cout << ci->name << endl;
+  for(auto &pi : ci->propertyInfos) {
+    cout << setw(nameLen) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) << pi.name <<
+        " (" << pi.id << ") " << " typeId: " << setw(4) << pi.typeId << " byteSize: " << setw(4) << pi.byteSize <<
+        " isVector:" << (pi.isVector ? "y" : "n");
+
+    switch(pi.storeLayout) {
+      case StoreLayout::all_embedded:
+        cout << " StoreLayout::all_embedded";
+        break;
+      case StoreLayout::embedded_key:
+        cout << " StoreLayout::embedded_key";
+        break;
+      case StoreLayout::property:
+        cout << " StoreLayout::property";
+        break;
+      case StoreLayout::none:
+        cout << " StoreLayout::none";
+        break;
+    }
+    if(!pi.className.empty()) cout << " class: " << pi.className;
+    cout << endl;
+  }
+
+  for(auto &cls : dbinfo.classInfos) {
+    if(binary_search(cls.subclasses.begin(), cls.subclasses.end(), ci->name)) {
+      dumpClassMeta(dbinfo, cls.classId);
+    }
   }
 }

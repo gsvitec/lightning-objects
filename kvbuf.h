@@ -70,6 +70,7 @@ protected:
 
 public:
   ReadBuf() {}
+  ReadBuf(byte_t *data, size_t size) {start(data, size);}
   ~ReadBuf() {
     if(m_data && m_owned) {
       free(m_data);
