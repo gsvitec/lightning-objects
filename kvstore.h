@@ -256,9 +256,17 @@ public:
    * schema setup for classes A and B would be different between database 1 and database 2. Now you have the choice to
    * either mend the setup, or assign storeIds 0 and 1 to the databases.</p>
    * <p>
+   * There are 2 other reasons for using storeIds:
+   * <ul>
+   * <li>refcounting. If refcounting is turned on and off at runtime, it will affect all databases that share mapping and
+   * storeId</li>
+   * <li>objectIds. For shared mappings in databases with identical id, objectIds will be started at the maximum value
+   * saved for any participating database. Thus, for DB's with low traffic, id's may rise in an "unnatural" way</li>
+   * </ul>
+   * </p>
    * Note: storeIds are in-memory only. They are not saved in any way, and there is no need to keep them identical across
-   * process creation. Store IDs are not required if there are no common mappings between databases.
-   * If used, store IDs must be 0-based, consecutive up to a maximum of MAX_DATABASES (kvtraits.h)
+   * process instances. Store IDs are not required if there are no common mappings between databases. If used, store IDs
+   * must be 0-based, consecutive up to a maximum of MAX_DATABASES (kvtraits.h)
    *
    * @param storeId the unique, 0-based store ID
    */

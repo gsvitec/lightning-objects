@@ -1035,7 +1035,10 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     }
     cursor.close();
 
-    classInfo->data[id].maxObjectId = findMaxObjectId(txn, cdata.classId);
+    //if multiple databases use the same ClassData, we must use the maximum value
+    ObjectId maxoid = findMaxObjectId(txn, cdata.classId);
+    if(maxoid > classInfo->data[id].maxObjectId)
+      classInfo->data[id].maxObjectId = maxoid;
 
     txn.abort();
   }
