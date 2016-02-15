@@ -94,7 +94,7 @@ void make_propertyinfo(MDB_val *mdbVal, PropertyInfo &pi)
     pi.className = (const char *)readPtr;
 }
 
-class DatabaseInfo
+struct DatabaseInfo
 {
   string m_dbpath;
 
@@ -102,7 +102,6 @@ class DatabaseInfo
   ::lmdb::dbi m_dbi_meta = 0;
   ::lmdb::dbi m_dbi_data = 0;
 
-public:
   vector<ClassInfo> classInfos;
 
   DatabaseInfo(string location, string name, size_t mapsize) : m_env(::lmdb::env::create())
@@ -223,17 +222,19 @@ std::ifstream::pos_type filesize(const char* filename)
 
 void dumpClassesMeta(DatabaseInfo &dbinfo, string opt);
 void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId);
+void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId);
 
 int main(int argc, char* argv[])
 {
   string opt = argc > 3 ? argv[3] : "";
-  unsigned minArgs = opt == "m" ? 5 : 3;
+  unsigned minArgs = (opt == "m" || opt == "o") ? 5 : 3;
 
   if(argc < minArgs) {
-    cout << "usage: lo_dump <path> <name> [c|n|m <classId>]" << endl;
+    cout << "usage: lo_dump <path> <name> [c|n|m <classId>|o <classId>]" << endl;
     cout << "c: sort by instance count" << endl;
     cout << "n: sort by class name" << endl;
     cout << "m: dump metadata for class <classId>" << endl;
+    cout << "o: dump object data for class <classId>" << endl;
     return -1;
   }
 
@@ -250,6 +251,10 @@ int main(int argc, char* argv[])
     if(opt == "m") {
       ClassId classId = (ClassId)atoi(argv[4]);
       dumpClassMeta(dbinfo, classId);
+    }
+    else if(opt == "o") {
+      ClassId classId = (ClassId)atoi(argv[4]);
+      dumpClassObjects(dbinfo, classId);
     }
     else
       dumpClassesMeta(dbinfo, opt);
@@ -339,4 +344,109 @@ void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId)
       dumpClassMeta(dbinfo, cls.classId);
     }
   }
+}
+
+template <typename T> void dumpData(const char *tname, PropertyInfo &pi, ReadBuf &buf)
+{
+  if(TypeTraits<T>::id != pi.typeId)
+    return;
+
+  T val;
+  ValueTraits<T>::getBytes(buf, val);
+
+  cout << setw(15) << tname << " " << val;
+}
+
+void addSuperProperties(flexis::persistence::kvdump::ClassInfo *ci, DatabaseInfo &dbinfo, vector<PropertyInfo> &properties)
+{
+  for(auto &cls : dbinfo.classInfos) {
+    if (binary_search(cls.subclasses.begin(), cls.subclasses.end(), ci->name)) {
+      addSuperProperties(&cls, dbinfo, properties);
+      properties.insert(properties.end(), ci->propertyInfos.cbegin(), ci->propertyInfos.cend());
+    }
+  }
+}
+
+void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
+{
+  flexis::persistence::kvdump::ClassInfo *ci = nullptr;
+  for(auto &cls : dbinfo.classInfos) {
+    if(cls.classId == classId) {
+      ci = &cls;
+      break;
+    }
+  }
+  if(!ci) {
+    cout << "invalid classId" << endl;
+    return;
+  }
+  size_t nameLen = 0;
+  for(auto &pi : ci->propertyInfos) {
+    if(pi.name.length() >nameLen) nameLen = pi.name.length();
+  }
+
+  vector<PropertyInfo> properties;
+  addSuperProperties(ci, dbinfo, properties);
+  properties.insert(properties.end(), ci->propertyInfos.cbegin(), ci->propertyInfos.cend());
+
+  auto txn = ::lmdb::txn::begin(dbinfo.m_env, nullptr);
+
+  ::lmdb::val key;
+  auto cursor = ::lmdb::cursor::open(txn, dbinfo.m_dbi_data);
+
+  SK_CONSTR(sk, classId, 0, 0);
+  key.assign(sk, sizeof(sk));
+
+  if(cursor.get(key, MDB_SET_RANGE) && SK_CLASSID(key.data<byte_t>()) == classId) {
+    do {
+      ::lmdb::val val;
+      cursor.get(key, val, MDB_GET_CURRENT);
+      ObjectId oid = SK_OBJID(key.data<byte_t>());
+      if(SK_PROPID(key.data<byte_t>()) == 0) {
+        ReadBuf buf(val.data<byte_t>(), val.size());
+        bool giveUp = false;
+
+        cout << ci->name << " (" << oid << ")" << endl;
+        for(auto &pi : properties) {
+          cout << "  " << setw(nameLen) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) <<
+              pi.name << " (" << pi.id << "): ";
+
+          switch(pi.storeLayout) {
+            case StoreLayout::embedded_key:
+              buf.read(StorageKey::byteSize);
+              cout << "object key";
+              break;
+            case StoreLayout::all_embedded:
+              dumpData<short>("short", pi, buf);
+              dumpData<unsigned short>("unsigned short", pi, buf);
+              dumpData<int>("int", pi, buf);
+              dumpData<unsigned int>("unsigned int", pi, buf);
+              dumpData<long>("long", pi, buf);
+              dumpData<unsigned long>("unsigned long", pi, buf);
+              dumpData<long long>("long long", pi, buf);
+              dumpData<unsigned long long>("unsigned long long", pi, buf);
+              dumpData<bool>("bool", pi, buf);
+              dumpData<float>("float", pi, buf);
+              dumpData<double>("double", pi, buf);
+              dumpData<const char *>("const char *", pi, buf);
+              dumpData<std::string>("std::string", pi, buf);
+              cout << endl;
+              break;
+            default:
+              if(pi.byteSize) {
+                buf.read(pi.byteSize);
+                cout << "bytes(" << pi.byteSize << ")";
+              }
+              else {
+                cout << "unknown size value. Giving up" << endl;
+                giveUp = true;
+              }
+          }
+          if(giveUp) break;
+        }
+      }
+    } while(cursor.get(key, MDB_NEXT) && SK_CLASSID(key.data<byte_t>()) == classId);
+  }
+  cursor.close();
+  txn.abort();
 }
