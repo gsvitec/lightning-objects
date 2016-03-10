@@ -335,6 +335,11 @@ public:
     return ClassTraits<T>::getObjectKey(obj)->isNew();
   }
 
+  template <typename T> ObjectId getObjectId(std::shared_ptr<T> obj)
+  {
+    return ClassTraits<T>::getObjectKey(obj)->objectId;
+  }
+
   /**
    * @return a transaction object that allows reading the database.
    */

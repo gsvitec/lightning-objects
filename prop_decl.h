@@ -15,6 +15,9 @@
 
 #else
 
+#define BEGIN_KV_NS namespace flexis { namespace persistence { namespace kv {
+#define END_KV_NS }}}
+
 #define VA_NUM_ARGS(...) VA_NUM_ARGS_IMPL(__VA_ARGS__, 26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1)
 #define VA_NUM_ARGS_IMPL(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21,_22,_23,_24,_25,_26,N,...) N
 
