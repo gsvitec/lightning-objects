@@ -128,6 +128,7 @@ class ReadTransaction;
 class WriteTransaction;
 class PropertyAccessBase;
 class ObjectBuf;
+class PrepareData;
 
 enum class StoreMode {force_none, force_all, force_buffer, force_property};
 
@@ -171,19 +172,21 @@ struct StoreAccessBase
   virtual size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) {return 0;}
 
   /**
-   * prepare an update for the given object property
+   * prepare an update for the given object property. This function is called on dependent objects (objects which
+   * are referenced through a pointer or a collection) whenever the parent object is updated
    *
    * @param buf the object data as currently saved
    * @param obj the object about to be saved
    * @param pa the property about to be saved
    * @return the same as size(buf)
    */
-  virtual size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, void *obj, const PropertyAccessBase *pa) {
+  virtual size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, void *obj, const PropertyAccessBase *pa) {
     return size(storeId, buf);
   }
 
   /**
-   * prepare a delete for the given object property
+   * prepare a delete for the given object property. This function is called on dependent objects (objects which
+   * are referenced through a pointer or a collection) whenever the parent object is deleted
    *
    * @param tr the write transaction
    * @param buf the object data as currently saved
@@ -197,7 +200,9 @@ struct StoreAccessBase
 
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
-                    void *obj, const PropertyAccessBase *pa,
+                    void *obj,
+                    PrepareData &pd,
+                    const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
 
   virtual void load(ReadTransaction *tr,
@@ -214,11 +219,13 @@ struct StoreAccessBase
 struct NullStorage : public StoreAccessBase {
   NullStorage() : StoreAccessBase(StoreLayout::none, 0) { }
 
-  size_t size(StoreId storeId, ObjectBuf &buf) const override { return 0; };
+  size_t size(StoreId storeId, ObjectBuf &buf) const override { return 0; }
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId,
-            void *obj, const PropertyAccessBase *pa,
+            void *obj,
+            PrepareData &pb,
+            const PropertyAccessBase *pa,
             StoreMode mode = StoreMode::force_none) { }
 
   void load(ReadTransaction *tr,
@@ -813,9 +820,9 @@ struct ClassInfo : public AbstractClassInfo
   bool (* const addSize)(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
   bool (* const prep_delete)(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags);
-  bool (* const prep_update)(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
+  bool (* const prep_update)(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const save)(StoreId storeId, WriteTransaction *wtr,
-                      ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
+                      ClassId classId, ObjectId objectId, T *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
   bool (* const load)(StoreId storeId, ReadTransaction *tr, ReadBuf &buf,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
@@ -1040,22 +1047,22 @@ public:
     return false;
   }
 
-  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa)
+  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa)
   {
     size_t size;
-    if(!prep_update(storeId, buf, obj, pa, size)) throw invalid_classid_error(pa->classId);
+    if(!prep_update(storeId, buf, pd, obj, pa, size)) throw invalid_classid_error(pa->classId);
     return size;
   }
-  static bool prep_update(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
+  static bool prep_update(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == traits_data(storeId).classId) {
-      size = pa->storage->prepareUpdate(storeId, buf, obj, pa);
+      size = pa->storage->prepareUpdate(storeId, buf, pd, obj, pa);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::prep_update(storeId, buf, obj, pa, size, FLAG_UP))
+      if(UP && ClassTraits<SUP>::prep_update(storeId, buf, pd, obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prep_update(storeId, buf, obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->prep_update(storeId, buf, pd, obj, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -1081,16 +1088,16 @@ public:
   }
 
   static bool save(StoreId storeId, WriteTransaction *tr,
-                   ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
+                   ClassId classId, ObjectId objectId, T *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
   {
     if(pa->classId == traits_data(storeId).classId) {
-      pa->storage->save(tr, classId, objectId, obj, pa, mode);
+      pa->storage->save(tr, classId, objectId, obj, pd, pa, mode);
       return true;
     }
     else if(pa->classId) {
-      if(UP && ClassTraits<SUP>::save(storeId, tr, classId, objectId, obj, pa, mode, FLAG_UP))
+      if(UP && ClassTraits<SUP>::save(storeId, tr, classId, objectId, obj, pd, pa, mode, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->save(storeId, tr, classId, objectId, obj, pa, mode, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId)->save(storeId, tr, classId, objectId, obj, pd, pa, mode, FLAG_DN);
     }
     return false;
   }
@@ -1254,15 +1261,15 @@ struct ClassTraits<EmptyClass>
     return false;
   }
   template <typename T>
-  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa) {
+  static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa) {
     return 0;
   }
   template <typename T>
-  static bool prep_update(StoreId storeId, ObjectBuf &buf, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
+  static bool prep_update(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=0) {
     return false;
   }
   template <typename T>
-  static bool save(StoreId storeId, WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj,
+  static bool save(StoreId storeId, WriteTransaction *wtr, ClassId classId, ObjectId objectId, T *obj, PrepareData &pd,
                    const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }

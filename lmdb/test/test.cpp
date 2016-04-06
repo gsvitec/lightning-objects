@@ -28,6 +28,18 @@ unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> pre
   }
   return count;
 }
+template <typename T>
+vector<shared_ptr<T>> getInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
+{
+  vector<shared_ptr<T>> result;
+  for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
+    auto obj = curs->get();
+    if(predicate(obj)) {
+      result.push_back(obj);
+    }
+  }
+  return result;
+}
 
 void testColored2DPoint(KeyValueStore *kv)
 {
@@ -763,7 +775,7 @@ void testGrowDatabase(KeyValueStore *kv)
   }
 }
 
-void testDelete(KeyValueStore *kv)
+void testDelete(KeyValueStore *kv, unsigned expectedOverlays)
 {
   ObjectKey siKey, otKey;
   {
@@ -771,11 +783,11 @@ void testDelete(KeyValueStore *kv)
     si.sourceIndex = 123456789;
 
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name = "testDelete";
+    ro->name = "testDelete.FlexisOverlay";
     si.userOverlays.push_back(ro);
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name = "testDelete";
+    to->name = "testDelete.FlexisOverlay";
     si.userOverlays.push_back(to);
 
     RefCountingTest ot;
@@ -797,7 +809,7 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 1);
     unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete";});
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete.FlexisOverlay";});
     assert(ov == 2);
 
     unsigned ot = countInstances<RefCountingTest>(
@@ -821,14 +833,15 @@ void testDelete(KeyValueStore *kv)
     txn->commit();
   }
   {
-    auto txn = kv->beginRead();
+    auto txn = kv->beginWrite();
 
     unsigned si = countInstances<player::SourceInfo>(
         txn, [](shared_ptr<player::SourceInfo> s)->bool {return s->sourceIndex == 123456789;});
     assert(si == 0);
-    unsigned ov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete";});
-    assert(ov == 0);
+    vector<IFlexisOverlayPtr> ov = getInstances<IFlexisOverlay>(
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testDelete.FlexisOverlay";});
+    assert(ov.size() == expectedOverlays);
+    for(auto &o : ov) txn->deleteObject(o);
 
     unsigned ot = countInstances<RefCountingTest>(
         txn, [](shared_ptr<RefCountingTest> o)->bool {return o->vso->name == "testDelete.VariableSizeObject";});
@@ -840,11 +853,11 @@ void testDelete(KeyValueStore *kv)
         txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
     assert(fo == 0);
 
-    txn->abort();
+    txn->commit();
   }
 }
 
-void testUpdate(KeyValueStore *kv)
+void testUpdate(KeyValueStore *kv, unsigned expectedOverlays=1)
 {
   ObjectKey siKey, rtKey;
   {
@@ -852,11 +865,11 @@ void testUpdate(KeyValueStore *kv)
     si.sourceIndex = 2233445;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
     RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name = "testUpdate";
+    ro->name = "testUpdate.FlexisOverlay";
     si.userOverlays.push_back(ro);
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
-    to->name = "testUpdate";
+    to->name = "testUpdate.FlexisOverlay";
     si.userOverlays.push_back(to);
 
     RefCountingTest ot;
@@ -891,7 +904,7 @@ void testUpdate(KeyValueStore *kv)
     delete si;
   }
   {
-    auto txn = kv->beginRead();
+    auto txn = kv->beginWrite();
 
     auto si = txn->getObject<player::SourceInfo>(siKey);
     assert(si->userOverlays.size() == 1);
@@ -899,9 +912,11 @@ void testUpdate(KeyValueStore *kv)
     auto ot = txn->getObject<RefCountingTest>(rtKey);
     assert(ot->fso_vect.size() == 1);
 
-    unsigned cov = countInstances<IFlexisOverlay>(
-        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testUpdate";});
-    assert(cov == 1);
+    vector<IFlexisOverlayPtr> cov = getInstances<IFlexisOverlay>(
+        txn, [](shared_ptr<IFlexisOverlay> o)->bool {return o->name == "testUpdate.FlexisOverlay";});
+    assert(cov.size() == expectedOverlays);
+    for(auto &o : cov) txn->deleteObject(o);
+
     unsigned vo = countInstances<player::SourceDisplayConfig>(
         txn, [](shared_ptr<player::SourceDisplayConfig> v)->bool {return v->sourceIndex == 1;});
     assert(vo == 0);
@@ -909,7 +924,7 @@ void testUpdate(KeyValueStore *kv)
         txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 11 || v->number1 == 22;});
     assert(fo == 1);
 
-    txn->abort();
+    txn->commit();
     delete ot;
     delete si;
   }
@@ -919,7 +934,7 @@ void testUpdate(KeyValueStore *kv)
   txn->commit();
 }
 
-void testRefCounting(KeyValueStore *kv)
+void testRefCounting(KeyValueStore *kv, unsigned expectedCount=0)
 {
   ObjectKey siKey;
   {
@@ -959,16 +974,19 @@ void testRefCounting(KeyValueStore *kv)
     delete si;
   }
   {
-    auto txn = kv->beginRead();
+    auto txn = kv->beginWrite();
 
-    unsigned rov = countInstances<RectangularOverlay>(
+    vector<RectangularOverlayPtr> rov = getInstances<RectangularOverlay>(
         txn, [](shared_ptr<RectangularOverlay> o)->bool {return o->name == "testRefCounting.RectangularOverlay";});
-    assert(rov == 1);
-    unsigned tov = countInstances<TimeCodeOverlay>(
-        txn, [](shared_ptr<TimeCodeOverlay> o)->bool {return o->name == "testRefCounting.TimeCodeOverlay";});
-    assert(tov == 0);
+    assert(rov.size() == expectedCount);
+    for(auto &r : rov) txn->deleteObject(r);
 
-    txn->abort();
+    vector<TimeCodeOverlayPtr> tov = getInstances<TimeCodeOverlay>(
+        txn, [](shared_ptr<TimeCodeOverlay> o)->bool {return o->name == "testRefCounting.TimeCodeOverlay";});
+    assert(tov.size() == expectedCount);
+    for(auto &t : tov) txn->deleteObject(t);
+
+    txn->commit();
   }
 }
 
@@ -1170,15 +1188,19 @@ int main()
       OtherThingB,
       SomethingWithALazyVector>();
 
-  kv->setRefCounting<IFlexisOverlay>();
   kv->setRefCounting<VariableSizeObject>();
   kv->setRefCounting<FixedSizeObject>();
   kv->setRefCounting<player::SourceDisplayConfig>();
 
 #if 1
-  testUpdate(kv);
-  testDelete(kv);
-  testRefCounting(kv);
+  testUpdate(kv, 2);
+  testDelete(kv, 2);
+  testRefCounting(kv, 1);
+
+  kv->setRefCounting<IFlexisOverlay>();
+  testUpdate(kv, 1);
+  testDelete(kv, 0);
+  testRefCounting(kv, 0);
 
   testColored2DPoint(kv);
   testColoredPolygon(kv);
