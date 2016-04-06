@@ -816,6 +816,7 @@ struct ClassInfo : public AbstractClassInfo
   size_t (* const size)(StoreId storeId, T *obj);
   void * (* const initMember)(StoreId storeId, T *obj, const PropertyAccessBase *pa);
   T * (* const makeObject)(StoreId storeId, ClassId classId);
+  bool (* const needsPrepare)(StoreId storeId, ClassId classId);
   Properties * (* const getProperties)(StoreId storeId, ClassId classId);
   bool (* const addSize)(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
@@ -835,6 +836,7 @@ struct ClassInfo : public AbstractClassInfo
         initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
+        needsPrepare(&ClassTraits<T>::needsPrepare),
         addSize(&ClassTraits<T>::addSize),
         get_objectkey(&ClassTraits<T>::get_objectkey),
         prep_delete(&ClassTraits<T>::prep_delete),
@@ -963,8 +965,12 @@ public:
     }
   }
 
-  static bool needsPrepare(StoreId storeId) {
-    return !traits_data(storeId).prepareClasses.empty();
+  static bool needsPrepare(StoreId storeId, ClassId classId) {
+    if(classId == traits_data(storeId).classId)
+      return !traits_data(storeId).prepareClasses.empty();
+    else if(classId)
+      return RESOLVE_SUB(classId)->needsPrepare(storeId, classId);
+    return false;
   }
 
   static T *getSubstitute()
@@ -1224,7 +1230,7 @@ struct ClassTraits<EmptyClass>
   static size_t bufferSize(StoreId storeId, T *obj, ClassId *cid=nullptr) {
     return 0;
   }
-  static bool needsPrepare(StoreId storeId) {
+  static bool needsPrepare(StoreId storeId, ClassId classId) {
     return false;
   }
   template <typename T>

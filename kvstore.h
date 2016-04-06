@@ -787,7 +787,7 @@ public:
 
     using Traits = ClassTraits<T>;
 
-    if(Traits::needsPrepare(m_storeId)) {
+    if(Traits::needsPrepare(m_storeId, key.classId)) {
       Properties *props = Traits::getProperties(m_storeId, key.classId);
       ObjectBuf obuf(readBuf.data(), readBuf.size());
 
@@ -1526,7 +1526,7 @@ protected:
     using Traits = ClassTraits<T>;
     Properties *props = Traits::getProperties(store.id, classId);
 
-    if(Traits::needsPrepare(store.id)) {
+    if(Traits::needsPrepare(store.id, classId)) {
       ObjectBuf prepBuf(this, classId, objectId, true);
       if(!prepBuf.null()) {
         for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
@@ -1654,7 +1654,7 @@ protected:
     }
     else {
       properties = poly ? store.objectProperties[key.classId] : Traits::traits_properties;
-      if(Traits::needsPrepare(store.id)) prepareUpdate(key, &obj, pd, properties);
+      if(Traits::needsPrepare(store.id, key.classId)) prepareUpdate(key, &obj, pd, properties);
     }
 
     if(pa && shallow)
@@ -1922,7 +1922,7 @@ public:
       case StoreLayout::property: {
         //property goes to a separate key, no need to touch the object buffer
         PrepareData pd;
-        if(ClassTraits<T>::needsPrepare(store.id)) {
+        if(ClassTraits<T>::needsPrepare(store.id, key.classId)) {
           LazyBuf buf(this, key, false);
           ClassTraits<T>::prepareUpdate(store.id, buf, pd, &obj, pa);
         }

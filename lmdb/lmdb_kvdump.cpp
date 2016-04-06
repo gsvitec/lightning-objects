@@ -115,7 +115,7 @@ struct DatabaseInfo
     //classmeta + classdata db
     m_env.set_max_dbs(2);
 
-    m_env.open(m_dbpath.c_str(), MDB_NOSUBDIR | MDB_NOLOCK, 0664);
+    m_env.open(m_dbpath.c_str(), MDB_NOSUBDIR | MDB_NOLOCK | MDB_RDONLY, 0664);
 
     MDB_stat envstat;
     mdb_env_stat(m_env, &envstat);

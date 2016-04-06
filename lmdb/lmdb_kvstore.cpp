@@ -119,7 +119,7 @@ protected:
     do {
       m_cursor.del();
       gotten = m_cursor.get(m_keyval, MDB_NEXT);
-    } while(
+    } while(gotten &&
         SK_CLASSID(m_keyval.data<byte_t>()) == m_currentClassId &&
             SK_OBJID(m_keyval.data<byte_t>()) == m_currentObjectId);
 
