@@ -413,8 +413,9 @@ void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
 
           switch(pi.storeLayout) {
             case StoreLayout::embedded_key:
-              buf.read(StorageKey::byteSize);
-              cout << "object key";
+              ClassId cid; ObjectId oid;
+              buf.read(cid, oid);
+              cout << setw(15) << "object key" << " " << "(" << cid << ", " << oid << ")";
               break;
             case StoreLayout::all_embedded:
               dumpData<short>("short", pi, buf);
@@ -430,18 +431,18 @@ void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
               dumpData<double>("double", pi, buf);
               dumpData<const char *>("const char *", pi, buf);
               dumpData<std::string>("std::string", pi, buf);
-              cout << endl;
               break;
             default:
               if(pi.byteSize) {
                 buf.read(pi.byteSize);
-                cout << "bytes(" << pi.byteSize << ")";
+                cout << "bytes[" << pi.byteSize << "]";
               }
               else {
                 cout << "unknown size value. Giving up" << endl;
                 giveUp = true;
               }
           }
+          cout << endl;
           if(giveUp) break;
         }
       }
