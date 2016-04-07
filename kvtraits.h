@@ -816,7 +816,7 @@ struct ClassInfo : public AbstractClassInfo
   size_t (* const size)(StoreId storeId, T *obj);
   void * (* const initMember)(StoreId storeId, T *obj, const PropertyAccessBase *pa);
   T * (* const makeObject)(StoreId storeId, ClassId classId);
-  bool (* const needsPrepare)(StoreId storeId, ClassId classId);
+  bool (* const needs_prepare)(StoreId storeId, ClassId classId, bool &result, unsigned flags);
   Properties * (* const getProperties)(StoreId storeId, ClassId classId);
   bool (* const addSize)(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const get_objectkey)(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags);
@@ -836,7 +836,7 @@ struct ClassInfo : public AbstractClassInfo
         initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
-        needsPrepare(&ClassTraits<T>::needsPrepare),
+        needs_prepare(&ClassTraits<T>::needs_prepare),
         addSize(&ClassTraits<T>::addSize),
         get_objectkey(&ClassTraits<T>::get_objectkey),
         prep_delete(&ClassTraits<T>::prep_delete),
@@ -966,10 +966,21 @@ public:
   }
 
   static bool needsPrepare(StoreId storeId, ClassId classId) {
-    if(classId == traits_data(storeId).classId)
-      return !traits_data(storeId).prepareClasses.empty();
-    else if(classId)
-      return RESOLVE_SUB(classId)->needsPrepare(storeId, classId);
+    bool result;
+    if(!needs_prepare(storeId, classId, result)) throw invalid_classid_error(classId);
+    return result;
+  }
+  static bool needs_prepare(StoreId storeId, ClassId classId, bool &result, unsigned flags=FLAGS_ALL)
+  {
+    if(classId == traits_data(storeId).classId) {
+      result = !traits_data(storeId).prepareClasses.empty();
+      return true;
+    }
+    else if(classId) {
+      if(UP && ClassTraits<SUP>::needs_prepare(storeId, classId, result, FLAG_UP))
+        return true;
+      return DN && RESOLVE_SUB(classId)->needs_prepare(storeId, classId, result, FLAG_DN);
+    }
     return false;
   }
 
@@ -1231,6 +1242,9 @@ struct ClassTraits<EmptyClass>
     return 0;
   }
   static bool needsPrepare(StoreId storeId, ClassId classId) {
+    return false;
+  }
+  static bool needs_prepare(StoreId storeId, ClassId classId, bool &result, unsigned flags=0) {
     return false;
   }
   template <typename T>
