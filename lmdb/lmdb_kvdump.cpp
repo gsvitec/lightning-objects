@@ -120,7 +120,7 @@ struct DatabaseInfo
     MDB_stat envstat;
     mdb_env_stat(m_env, &envstat);
 
-    auto txn = ::lmdb::txn::begin(m_env, nullptr);
+    auto txn = ::lmdb::txn::begin(m_env, nullptr, MDB_RDONLY);
 
     //open/create the classmeta database
     m_dbi_meta = ::lmdb::dbi::open(txn, CLASSMETA, MDB_DUPSORT);
@@ -139,7 +139,7 @@ struct DatabaseInfo
 
   void loadClassMeta()
   {
-    auto txn = ::lmdb::txn::begin(m_env, nullptr);
+    auto txn = ::lmdb::txn::begin(m_env, nullptr, MDB_RDONLY);
 
     ::lmdb::val key, val;
     auto cursor = ::lmdb::cursor::open(txn, m_dbi_meta);
@@ -170,7 +170,7 @@ struct DatabaseInfo
 
   void loadClassData(ClassInfo &ci)
   {
-    auto txn = ::lmdb::txn::begin(m_env, nullptr);
+    auto txn = ::lmdb::txn::begin(m_env, nullptr, MDB_RDONLY);
 
     ::lmdb::val key;
     auto cursor = ::lmdb::cursor::open(txn, m_dbi_data);
@@ -234,7 +234,7 @@ int main(int argc, char* argv[])
     cout << "c: sort by instance count" << endl;
     cout << "n: sort by class name" << endl;
     cout << "m: dump metadata for class <classId>" << endl;
-    cout << "o: dump object data for class <classId>" << endl;
+    cout << "o: dump object simple data for class <classId>" << endl;
     return -1;
   }
 
@@ -362,7 +362,7 @@ void addSuperProperties(flexis::persistence::kvdump::ClassInfo *ci, DatabaseInfo
   for(auto &cls : dbinfo.classInfos) {
     if (binary_search(cls.subclasses.begin(), cls.subclasses.end(), ci->name)) {
       addSuperProperties(&cls, dbinfo, properties);
-      properties.insert(properties.end(), ci->propertyInfos.cbegin(), ci->propertyInfos.cend());
+      properties.insert(properties.end(), cls.propertyInfos.cbegin(), cls.propertyInfos.cend());
     }
   }
 }
@@ -389,7 +389,7 @@ void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
   addSuperProperties(ci, dbinfo, properties);
   properties.insert(properties.end(), ci->propertyInfos.cbegin(), ci->propertyInfos.cend());
 
-  auto txn = ::lmdb::txn::begin(dbinfo.m_env, nullptr);
+  auto txn = ::lmdb::txn::begin(dbinfo.m_env, nullptr, MDB_RDONLY);
 
   ::lmdb::val key;
   auto cursor = ::lmdb::cursor::open(txn, dbinfo.m_dbi_data);
@@ -408,7 +408,7 @@ void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
 
         cout << ci->name << " (" << oid << ")" << endl;
         for(auto &pi : properties) {
-          cout << "  " << setw(nameLen) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) <<
+          cout << "  " << setw(nameLen+5) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) <<
               pi.name << " (" << pi.id << "): ";
 
           switch(pi.storeLayout) {
