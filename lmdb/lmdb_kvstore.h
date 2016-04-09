@@ -41,14 +41,14 @@ public:
  */
 struct StorageKey
 {
-  static const unsigned byteSize = ClassId_sz + ObjectId_sz + PropertyId_sz;
+  static const unsigned byteSize = kv::ClassId_sz + kv::ObjectId_sz + kv::PropertyId_sz;
 
-  ClassId classId;
-  ObjectId objectId;
-  PropertyId propertyId; //will be 0 if this is an object key
+  kv::ClassId classId;
+  kv::ObjectId objectId;
+  kv::PropertyId propertyId; //will be 0 if this is an object key
 
   StorageKey() : classId(0), objectId(0), propertyId(0) {}
-  StorageKey(ClassId classId, ObjectId objectId, PropertyId propertyId)
+  StorageKey(kv::ClassId classId, kv::ObjectId objectId, kv::PropertyId propertyId)
       : classId(classId), objectId(objectId), propertyId(propertyId) {}
 };
 

@@ -10,6 +10,7 @@ namespace flexis {
 namespace persistence {
 
 using namespace std;
+using namespace kv;
 
 const ObjectKey ObjectKey::NIL;
 

@@ -39,10 +39,8 @@ struct has_objid<T,
     typename std::enable_if<T::traits_has_objid, bool>::type> : std::true_type
 {};
 
-using namespace kv;
-
-static const ClassId COLLECTION_CLSID = 1;
-static const ClassId COLLINFO_CLSID = 2;
+static const kv::ClassId COLLECTION_CLSID = 1;
+static const kv::ClassId COLLINFO_CLSID = 2;
 static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
 class incompatible_schema_error : public persistence_error
@@ -74,63 +72,10 @@ public:
 };
 
 namespace kv {
+
 class ReadTransaction;
 class ExclusiveReadTransaction;
 class WriteTransaction;
-}
-
-class KeyValueStoreBase
-{
-  friend class kv::ReadTransaction;
-  friend class kv::WriteTransaction;
-
-public:
-  /** 0-based id to distinguish multiple stores using the same mappings */
-  unsigned const id;
-
-protected:
-  KeyValueStoreBase(StoreId _id) : id(_id) {}
-  virtual ~KeyValueStoreBase() {}
-
-  //property info stored in database
-  struct PropertyMetaInfo {
-    std::string name;
-    PropertyId id;
-    unsigned typeId;
-    bool isVector;
-    unsigned byteSize;
-    std::string className;
-    StoreLayout storeLayout;
-  };
-  using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
-
-  /**
-   * check if class schema already exists. If so, check compatibility. If not, create
-   * @param classInfo the runtime classInfo to check
-   * @param properties the runtime class properties
-   * @param numProperties size of the former
-   * @errors (out) compatibility errors detected during check
-   * @return true if the class already existed
-   */
-  bool updateClassSchema(AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[],
-                         unsigned numProperties, std::vector<incompatible_schema_error::Property> &errors);
-
-  /**
-   * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
-   *
-   * @param (in/out) the ClassInfo which holds the fully qualified class name. The other fields will
-   * be set
-   * @param (in) currentProps the currently live persistent properties
-   * @param (in) numProps the length of the above array
-   * @param (out) the persistent propertyInfos. This will be empty if the class was newly declared
-   */
-  virtual void loadSaveClassMeta(
-      StoreId storeId,
-      AbstractClassInfo *classInfo,
-      const PropertyAccessBase ** currentProps[],
-      unsigned numProps,
-      std::vector<PropertyMetaInfoPtr> &propertyInfos) = 0;
-};
 
 using ReadTransactionPtr = std::shared_ptr<kv::ReadTransaction>;
 using ExclusiveReadTransactionPtr = std::shared_ptr<kv::ExclusiveReadTransaction>;
@@ -155,19 +100,93 @@ struct TypeinfoEqualTo {
   }
 };
 
+struct ObjectCache {
+  virtual ~ObjectCache() {}
+
+  template <typename T> std::shared_ptr<T> &get(ObjectId id);
+  template <typename T> void put(ObjectId id, std::shared_ptr<T> ptr);
+};
+template <typename T>
+struct TypedObjectCache : public ObjectCache {
+  std::unordered_map<ObjectId, std::shared_ptr<T>> objects;
+};
+
+template <typename T> std::shared_ptr<T> &ObjectCache::get(ObjectId id) {
+  return dynamic_cast<TypedObjectCache<T> *>(this)->objects[id];
+}
+
+template <typename T> void ObjectCache::put(ObjectId id, std::shared_ptr<T> ptr) {
+  dynamic_cast<TypedObjectCache<T> *>(this)->objects[id] = ptr;
+}
+
+}
+
+class KeyValueStoreBase
+{
+  friend class kv::ReadTransaction;
+  friend class kv::WriteTransaction;
+
+public:
+  /** 0-based id to distinguish multiple stores using the same mappings */
+  unsigned const id;
+
+protected:
+  KeyValueStoreBase(kv::StoreId _id) : id(_id) {}
+  virtual ~KeyValueStoreBase() {}
+
+  //property info stored in database
+  struct PropertyMetaInfo {
+    std::string name;
+    kv::PropertyId id;
+    unsigned typeId;
+    bool isVector;
+    unsigned byteSize;
+    std::string className;
+    kv::StoreLayout storeLayout;
+  };
+  using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
+
+  /**
+   * check if class schema already exists. If so, check compatibility. If not, create
+   * @param classInfo the runtime classInfo to check
+   * @param properties the runtime class properties
+   * @param numProperties size of the former
+   * @errors (out) compatibility errors detected during check
+   * @return true if the class already existed
+   */
+  bool updateClassSchema(kv::AbstractClassInfo *classInfo, const kv::PropertyAccessBase ** properties[],
+                         unsigned numProperties, std::vector<incompatible_schema_error::Property> &errors);
+
+  /**
+   * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
+   *
+   * @param (in/out) the ClassInfo which holds the fully qualified class name. The other fields will
+   * be set
+   * @param (in) currentProps the currently live persistent properties
+   * @param (in) numProps the length of the above array
+   * @param (out) the persistent propertyInfos. This will be empty if the class was newly declared
+   */
+  virtual void loadSaveClassMeta(
+      kv::StoreId storeId,
+      kv::AbstractClassInfo *classInfo,
+      const kv::PropertyAccessBase ** currentProps[],
+      unsigned numProps,
+      std::vector<PropertyMetaInfoPtr> &propertyInfos) = 0;
+};
+
 namespace put_schema {
 /*
  * helper structs for processing the variadic template list which is passed to KeyValueStore#putSchema
  */
 
 struct validate_info {
-  AbstractClassInfo * const classInfo;
-  ClassData * const cdata;
-  const PropertyAccessBase *** const decl_props;
-  Properties * const properties;
+  kv::AbstractClassInfo * const classInfo;
+  kv::ClassData * const cdata;
+  const kv::PropertyAccessBase *** const decl_props;
+  kv::Properties * const properties;
   const unsigned num_decl_props;
 
-  validate_info(AbstractClassInfo *classInfo, ClassData *cdata, Properties *properties, const PropertyAccessBase ** decl_props[],
+  validate_info(kv::AbstractClassInfo *classInfo, kv::ClassData *cdata, kv::Properties *properties, const kv::PropertyAccessBase ** decl_props[],
                 unsigned num_decl_props)
       : classInfo(classInfo), cdata(cdata), properties(properties), decl_props(decl_props), num_decl_props(num_decl_props) {}
 };
@@ -180,9 +199,9 @@ struct register_type;
 template<typename S>
 struct register_type<S>
 {
-  using Traits = ClassTraits<S>;
+  using Traits = kv::ClassTraits<S>;
 
-  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos)
+  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos)
   {
     //collect infos
     vinfos.push_back(
@@ -197,7 +216,7 @@ struct register_type<S>
 template<typename S, typename... Sargs>
 struct register_helper
 {
-  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos) {
+  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
     register_type<S>().addTypes(storeId, vinfos);
     register_type<Sargs...>().addTypes(storeId, vinfos);
   }
@@ -206,7 +225,7 @@ struct register_helper
 //secondary template
 template<typename... Sargs>
 struct register_type {
-  static void addTypes(StoreId storeId, std::vector<validate_info> &vinfos) {
+  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
     register_helper<Sargs...>().addTypes(storeId, vinfos);
   }
 };
@@ -224,14 +243,15 @@ class KeyValueStore : public KeyValueStoreBase
   friend class kv::WriteTransaction;
 
   //backward mapping from ClassId, used during polymorphic operations
-  ObjectProperties objectProperties;
-  ObjectClassInfos objectClassInfos;
+  kv::ObjectProperties objectProperties;
+  kv::ObjectClassInfos objectClassInfos;
 
-  std::unordered_map<TypeInfoRef, ClassId, TypeinfoHasher, TypeinfoEqualTo> objectTypeInfos;
+  std::unordered_map<kv::TypeInfoRef, kv::ClassId, kv::TypeinfoHasher, kv::TypeinfoEqualTo> objectTypeInfos;
+  std::unordered_map<kv::ClassId, std::shared_ptr<kv::ObjectCache>> objectCaches;
 
 protected:
-  ClassId m_maxClassId = AbstractClassInfo::MIN_USER_CLSID;
-  ObjectId m_maxCollectionId = 0;
+  kv::ClassId m_maxClassId = kv::AbstractClassInfo::MIN_USER_CLSID;
+  kv::ObjectId m_maxCollectionId = 0;
 
 public:
   /**
@@ -270,7 +290,7 @@ public:
    *
    * @param storeId the unique, 0-based store ID
    */
-  KeyValueStore(StoreId storeId=0) : KeyValueStoreBase(storeId) {}
+  KeyValueStore(kv::StoreId storeId=0) : KeyValueStoreBase(storeId) {}
 
   /**
    * register and validate the class schema for this store
@@ -293,7 +313,7 @@ public:
 
       //make sure all propertyaccessors have correct classId
       for(int i=0; i<info.num_decl_props; i++)
-        const_cast<PropertyAccessBase *>(*info.decl_props[i])->classId = info.classInfo->data[id].classId;
+        const_cast<kv::PropertyAccessBase *>(*info.decl_props[i])->classId = info.classInfo->data[id].classId;
 
       //initialize lookup maps
       objectProperties[info.classInfo->data[id].classId] = info.properties;
@@ -303,14 +323,39 @@ public:
   }
 
   /**
+   * configure object caching for the given class. This is an owned operation, meaning that once the caching
+   * has been turned on, it can only be turned off by the holder of the ownerId returned from the call.
+   *
+   * @param cache whether caching should be turned on or off
+   * @param owner an owner id returned from a previous call to this function
+   * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected
+   */
+  template <typename T>
+  unsigned setCache(bool cache, unsigned owner=0) {
+    if(kv::ClassTraits<T>::traits_data(id).cacheOwner == owner) {
+      if(!cache) {
+        kv::ClassTraits<T>::traits_data(id).cacheOwner = owner == 0;
+        objectCaches.erase(id);
+      }
+      else {
+        if(owner == 0)
+          kv::ClassTraits<T>::traits_data(id).cacheOwner = owner = rand()+1;
+        objectCaches[kv::ClassTraits<T>::traits_data(id).classId] = std::make_shared<kv::TypedObjectCache<T>>();
+      }
+      return owner;
+    }
+    return 0;
+  }
+
+  /**
    * set refcounting state for the given template parameter class. When refcounting is on, a separate entry will
    * be written for each object which holds the reference count. The reference count will be incremented whenever
    * the object is added to a shared_ptr-mapped container, and decremented when it is removed from the same
    */
   template <typename T> void setRefCounting(bool refcount=true)
   {
-    ClassTraits<T>::traits_info->setRefCounting(id, refcount);
-    ClassId cid = ClassTraits<T>::traits_data(id).classId;
+    kv::ClassTraits<T>::traits_info->setRefCounting(id, refcount);
+    kv::ClassId cid = kv::ClassTraits<T>::traits_data(id).classId;
     for(auto &op : objectProperties) {
       if(op.first != cid && op.second->preparesUpdates(id, cid)) {
         if(refcount)
@@ -327,28 +372,28 @@ public:
   template <typename T, typename Subst>
   void registerSubstitute()
   {
-    ClassTraits<T>::traits_info-> template setSubstitute<Subst>();
+    kv::ClassTraits<T>::traits_info-> template setSubstitute<Subst>();
   }
 
   template <typename T> bool isNew(std::shared_ptr<T> &obj)
   {
-    return ClassTraits<T>::getObjectKey(obj)->isNew();
+    return kv::ClassTraits<T>::getObjectKey(obj)->isNew();
   }
 
-  template <typename T> ObjectId getObjectId(std::shared_ptr<T> obj)
+  template <typename T> kv::ObjectId getObjectId(std::shared_ptr<T> obj)
   {
-    return ClassTraits<T>::getObjectKey(obj)->objectId;
+    return kv::ClassTraits<T>::getObjectKey(obj)->objectId;
   }
 
   /**
    * @return a transaction object that allows reading the database.
    */
-  virtual ReadTransactionPtr beginRead() = 0;
+  virtual kv::ReadTransactionPtr beginRead() = 0;
 
   /**
    * @return a transaction object that allows reading the database but prevents writing
    */
-  virtual ExclusiveReadTransactionPtr beginExclusiveRead() = 0;
+  virtual kv::ExclusiveReadTransactionPtr beginExclusiveRead() = 0;
 
   /**
    * @param append enable append mode. Append mode, if supported, is useful if a large number of homogenous simple objects
@@ -364,7 +409,7 @@ public:
    * @throws InvalidArgumentException if in append mode the above prerequisites are not met
    * @throws persistence_error if write operations are currently blocked (beginRead(true))
    */
-  virtual WriteTransactionPtr beginWrite(bool append=false, unsigned needsKBs=0) = 0;
+  virtual kv::WriteTransactionPtr beginWrite(bool append=false, unsigned needsKBs=0) = 0;
 };
 
 namespace kv {
@@ -996,17 +1041,26 @@ protected:
    * @param objectId the key generated by a previous call to WriteTransaction::putObject()
    * @return the object pointer, or nullptr if the key is not defined.
    */
-  template<typename T> T *loadObject(ObjectKey &key)
+  template<typename T> std::shared_ptr<T> loadObject(object_handler<T> &handler, bool reload=false)
   {
+    bool doCache = (bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner;
+    if(doCache && !reload) {
+      std::shared_ptr<T> &cached = store.objectCaches[handler.classId]->template ObjectCache::get<T>(handler.objectId);
+      if(cached) return cached;
+    }
+
     ReadBuf readBuf;
-    getData(readBuf, key, ClassTraits<T>::traits_data(store.id).refcounting);
+    getData(readBuf, handler, ClassTraits<T>::traits_data(store.id).refcounting);
 
     if(readBuf.null()) return nullptr;
 
-    T *obj = ClassTraits<T>::makeObject(store.id, key.classId);
-    readObject<T>(store.id, this, readBuf, key.classId, key.objectId, obj);
+    T *obj = ClassTraits<T>::makeObject(store.id, handler.classId);
+    readObject<T>(store.id, this, readBuf, handler.classId, handler.objectId, obj);
 
-    return obj;
+    std::shared_ptr<T> result(obj, handler);
+    if(doCache) store.objectCaches[handler.classId]->put(handler.objectId, result);
+
+    return result;
   }
 
   /**
@@ -1151,8 +1205,7 @@ public:
   template<typename T> std::shared_ptr<T> getObject(ObjectId objectId)
   {
     object_handler<T> handler(ClassTraits<T>::traits_data(store.id).classId, objectId);
-    T *t = loadObject<T>(handler);
-    return std::shared_ptr<T>(t, handler);
+    return loadObject<T>(handler);
   }
 
   /**
@@ -1166,7 +1219,7 @@ public:
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
     object_handler<T> handler(*key);
-    return std::shared_ptr<T>(loadObject<T>(*key), handler);
+    return loadObject<T>(handler, true);
   }
 
   /**
@@ -1276,9 +1329,9 @@ public:
         }
       }
       else {
-        V *obj = loadObject<V>(hdl);
+        std::shared_ptr<V> obj = loadObject<V>(hdl);
         if(!obj) throw persistence_error("collection object not found");
-        vect.push_back(std::shared_ptr<V>(obj, hdl));
+        vect.push_back(obj);
       }
     }
   }
@@ -2804,8 +2857,7 @@ public:
       }
     }
     else {
-      V *v = tr->loadObject<V>(handler);
-      vp = std::shared_ptr<V>(v, handler);
+      vp = tr->loadObject<V>(handler);
     }
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::get(tr->store.id, *tp, pa, vp);
@@ -3146,10 +3198,10 @@ public:
           }
         }
         else {
-          V *obj = tr->loadObject<V>(handler);
+          std::shared_ptr<V> obj = tr->loadObject<V>(handler);
           if(obj) {
             if(inverse) ClassTraits<V>::get(tr->store.id, *obj, inverse, tp);
-            val.push_back(std::shared_ptr<V>(obj, handler));
+            val.push_back(obj);
           }
         }
       }

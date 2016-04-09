@@ -628,6 +628,7 @@ struct ClassData
   ClassId classId = 0;
   ObjectId maxObjectId = 0;
   bool refcounting = false;
+  long cacheOwner = 0;
 
   std::set<ClassId> prepareClasses;
 };

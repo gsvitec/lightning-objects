@@ -12,11 +12,11 @@ namespace persistence {
 namespace lmdb {
 
 using namespace std;
+using namespace kv;
+using namespace persistence;
 
 static const char * CLASSDATA = "classdata";
 static const char * CLASSMETA = "classmeta";
-
-namespace ps = flexis::persistence;
 
 static const unsigned ObjectId_off = ClassId_sz;
 static const unsigned PropertyId_off = ClassId_sz + ObjectId_sz;
@@ -458,7 +458,7 @@ protected:
   uint16_t decrementRefCount(ClassId cid, ObjectId oid) override;
 
 public:
-  Transaction(ps::KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
+  Transaction(KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
       : flexis::persistence::kv::ReadTransaction(store),
         flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
         flexis::persistence::kv::ExclusiveReadTransaction(store),
@@ -514,9 +514,9 @@ public:
   KeyValueStoreImpl(std::string location, std::string name, Options options);
   ~KeyValueStoreImpl();
 
-  ps::ReadTransactionPtr beginRead() override;
-  ps::ExclusiveReadTransactionPtr beginExclusiveRead() override;
-  ps::WriteTransactionPtr beginWrite(bool append, unsigned needsKBs) override;
+  ReadTransactionPtr beginRead() override;
+  ExclusiveReadTransactionPtr beginExclusiveRead() override;
+  WriteTransactionPtr beginWrite(bool append, unsigned needsKBs) override;
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
 };
@@ -637,21 +637,21 @@ void KeyValueStoreImpl::transactionCompleted(Transaction::Mode mode, bool blockW
   if(blockWrites) m_writeBlocks--;
 }
 
-ps::ReadTransactionPtr KeyValueStoreImpl::beginRead()
+ReadTransactionPtr KeyValueStoreImpl::beginRead()
 {
-  return ps::ReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, false));
+  return ReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, false));
 }
 
-ps::ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
+ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
 {
   shared_ptr<Transaction> wtr = writeTxn.lock();
   if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
   m_writeBlocks++;
 
-  return ps::ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, true));
+  return ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, true));
 }
 
-ps::WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs)
+WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs)
 {
   if(m_writeBlocks)
     throw invalid_argument("write operations are blocked by a running transaction");
