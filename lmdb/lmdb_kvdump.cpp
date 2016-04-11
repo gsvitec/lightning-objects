@@ -30,6 +30,8 @@ int meta_dup_compare(const MDB_val *a, const MDB_val *b);
 int key_compare(const MDB_val *a, const MDB_val *b);
 }}}
 
+using namespace flexis::persistence::kv;
+
 static const unsigned ObjectId_off = flexis::persistence::kv::ClassId_sz;
 static const unsigned PropertyId_off = flexis::persistence::kv::ClassId_sz + flexis::persistence::kv::ObjectId_sz;
 
