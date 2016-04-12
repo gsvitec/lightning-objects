@@ -1045,7 +1045,11 @@ protected:
   {
     bool doCache = (bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner;
     if(doCache && !reload) {
+#ifdef _MSC_VER
+      std::shared_ptr<T> &cached = store.objectCaches[handler.classId]->ObjectCache::get<T>(handler.objectId);
+#else
       std::shared_ptr<T> &cached = store.objectCaches[handler.classId]->template ObjectCache::get<T>(handler.objectId);
+#endif
       if(cached) return cached;
     }
 
