@@ -213,7 +213,7 @@ void testObjectMappings(KeyValueStore *kv)
 void testFlexisProperties(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
-  auto ro = make_obj<RectangularOverlay>();
+  auto ro = make_obj<TestRectangularOverlay>();
   auto to = make_obj<TimeCodeOverlay>();
 
   ro->rangeIn = -1;
@@ -782,7 +782,7 @@ void testDelete(KeyValueStore *kv, unsigned expectedOverlays)
     player::SourceInfo si;
     si.sourceIndex = 123456789;
 
-    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
+    TestRectangularOverlayPtr ro = kv::make_obj<TestRectangularOverlay>();
     ro->name = "testDelete.FlexisOverlay";
     si.userOverlays.push_back(ro);
 
@@ -864,7 +864,7 @@ void testUpdate(KeyValueStore *kv, unsigned expectedOverlays=1)
     player::SourceInfo si;
     si.sourceIndex = 2233445;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
-    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
+    TestRectangularOverlayPtr ro = kv::make_obj<TestRectangularOverlay>();
     ro->name = "testUpdate.FlexisOverlay";
     si.userOverlays.push_back(ro);
 
@@ -942,8 +942,8 @@ void testRefCounting(KeyValueStore *kv, unsigned expectedCount=0)
     si.sourceIndex = 8887766;
     si.displayConfig = kv::make_obj<player::SourceDisplayConfig>(1);
 
-    RectangularOverlayPtr ro = kv::make_obj<RectangularOverlay>();
-    ro->name = "testRefCounting.RectangularOverlay";
+    TestRectangularOverlayPtr ro = kv::make_obj<TestRectangularOverlay>();
+    ro->name = "testRefCounting.TestRectangularOverlay";
 
     TimeCodeOverlayPtr  to = kv::make_obj<TimeCodeOverlay>();
     to->name = "testRefCounting.TimeCodeOverlay";
@@ -976,8 +976,8 @@ void testRefCounting(KeyValueStore *kv, unsigned expectedCount=0)
   {
     auto txn = kv->beginWrite();
 
-    vector<RectangularOverlayPtr> rov = getInstances<RectangularOverlay>(
-        txn, [](shared_ptr<RectangularOverlay> o)->bool {return o->name == "testRefCounting.RectangularOverlay";});
+    vector<TestRectangularOverlayPtr> rov = getInstances<TestRectangularOverlay>(
+        txn, [](shared_ptr<TestRectangularOverlay> o)->bool {return o->name == "testRefCounting.TestRectangularOverlay";});
     assert(rov.size() == expectedCount);
     for(auto &r : rov) txn->deleteObject(r);
 
@@ -1181,7 +1181,7 @@ int main()
       player::SourceDisplayConfig,
       player::SourceInfo,
       flexis::Overlays::IFlexisOverlay,
-      flexis::Overlays::RectangularOverlay,
+      flexis::Overlays::TestRectangularOverlay,
       flexis::Overlays::TimeCodeOverlay,
       OtherThing,
       OtherThingA,

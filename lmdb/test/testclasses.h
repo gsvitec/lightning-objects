@@ -81,7 +81,7 @@ public:
 };
 using IFlexisOverlayPtr = shared_ptr<IFlexisOverlay>;
 
-class RectangularOverlay : public IFlexisOverlay {
+class TestRectangularOverlay : public IFlexisOverlay {
 
 public:
   double ovlX;
@@ -89,10 +89,10 @@ public:
   double ovlW;
   double ovlH;
 
-  string type() const override {return "RectangularOverlay";}
+  string type() const override {return "TestRectangularOverlay";}
 };
 
-using RectangularOverlayPtr = shared_ptr<RectangularOverlay>;
+using TestRectangularOverlayPtr = shared_ptr<TestRectangularOverlay>;
 
 
 class TimeCodeOverlay : public IFlexisOverlay {
@@ -379,12 +379,12 @@ START_MAPPING_A(flexis::Overlays::IFlexisOverlay, name, userVisible, opacity, ra
   MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, long, rangeOut)
 END_MAPPING(flexis::Overlays::IFlexisOverlay)
 
-START_MAPPING_SUB(flexis::Overlays::RectangularOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
-  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlX)
-  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlY)
-  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlW)
-  MAPPED_PROP(flexis::Overlays::RectangularOverlay, BasePropertyAssign, double, ovlH)
-END_MAPPING_SUB(flexis::Overlays::RectangularOverlay, flexis::Overlays::IFlexisOverlay)
+START_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlX)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlY)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlW)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlH)
+END_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay)
 
 START_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, fontSize)
   MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, double, ovlX)
