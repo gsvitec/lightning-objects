@@ -128,7 +128,7 @@ class KeyValueStoreBase
 
 public:
   /** 0-based id to distinguish multiple stores using the same mappings */
-  unsigned const id;
+  const kv::StoreId id;
 
 protected:
   KeyValueStoreBase(kv::StoreId _id) : id(_id) {}
