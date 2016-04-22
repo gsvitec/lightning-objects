@@ -279,16 +279,11 @@ public:
     return ret;
   }
 
-  void append(const char *data, size_t size)
+  template <typename T>
+  void append(T *data, size_t size)
   {
-    byte_t * buf = allocate(size);
-    memcpy(buf, data, size);
-  }
-
-  void append(byte_t *data, size_t size)
-  {
-    byte_t * buf = allocate(size);
-    memcpy(buf, data, size);
+    byte_t * buf = allocate(size * sizeof(T));
+    memcpy(buf, (byte_t *)data, size * sizeof(T));
   }
 
   //static_assert(TypeTraits<T>::byteSize == sizeof(T), "raw API only usable for types where sizeof matches TypeTraits<T>::byteSize");
