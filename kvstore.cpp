@@ -51,7 +51,7 @@ void schema_compatibility::error::printDetails(ostream &os)
           os << "  property '" << prop.name << "' removed from keyed storage" << endl;
           break;
         case schema_compatibility::property_modified:
-          os << "  property '" << prop.name << "' was modified: " << prop.description << endl;
+          os << "  property '" << prop.name << "': " << prop.description << " modified. Schema: " << prop.saved << " runtime: " << prop.runtime << endl;
           break;
       }
     }
