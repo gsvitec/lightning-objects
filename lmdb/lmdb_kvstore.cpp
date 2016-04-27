@@ -443,7 +443,7 @@ protected:
   void getData(ReadBuf &buf, ObjectKey &key, bool getRefount) override;
   bool remove(ClassId classId, ObjectId objectId) override;
   bool remove(ClassId classId, ObjectId objectId, PropertyId propertyId) override;
-  void clearRefCounts(std::vector<ClassId> classes) override;
+  void clearRefCounts(vector<ClassId> classes) override;
 
   ClassCursorHelper * _openCursor(const vector<ClassId> &classId) override;
   CollectionCursorHelper * _openCursor(ClassId classId, ObjectId collectionId) override;
@@ -497,7 +497,7 @@ class KeyValueStoreImpl : public KeyValueStore
   unsigned m_writeBlocks = 0;
 
   PropertyMetaInfoPtr make_propertyinfo(MDB_val *mdbVal);
-  MDB_val make_propertyval(unsigned id, const PropertyAccessBase *prop);
+  MDB_val make_propertyval(const PropertyAccessBase *prop);
   ObjectId findMaxObjectId(::lmdb::txn &txn, ClassId classId);
 
 protected:
@@ -506,12 +506,12 @@ protected:
       AbstractClassInfo *classInfo,
       const PropertyAccessBase ** currentProps[],
       unsigned numProps,
-      std::vector<PropertyMetaInfoPtr> &propertyInfos) override;
+      vector<PropertyMetaInfoPtr> &propertyInfos) override;
 
   void checkAvailableSpace(unsigned needsKBs);
 
 public:
-  KeyValueStoreImpl(std::string location, std::string name, Options options);
+  KeyValueStoreImpl(string location, string name, Options options);
   ~KeyValueStoreImpl();
 
   ReadTransactionPtr beginRead() override;
@@ -520,8 +520,6 @@ public:
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
 };
-
-//Start KeyValueStoreImpl implementation
 
 KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 {
@@ -797,7 +795,7 @@ uint16_t Transaction::decrementRefCount(ClassId cid, ObjectId oid)
   return 0;
 }
 
-void Transaction::clearRefCounts(std::vector<ClassId> classes)
+void Transaction::clearRefCounts(vector<ClassId> classes)
 {
   auto cursor = ::lmdb::cursor::open(m_txn, m_dbi);
   for(auto cls : classes) {
@@ -973,7 +971,7 @@ KeyValueStoreBase::PropertyMetaInfoPtr KeyValueStoreImpl::make_propertyinfo(MDB_
   return mi;
 }
 
-MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBase *prop)
+MDB_val KeyValueStoreImpl::make_propertyval(const PropertyAccessBase *prop)
 {
   size_t nameLen = strlen(prop->name) + 1;
   size_t size = nameLen + 9;
@@ -989,7 +987,7 @@ MDB_val KeyValueStoreImpl::make_propertyval(unsigned id, const PropertyAccessBas
 
   byte_t *writePtr = (byte_t *)val.mv_data;
 
-  write_integer<unsigned>(writePtr, id, 2);
+  write_integer<unsigned>(writePtr, prop->id, 2);
   writePtr += 2;
   memcpy(writePtr, prop->name, nameLen);
   writePtr += nameLen;
@@ -1066,7 +1064,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     //Save properties
     for(unsigned i=0; i < numProps; i++) {
       const PropertyAccessBase *prop = *currentProps[i];
-      MDB_val val = make_propertyval(i+1, prop);
+      MDB_val val = make_propertyval(prop);
       ::lmdb::dbi_put(txn, m_dbi_meta.handle(), (MDB_val *)key, &val, 0);
       free(val.mv_data);
     }

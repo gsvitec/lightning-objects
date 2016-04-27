@@ -43,25 +43,61 @@ static const kv::ClassId COLLECTION_CLSID = 1;
 static const kv::ClassId COLLINFO_CLSID = 2;
 static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
-class incompatible_schema_error : public persistence_error
+class schema_compatibility
 {
 public:
+  enum What {
+    /** property definitions differ between schema and runtime */
+    property_modified,
+
+    /** a key-only property exists in the schema but not in the runtime */
+    keyed_property_removed,
+
+    /** a key-only property exists in the runtime but not in the schema */
+    keyed_property_added,
+
+    /** runtime has a new emmbedded property at the end of the buffer */
+    embedded_property_appended,
+
+    /** runtime has a new emmbedded property before the end of the buffer */
+    embedded_property_inserted,
+
+    /** runtime is missing an embedded property before the end of the buffer */
+    embedded_property_removed_internal,
+
+    /** runtime is missing an embedded property at the end of the buffer */
+    embedded_property_removed_end
+  };
+
   struct Property {
     std::string name;
     unsigned position;
+    What what;
     std::string description;
     std::string runtime, saved;
 
-    Property(std::string nm, unsigned pos) : name(nm), position(pos) {}
+    Property(std::string nm, unsigned pos, What what) : what(what), name(nm), position(pos) {}
   };
-  std::vector<Property> properties;
+  std::unordered_map<std::string, std::vector<Property>> classProperties;
 
-  incompatible_schema_error(const char *className, std::vector<Property> errs)
-      : persistence_error(make_what(className), make_detail(errs)), properties(errs) {}
+  void put(const char *className, std::vector<Property> errs) {
+    classProperties[className] = errs;
+  }
 
-private:
-  static std::string make_what(const char *cls);
-  static std::string make_detail(std::vector<Property> &errs);
+  bool empty() {
+    return classProperties.empty();
+  }
+
+  struct error : public persistence_error
+  {
+    const std::shared_ptr<const schema_compatibility> compatibility;
+    error(std::string message, std::shared_ptr<const schema_compatibility> compatibility)
+        : persistence_error(message), compatibility(compatibility) {}
+
+    void printDetails(std::ostream &os);
+  };
+
+  error make_error();
 };
 
 class class_not_registered_error : public persistence_error
@@ -146,6 +182,9 @@ protected:
   };
   using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
 
+  void compare(std::vector<schema_compatibility::Property> &errors, unsigned index,
+               KeyValueStoreBase::PropertyMetaInfoPtr pi, const kv::PropertyAccessBase *pa);
+
   /**
    * check if class schema already exists. If so, check compatibility. If not, create
    * @param classInfo the runtime classInfo to check
@@ -155,7 +194,7 @@ protected:
    * @return true if the class already existed
    */
   bool updateClassSchema(kv::AbstractClassInfo *classInfo, const kv::PropertyAccessBase ** properties[],
-                         unsigned numProperties, std::vector<incompatible_schema_error::Property> &errors);
+                         unsigned numProperties, std::vector<schema_compatibility::Property> &errors);
 
   /**
    * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
@@ -298,17 +337,17 @@ public:
    * was detected
    */
   template <typename... Cls>
-  void putSchema(bool throwIfIncompatible=true)
+  void putSchema(kv::SchemaCompatibility requiredCompatibility=kv::SchemaCompatibility::write)
   {
     std::vector<put_schema::validate_info> vinfos;
     put_schema::register_type<Cls...>::addTypes(id, vinfos);
 
-    //first process individual classes
+    schema_compatibility schemaError;
     for(auto &info : vinfos) {
-      std::vector<incompatible_schema_error::Property> errs;
+      std::vector<schema_compatibility::Property> errs;
       updateClassSchema(info.classInfo, info.decl_props, info.num_decl_props, errs);
-      if(throwIfIncompatible && !errs.empty()) {
-        throw incompatible_schema_error(info.classInfo->name, errs);
+      if(info.classInfo->compatibility != requiredCompatibility) {
+        schemaError.put(info.classInfo->name, errs);
       }
 
       //make sure all propertyaccessors have correct classId
@@ -320,6 +359,7 @@ public:
       objectClassInfos[info.classInfo->data[id].classId] = info.classInfo;
       objectTypeInfos[info.classInfo->typeinfo] = info.classInfo->data[id].classId;
     }
+    if(!schemaError.empty()) throw schemaError.make_error();
   }
 
   /**

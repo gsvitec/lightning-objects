@@ -1,6 +1,6 @@
 # LMDB test
 
-add_executable(LmdbTest test.cpp testclasses.cpp $<TARGET_OBJECTS:FlexisKVStore> $<TARGET_OBJECTS:LmdbStore>)
+add_executable(LmdbTest test.cpp testclasses.cpp test_classupdate.cpp $<TARGET_OBJECTS:FlexisKVStore> $<TARGET_OBJECTS:LmdbStore>)
 add_dependencies(LmdbTest FlexisKVStore LmdbStore)
 
 add_executable(LmdbBench bench.cpp testclasses.cpp $<TARGET_OBJECTS:FlexisKVStore> $<TARGET_OBJECTS:LmdbStore>)

@@ -1,7 +1,7 @@
 //
 // Created by cse on 10/11/15.
 //
-#include <vector>
+#include <map>
 #include <set>
 #include <sstream>
 #include "kvstore.h"
@@ -17,22 +17,45 @@ const ObjectKey ObjectKey::NIL;
 Properties * ClassTraits<kv::EmptyClass>::traits_properties {nullptr};
 ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo<EmptyClass>("empty", typeid(EmptyClass));
 
-string incompatible_schema_error::make_what(const char *className)
+schema_compatibility::error schema_compatibility::make_error()
 {
-  stringstream ss;
-  ss << "saved class schema for " << className << " is incompatible with application class mapping" << endl;
-  return ss.str();
+  stringstream msg;
+  msg << "saved class schema is incompatible with application. " << classProperties.size() <<  " class affected";
+
+  auto sc = make_shared<schema_compatibility>(*this);
+  return error(msg.str(), sc);
 }
-string incompatible_schema_error::make_detail(vector<Property> &errs)
+
+void schema_compatibility::error::printDetails(ostream &os)
 {
-  stringstream ss;
-  ss << errs.size() << " property incompatibilities: ";
-  for(auto it=errs.cbegin(); it!=errs.cend();) {
-    ss << it->name << "[" << it->position << "]: " << it->description << " runtime: " << it->runtime << " saved: " << it->saved;
-    if(++it != errs.cend()) ss << ", ";
-    else break;
+  for(auto &cls : compatibility->classProperties) {
+    os << "compatibility issues for " << cls.first << endl;
+    for(auto &prop : cls.second) {
+      switch(prop.what) {
+        case schema_compatibility::embedded_property_appended:
+          os << "  property '" << prop.name << "' appended to shallow buffer" << endl;
+          break;
+        case schema_compatibility::embedded_property_inserted:
+          os << "  property '" << prop.name << "' insertied into shallow buffer" << endl;
+          break;
+        case schema_compatibility::embedded_property_removed_end:
+          os << "  property '" << prop.name << "' removed from end of shallow buffer" << endl;
+          break;
+        case schema_compatibility::embedded_property_removed_internal:
+          os << "  property '" << prop.name << "' removed from middle of shallow buffer" << endl;
+          break;
+        case schema_compatibility::keyed_property_added:
+          os << "  property '" << prop.name << "' added to keyed storage" << endl;
+          break;
+        case schema_compatibility::keyed_property_removed:
+          os << "  property '" << prop.name << "' removed from keyed storage" << endl;
+          break;
+        case schema_compatibility::property_modified:
+          os << "  property '" << prop.name << "' was modified: " << prop.description << endl;
+          break;
+      }
+    }
   }
-  return ss.str();
 }
 
 inline bool streq(string s1, const char *s2) {
@@ -51,95 +74,161 @@ inline bool is_integer(unsigned typeId) {
       typeId == TypeTraits<unsigned long long>::id;
 }
 
+inline bool is_embedded(StoreLayout layout) {
+  return layout == StoreLayout::embedded_key || layout == StoreLayout::all_embedded;
+}
+
+void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors, unsigned index,
+             KeyValueStoreBase::PropertyMetaInfoPtr pi, const PropertyAccessBase *pa)
+{
+  auto layout_msg = [](StoreLayout l) -> const char * {
+    switch(l) {
+      case StoreLayout::all_embedded:
+        return "all_embedded";
+      case StoreLayout::embedded_key:
+        return "embedded_key";
+      default:
+        return "not embedded";
+    }
+  };
+  schema_compatibility::Property err(pa->name, index, schema_compatibility::property_modified);
+  if(pa->storage->layout != pi->storeLayout &&
+     ((pa->storage->layout == StoreLayout::all_embedded || pa->storage->layout == StoreLayout::embedded_key)
+      || (pi->storeLayout == StoreLayout::all_embedded || pi->storeLayout != StoreLayout::embedded_key)))
+  {
+    err.description = "storage layout";
+    err.runtime = layout_msg(pa->storage->layout);
+    err.saved = layout_msg(pi->storeLayout);
+  }
+  else if(pa->type.id != pi->typeId && (!is_integer(pa->type.id) || !is_integer(pi->typeId))) {
+    err.description = "type";
+    err.runtime = to_string(pa->type.id);
+    err.saved = to_string(pi->typeId);
+  }
+  else if(pa->type.byteSize != pi->byteSize) {
+    err.description = "byteSize";
+    err.runtime = to_string(pa->type.byteSize);
+    err.saved = to_string(pi->byteSize);
+  }
+  else if(!streq(pi->className, pa->type.className)) {
+    err.description = "className";
+    err.runtime = pa->type.className;
+    err.saved = pi->className;
+  }
+  else if(pi->isVector != pa->type.isVector) {
+    err.description = "isVector";
+    err.runtime = to_string(pa->type.isVector);
+    err.saved = to_string(pi->isVector);
+  }
+  if(!err.description.empty()) {
+    errors.push_back(err);
+  }
+}
+
 bool KeyValueStoreBase::updateClassSchema(
     AbstractClassInfo *classInfo, const PropertyAccessBase ** properties[], unsigned numProperties,
-    vector<incompatible_schema_error::Property> &errors)
+    vector<schema_compatibility::Property> &errors)
 {
   vector<PropertyMetaInfoPtr> propertyInfos;
   loadSaveClassMeta(id, classInfo, properties, numProperties, propertyInfos);
 
-  bool hasSubclasses = !classInfo->subs.empty();
+  //no previous schema in db
+  if(propertyInfos.empty()) return false;
 
-  auto layout_msg = [](StoreLayout l) -> const char * {
-    switch(l) {
-    case StoreLayout::all_embedded:
-      return "all_embedded";
-    case StoreLayout::embedded_key:
-      return "embedded_key";
-    default:
-      return "not embedded";
-    }
-  };
-
-  //if previous class schema found in db, check compatibility
-  if(!propertyInfos.empty()) {
-    //1. all available properties must still be in the same sequence and of the same type
-    size_t index=0;
-
-    for(size_t sz=propertyInfos.size(); index < sz && index < numProperties; index++) {
-      PropertyMetaInfoPtr &pi = propertyInfos[index];
-
-      const PropertyAccessBase * pa = *properties[index];
-
-      incompatible_schema_error::Property err(pa->name, index);
-      if(hasSubclasses && pa->storage->layout != pi->storeLayout &&
-         ((pa->storage->layout == StoreLayout::all_embedded || pa->storage->layout == StoreLayout::embedded_key)
-          || (pi->storeLayout == StoreLayout::all_embedded || pi->storeLayout != StoreLayout::embedded_key)))
-      {
-        err.description = "shallow storage";
-        err.runtime = layout_msg(pa->storage->layout);
-        err.saved = layout_msg(pi->storeLayout);
-      }
-      else if(pa->type.id != pi->typeId && (!is_integer(pa->type.id) || !is_integer(pi->typeId))) {
-        err.description = "typeId";
-        err.runtime = to_string(pa->type.id);
-        err.saved = to_string(pi->typeId);
-      }
-      else if(pa->type.byteSize != pi->byteSize) {
-        err.description = "byteSize";
-        err.runtime = to_string(pa->type.byteSize);
-        err.saved = to_string(pi->byteSize);
-      }
-      else if(!streq(pi->className, pa->type.className)) {
-        err.description = "className";
-        err.runtime = pa->type.className;
-        err.saved = pi->className;
-      }
-      else if(pi->isVector != pa->type.isVector) {
-        err.description = "isVector";
-        err.runtime = to_string(pa->type.isVector);
-        err.saved = to_string(pi->isVector);
-      }
-      if(!err.description.empty()) {
-        classInfo->compatibility = SchemaCompatibility::none;
-        errors.push_back(err);
-      }
-    }
-
-    //2. we cannot cope with deleted shallow properties in non-leaf classes
-    if(hasSubclasses) {
-      for(unsigned i=numProperties; i<propertyInfos.size(); i++) {
-        if(propertyInfos[i]->storeLayout == StoreLayout::all_embedded || propertyInfos[i]->storeLayout == StoreLayout::embedded_key){
-          incompatible_schema_error::Property err(propertyInfos[i]->name, index);
-          err.description = "deleted shallow storage property in non-leaf class";
-          err.runtime = "--";
-          err.saved = layout_msg(propertyInfos[i]->storeLayout);
-
-          classInfo->compatibility = SchemaCompatibility::none;
-          errors.push_back(err);
-        }
-      }
-    }
-    //3. properties that were added can safely be disabled (during read, that is)
-    if(index < numProperties) {
-      classInfo->compatibility = SchemaCompatibility::read;
-      for(; index < numProperties; index++) {
-        const_cast<PropertyAccessBase *>(*properties[index])->enabled = false;
-      }
-    }
-    return true;
+  //schema found. Check compatibility
+  vector<PropertyMetaInfoPtr> schemaEmbedded;
+  map<string, PropertyMetaInfoPtr> schemaKeyed;
+  for(auto pmi : propertyInfos) {
+    if(is_embedded(pmi->storeLayout))
+      schemaEmbedded.push_back(pmi);
+    else
+      schemaKeyed[pmi->name] = pmi;
   }
-  return false;
+  vector<const PropertyAccessBase *> runtimeEmbedded;
+  map<string, const PropertyAccessBase *> runtimeKeyed;
+  for(int i=0; i<numProperties; i++) {
+    const PropertyAccessBase *pa = *properties[i];
+    if(is_embedded(pa->storage->layout))
+      runtimeEmbedded.push_back(pa);
+    else
+      runtimeKeyed[pa->name] = pa;
+  }
+
+  unsigned rIndex;
+  for(unsigned s=0, r=0; s<schemaEmbedded.size(); s++, r++)
+  {
+    unsigned sIndex=s;
+    for(; sIndex < schemaEmbedded.size() && schemaEmbedded[sIndex]->name != runtimeEmbedded[r]->name; sIndex++) ;
+    for(; sIndex < schemaEmbedded.size() && s<sIndex; s++) {
+      schema_compatibility::What w = sIndex == schemaEmbedded.size() ?
+                                      schema_compatibility::embedded_property_removed_end :
+                                      schema_compatibility::embedded_property_removed_internal;
+      errors.push_back(schema_compatibility::Property(schemaEmbedded[s]->name, schemaEmbedded[s]->id, w));
+    }
+
+    rIndex=r;
+    for(; rIndex < runtimeEmbedded.size() && runtimeEmbedded[rIndex]->name != schemaEmbedded[s]->name; rIndex++) ;
+    for(; rIndex < runtimeEmbedded.size() && r<rIndex; r++) {
+      schema_compatibility::What w = r == runtimeEmbedded.size() ?
+                                    schema_compatibility::embedded_property_appended :
+                                    schema_compatibility::embedded_property_inserted;
+      errors.push_back(schema_compatibility::Property(runtimeEmbedded[r]->name, runtimeEmbedded[r]->id, w));
+      const_cast<PropertyAccessBase *>(runtimeEmbedded[r])->enabled = false;
+    }
+
+    if(sIndex < schemaEmbedded.size() && rIndex < runtimeEmbedded.size())
+      compare(errors, s, schemaEmbedded[sIndex], runtimeEmbedded[rIndex]);
+  }
+  for(unsigned j=rIndex+1; j<runtimeEmbedded.size(); j++) {
+    errors.push_back(schema_compatibility::Property(
+        runtimeEmbedded[j]->name, runtimeEmbedded[j]->id, schema_compatibility::embedded_property_appended));
+  }
+
+  for(auto &schema : schemaKeyed) {
+    if(runtimeKeyed.count(schema.first))
+      compare(errors, schema.second->id, schema.second, runtimeKeyed[schema.first]);
+    else {
+      errors.push_back(schema_compatibility::Property(
+                         schema.second->name, schema.second->id, schema_compatibility::keyed_property_removed));
+    }
+  }
+  for(auto &runtime : runtimeKeyed) {
+    if(!schemaKeyed.count(runtime.first)) {
+      errors.push_back(schema_compatibility::Property(
+                         runtime.second->name, runtime.second->id, schema_compatibility::keyed_property_added));
+      const_cast<PropertyAccessBase *>(runtime.second)->enabled = false;
+    }
+  }
+
+  classInfo->compatibility = SchemaCompatibility::write;
+
+  bool hasSubclasses = !classInfo->subs.empty();
+  for(auto &err : errors) {
+    switch(err.what) {
+      case schema_compatibility::property_modified:
+        classInfo->compatibility = SchemaCompatibility::none;
+        break;
+      case schema_compatibility::keyed_property_removed:
+        classInfo->compatibility = SchemaCompatibility::read;
+        break;
+      case schema_compatibility::keyed_property_added:
+        classInfo->compatibility = SchemaCompatibility::write;
+        break;
+      case schema_compatibility::embedded_property_appended:
+        classInfo->compatibility = hasSubclasses ? SchemaCompatibility::none : SchemaCompatibility::read;
+        break;
+      case schema_compatibility::embedded_property_inserted:
+        classInfo->compatibility = SchemaCompatibility::none;
+        break;
+      case schema_compatibility::embedded_property_removed_internal:
+        classInfo->compatibility = SchemaCompatibility::none;
+        break;
+      case schema_compatibility::embedded_property_removed_end:
+        classInfo->compatibility = SchemaCompatibility::read;
+        break;
+    }
+  }
+  return true;
 }
 
 namespace kv {

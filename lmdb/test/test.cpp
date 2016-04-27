@@ -1155,8 +1155,13 @@ void testCompatibleDatabase(ObjectKey key)
   delete kv;
 }
 
+void test_classupdate();
+
 int main()
 {
+  test_classupdate();
+
+#if 1
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
 
   kv->putSchema<ObjectPropertyTest,
@@ -1192,7 +1197,6 @@ int main()
   kv->setRefCounting<FixedSizeObject>();
   kv->setRefCounting<player::SourceDisplayConfig>();
 
-#if 1
   testUpdate(kv, 2);
   testDelete(kv, 2);
   testRefCounting(kv, 1);
