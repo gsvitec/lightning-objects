@@ -174,7 +174,7 @@ void test_classupdate()
   }
   {
     CALLUPDATE(2)
-    assert(result && errors.size() == 1 && (classInfo.compatibility == SchemaCompatibility::write));
+    assert(result && errors.size() == 1 && (classInfo.compatibility == SchemaCompatibility::read));
   }
   {
     CALLUPDATE(3)
