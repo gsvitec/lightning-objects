@@ -95,6 +95,7 @@ public:
         : persistence_error(message), compatibility(compatibility) {}
 
     void printDetails(std::ostream &os);
+    std::unordered_map<std::string, std::vector<std::string>> getDetails();
   };
 
   error make_error();

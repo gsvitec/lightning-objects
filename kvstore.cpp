@@ -26,36 +26,55 @@ schema_compatibility::error schema_compatibility::make_error()
   return error(msg.str(), sc);
 }
 
+void write_prop(const schema_compatibility::Property &prop, const char *prefix, ostream &os)
+{
+  switch(prop.what) {
+    case schema_compatibility::embedded_property_appended:
+      os << prefix << "property '" << prop.name << "' appended to shallow buffer" << endl;
+      break;
+    case schema_compatibility::embedded_property_inserted:
+      os << prefix << "property '" << prop.name << "' insertied into shallow buffer" << endl;
+      break;
+    case schema_compatibility::embedded_property_removed_end:
+      os << prefix << "property '" << prop.name << "' removed from end of shallow buffer" << endl;
+      break;
+    case schema_compatibility::embedded_property_removed_internal:
+      os << prefix << "property '" << prop.name << "' removed from middle of shallow buffer" << endl;
+      break;
+    case schema_compatibility::keyed_property_added:
+      os << prefix << "property '" << prop.name << "' added to keyed storage" << endl;
+      break;
+    case schema_compatibility::keyed_property_removed:
+      os << prefix << "property '" << prop.name << "' removed from keyed storage" << endl;
+      break;
+    case schema_compatibility::property_modified:
+      os << prefix << "property '" << prop.name << "': " << prop.description << " modified. Schema: " << prop.saved << " runtime: " << prop.runtime << endl;
+      break;
+  }
+}
+
 void schema_compatibility::error::printDetails(ostream &os)
 {
   for(auto &cls : compatibility->classProperties) {
     os << "compatibility issues for " << cls.first << endl;
     for(auto &prop : cls.second) {
-      switch(prop.what) {
-        case schema_compatibility::embedded_property_appended:
-          os << "  property '" << prop.name << "' appended to shallow buffer" << endl;
-          break;
-        case schema_compatibility::embedded_property_inserted:
-          os << "  property '" << prop.name << "' insertied into shallow buffer" << endl;
-          break;
-        case schema_compatibility::embedded_property_removed_end:
-          os << "  property '" << prop.name << "' removed from end of shallow buffer" << endl;
-          break;
-        case schema_compatibility::embedded_property_removed_internal:
-          os << "  property '" << prop.name << "' removed from middle of shallow buffer" << endl;
-          break;
-        case schema_compatibility::keyed_property_added:
-          os << "  property '" << prop.name << "' added to keyed storage" << endl;
-          break;
-        case schema_compatibility::keyed_property_removed:
-          os << "  property '" << prop.name << "' removed from keyed storage" << endl;
-          break;
-        case schema_compatibility::property_modified:
-          os << "  property '" << prop.name << "': " << prop.description << " modified. Schema: " << prop.saved << " runtime: " << prop.runtime << endl;
-          break;
-      }
+      write_prop(prop, "  ", os);
     }
   }
+}
+unordered_map<string, vector<string>> schema_compatibility::error::getDetails()
+{
+  unordered_map<string, vector<string>> details;
+  for(auto &cls : compatibility->classProperties) {
+    vector<string> errs;
+    for(auto &prop : cls.second) {
+      stringstream ss;
+      write_prop(prop, "", ss);
+      errs.push_back(ss.str());
+    }
+    details[cls.first] = errs;
+  }
+  return details;
 }
 
 inline bool streq(string s1, const char *s2) {
