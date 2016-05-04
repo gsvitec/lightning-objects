@@ -511,7 +511,7 @@ protected:
   void checkAvailableSpace(unsigned needsKBs);
 
 public:
-  KeyValueStoreImpl(string location, string name, Options options);
+  KeyValueStoreImpl(StoreId storeId, string location, string name, Options options);
   ~KeyValueStoreImpl();
 
   ReadTransactionPtr beginRead() override;
@@ -524,7 +524,7 @@ public:
 KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
 {
   try {
-    return new KeyValueStoreImpl(location, name, options);
+    return new KeyValueStoreImpl(storeId, location, name, options);
   }
   catch(::lmdb::error &err) {
     throw persistence_error(err.what());
@@ -545,8 +545,9 @@ int meta_dup_compare(const MDB_val *a, const MDB_val *b)
   return id1 - id2;
 }
 
-KeyValueStoreImpl::KeyValueStoreImpl(string location, string name, Options options)
-    : m_env(::lmdb::env::create()), m_options(options), m_curMapSize(options.initialMapSizeMB * size_t(1024) * size_t(1024))
+KeyValueStoreImpl::KeyValueStoreImpl(StoreId storeId, string location, string name, Options options)
+    : KeyValueStore(storeId),
+      m_env(::lmdb::env::create()), m_options(options), m_curMapSize(options.initialMapSizeMB * size_t(1024) * size_t(1024))
 {
   m_dbpath = location;
   if(m_dbpath.back() != separator_char) m_dbpath += separator_char;

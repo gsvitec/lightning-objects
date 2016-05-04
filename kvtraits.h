@@ -21,8 +21,8 @@ namespace persistence {
 
 namespace kv {
 
-/** constant designating the maximum number of databases allowed within one OS process */
-unsigned const MAX_DATABASES = 5;
+/** constant designating the maximum number of databases allowed within one process */
+unsigned const MAX_DATABASES = 10;
 
 #define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
 
@@ -429,7 +429,7 @@ struct PropertyAccessBase
 {
   const char * const name;
   bool enabled = true;
-  ClassId classId;
+  ClassId classId[MAX_DATABASES];
   PropertyId id = 0;
   StoreAccessBase *storage;
   const PropertyType type;
@@ -629,6 +629,7 @@ struct ClassData
   ObjectId maxObjectId = 0;
   bool refcounting = false;
   long cacheOwner = 0;
+  long refcountingOwner = 0;
 
   std::set<ClassId> prepareClasses;
 };
@@ -673,6 +674,10 @@ struct AbstractClassInfo {
     for(auto &sub : subs) {
       sub->setRefCounting(storeId, refcount);
     }
+  }
+
+  bool getRefCounting(StoreId storeId) {
+    return data[storeId].refcounting;
   }
 
   bool isInstance(StoreId storeId, ClassId _classId) {
@@ -999,10 +1004,10 @@ public:
 
   static void * initMember(StoreId storeId, T *obj, const PropertyAccessBase *pa)
   {
-    if(pa->classId == traits_data(storeId).classId)
+    if(pa->classId[storeId] == traits_data(storeId).classId)
       return pa->initMember(storeId, obj);
-    else if(pa->classId)
-      return RESOLVE_SUB(pa->classId)->initMember(storeId, obj, pa);
+    else if(pa->classId[storeId])
+      return RESOLVE_SUB(pa->classId[storeId])->initMember(storeId, obj, pa);
     return nullptr;
   }
 
@@ -1028,14 +1033,14 @@ public:
 
   static bool addSize(StoreId storeId, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_data(storeId).classId) {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
       size += pa->storage->size(storeId, obj, pa);
       return true;
     }
-    else if(pa->classId) {
+    else if(pa->classId[storeId]) {
       if(UP && ClassTraits<SUP>::addSize(storeId, obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->addSize(storeId, obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId[storeId])->addSize(storeId, obj, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -1068,19 +1073,19 @@ public:
   static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa)
   {
     size_t size;
-    if(!prep_update(storeId, buf, pd, obj, pa, size)) throw invalid_classid_error(pa->classId);
+    if(!prep_update(storeId, buf, pd, obj, pa, size)) throw invalid_classid_error(pa->classId[storeId]);
     return size;
   }
   static bool prep_update(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_data(storeId).classId) {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
       size = pa->storage->prepareUpdate(storeId, buf, pd, obj, pa);
       return true;
     }
-    else if(pa->classId) {
+    else if(pa->classId[storeId]) {
       if(UP && ClassTraits<SUP>::prep_update(storeId, buf, pd, obj, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prep_update(storeId, buf, pd, obj, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId[storeId])->prep_update(storeId, buf, pd, obj, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -1088,19 +1093,19 @@ public:
   static size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa)
   {
     size_t size;
-    if(!prep_delete(storeId, tr, buf, pa, size)) throw invalid_classid_error(pa->classId);
+    if(!prep_delete(storeId, tr, buf, pa, size)) throw invalid_classid_error(pa->classId[storeId]);
     return size;
   }
   static bool prep_delete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa, size_t &size, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_data(storeId).classId) {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
       size = pa->storage->prepareDelete(storeId, tr, buf, pa);
       return true;
     }
-    else if(pa->classId) {
+    else if(pa->classId[storeId]) {
       if(UP && ClassTraits<SUP>::prep_delete(storeId, tr, buf, pa, size, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->prep_delete(storeId, tr, buf, pa, size, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId[storeId])->prep_delete(storeId, tr, buf, pa, size, FLAG_DN);
     }
     return false;
   }
@@ -1108,14 +1113,14 @@ public:
   static bool save(StoreId storeId, WriteTransaction *tr,
                    ClassId classId, ObjectId objectId, T *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_data(storeId).classId) {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
       pa->storage->save(tr, classId, objectId, obj, pd, pa, mode);
       return true;
     }
-    else if(pa->classId) {
+    else if(pa->classId[storeId]) {
       if(UP && ClassTraits<SUP>::save(storeId, tr, classId, objectId, obj, pd, pa, mode, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->save(storeId, tr, classId, objectId, obj, pd, pa, mode, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId[storeId])->save(storeId, tr, classId, objectId, obj, pd, pa, mode, FLAG_DN);
     }
     return false;
   }
@@ -1124,21 +1129,21 @@ public:
                    ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa,
                    StoreMode mode=StoreMode::force_none, unsigned flags=FLAGS_ALL)
   {
-    if(pa->classId == traits_data(storeId).classId) {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
       pa->storage->load(tr, buf, classId, objectId, obj, pa, mode);
       return true;
     }
-    else if(pa->classId) {
+    else if(pa->classId[storeId]) {
       if(UP && ClassTraits<SUP>::load(storeId, tr, buf, classId, objectId, obj, pa, mode, FLAG_UP))
         return true;
-      return DN && RESOLVE_SUB(pa->classId)->load(storeId, tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
+      return DN && RESOLVE_SUB(pa->classId[storeId])->load(storeId, tr, buf, classId, objectId, obj, pa, mode, FLAG_DN);
     }
     return false;
   }
 
   template <typename TV>
   static void put(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != traits_data(storeId).classId)
+    if(pa->classId[storeId] != traits_data(storeId).classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
@@ -1147,11 +1152,11 @@ public:
 
   /**
    * update the given property using value. Must only be called after type resolution, such
-   * that pa->classId == info->classId
+   * that pa->classId[storeId] == info->classId
    */
   template <typename TV>
   static void get(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
-    if(pa->classId != traits_data(storeId).classId)
+    if(pa->classId[storeId] != traits_data(storeId).classId)
       throw persistence_error("internal error: type mismatch");
 
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;

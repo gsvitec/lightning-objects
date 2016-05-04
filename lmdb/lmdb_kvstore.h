@@ -27,13 +27,17 @@ public:
 
   struct Factory
   {
+    const kv::StoreId storeId;
     const std::string location, name;
     const Options options;
 
-    Factory(std::string location, std::string name, Options options = Options())
-        : location(location), name(name), options(options) {}
+    Factory(kv::StoreId storeId, std::string location, std::string name, Options options = Options())
+        : storeId(storeId), location(location), name(name), options(options) {}
     operator flexis::persistence::KeyValueStore *() const;
   };
+
+protected:
+  KeyValueStore(kv::StoreId storeId) : flexis::persistence::KeyValueStore(storeId) {}
 };
 
 /**

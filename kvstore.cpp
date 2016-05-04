@@ -252,6 +252,16 @@ bool KeyValueStoreBase::updateClassSchema(
 
 namespace kv {
 
+static StoreId storeId = 0;
+StoreId nextStoreId() {
+  if(storeId == MAX_DATABASES)
+    throw persistence_error("maximum number of databases reached");
+
+  StoreId ret = storeId;
+  storeId++;
+  return ret;
+}
+
 void readObjectHeader(ReadBuf &buf, ClassId *classId, ObjectId *objectId, size_t *size, bool *deleted)
 {
   ClassId cid = buf.readInteger<ClassId>(ClassId_sz);

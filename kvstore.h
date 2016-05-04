@@ -156,6 +156,7 @@ template <typename T> void ObjectCache::put(ObjectId id, std::shared_ptr<T> ptr)
   dynamic_cast<TypedObjectCache<T> *>(this)->objects[id] = ptr;
 }
 
+StoreId nextStoreId();
 }
 
 class KeyValueStoreBase
@@ -296,7 +297,7 @@ protected:
 public:
   /**
    * create a new store object.
-   * <p>Each new store can be assigned a storeId. If multiple databases are to be used in the same process with
+   * <p>A store can be assigned a storeId. If multiple databases are to be used in the same process with
    * different but overlapping schema setup, each must be assigned a 0-based, consecutive ID. A difference in schema
    * setup occurs when the sequence of putSchema calls differs for classes whose mappings are used in both stores.
    * A schema setup is equal if the classes that are common to all participating stores are declared at the exact same
@@ -328,9 +329,9 @@ public:
    * process instances. Store IDs are not required if there are no common mappings between databases. If used, store IDs
    * must be 0-based, consecutive up to a maximum of MAX_DATABASES (kvtraits.h)
    *
-   * @param storeId the unique, 0-based store ID
+   * @param storeId the store ID. StoreIds should be obtained from kv::nextStoreId
    */
-  KeyValueStore(kv::StoreId storeId=0) : KeyValueStoreBase(storeId) {}
+  KeyValueStore(kv::StoreId storeId=kv::nextStoreId()) : KeyValueStoreBase(storeId) {}
 
   /**
    * register and validate the class schema for this store
@@ -353,7 +354,7 @@ public:
 
       //make sure all propertyaccessors have correct classId
       for(int i=0; i<info.num_decl_props; i++)
-        const_cast<kv::PropertyAccessBase *>(*info.decl_props[i])->classId = info.classInfo->data[id].classId;
+        const_cast<kv::PropertyAccessBase *>(*info.decl_props[i])->classId[id] = info.classInfo->data[id].classId;
 
       //initialize lookup maps
       objectProperties[info.classInfo->data[id].classId] = info.properties;
@@ -364,46 +365,71 @@ public:
   }
 
   /**
-   * configure object caching for the given class. This is an owned operation, meaning that once the caching
-   * has been turned on, it can only be turned off by the holder of the ownerId returned from the call.
+   * configure object caching for the given class.
+   *
+   * This is an owned operation, meaning that once it has been set, it can only be changed by the holder of the ownerId
+   * returned from the initial call.
    *
    * @param cache whether caching should be turned on or off
    * @param owner an owner id returned from a previous call to this function
-   * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected
+   * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected but the
+   * setting is already as requested
+   * @throw persistence_error if the setting is already owned and not the same as requested
    */
   template <typename T>
-  unsigned setCache(bool cache, unsigned owner=0) {
+  unsigned setCache(bool cache=true, unsigned owner=0) {
     if(kv::ClassTraits<T>::traits_data(id).cacheOwner == owner) {
-      if(!cache) {
-        kv::ClassTraits<T>::traits_data(id).cacheOwner = owner == 0;
-        objectCaches.erase(id);
-      }
-      else {
-        if(owner == 0)
-          kv::ClassTraits<T>::traits_data(id).cacheOwner = owner = rand()+1;
+      if(owner == 0) kv::ClassTraits<T>::traits_data(id).cacheOwner = owner = rand()+1;
+
+      if(cache)
         objectCaches[kv::ClassTraits<T>::traits_data(id).classId] = std::make_shared<kv::TypedObjectCache<T>>();
-      }
+      else
+        objectCaches.erase(kv::ClassTraits<T>::traits_data(id).classId);
+
       return owner;
     }
-    return 0;
+    else {
+      if(static_cast<bool>(objectCaches.count(kv::ClassTraits<T>::traits_data(id).classId)) != cache)
+        throw persistence_error("cache configuration already owned and differs from requested value");
+      return 0;
+    }
   }
 
   /**
    * set refcounting state for the given template parameter class. When refcounting is on, a separate entry will
    * be written for each object which holds the reference count. The reference count will be incremented whenever
    * the object is added to a shared_ptr-mapped container, and decremented when it is removed from the same
+   *
+   * This is an owned operation, meaning that once it has been set, it can only be changed by the holder of the ownerId
+   * returned from the initial call.
+   *
+   * @param cache whether caching should be turned on or off
+   * @param owner an owner id returned from a previous call to this function
+   * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected but the
+   * setting is already as requested
+   * @throw persistence_error if the setting is already owned and not the same as requested
    */
-  template <typename T> void setRefCounting(bool refcount=true)
+  template <typename T>
+  unsigned  setRefCounting(bool refcount=true, unsigned owner=0)
   {
-    kv::ClassTraits<T>::traits_info->setRefCounting(id, refcount);
-    kv::ClassId cid = kv::ClassTraits<T>::traits_data(id).classId;
-    for(auto &op : objectProperties) {
-      if(op.first != cid && op.second->preparesUpdates(id, cid)) {
-        if(refcount)
-          objectClassInfos[op.first]->data[id].prepareClasses.insert(cid);
-        else
-          objectClassInfos[op.first]->data[id].prepareClasses.erase(cid);
+    if(kv::ClassTraits<T>::traits_data(id).refcountingOwner == owner) {
+      if(owner == 0) kv::ClassTraits<T>::traits_data(id).refcountingOwner = owner = rand()+1;
+
+      kv::ClassTraits<T>::traits_info->setRefCounting(id, refcount);
+      kv::ClassId cid = kv::ClassTraits<T>::traits_data(id).classId;
+      for(auto &op : objectProperties) {
+        if(op.first != cid && op.second->preparesUpdates(id, cid)) {
+          if(refcount)
+            objectClassInfos[op.first]->data[id].prepareClasses.insert(cid);
+          else
+            objectClassInfos[op.first]->data[id].prepareClasses.erase(cid);
+        }
       }
+    }
+    else {
+      if(kv::ClassTraits<T>::traits_info->getRefCounting(id) != refcount)
+        throw persistence_error("refcounting configuration already owned and differs from requested value");
+      return 0;
     }
   }
 
@@ -424,6 +450,11 @@ public:
   template <typename T> kv::ObjectId getObjectId(std::shared_ptr<T> obj)
   {
     return kv::ClassTraits<T>::getObjectKey(obj)->objectId;
+  }
+
+  template <typename T> void getObjectKey(std::shared_ptr<T> obj, kv::ObjectKey &key)
+  {
+    key = *kv::ClassTraits<T>::getObjectKey(obj);
   }
 
   /**
@@ -2319,7 +2350,7 @@ public:
   }
 
   template <typename T>
-  void deleteObject(std::shared_ptr<T> &obj) {
+  void deleteObject(std::shared_ptr<T> obj) {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
     if(!key->isValid()) return;
     if(key->refcount > 1) throw persistence_error("removeObject: refcount > 1");
