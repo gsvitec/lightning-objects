@@ -301,7 +301,7 @@ class KeyValueStore : public KeyValueStoreBase
   std::shared_ptr<T> &getCached(kv::ClassId classId, kv::ObjectId objectId)
   {
 #ifdef _MSC_VER
-    return objectCaches[classId]->ObjectCache::get<T>(handler.objectId);
+    return objectCaches[classId]->ObjectCache::get<T>(objectId);
 #else
     return objectCaches[classId]->template ObjectCache::get<T>(objectId);
 #endif
@@ -311,7 +311,7 @@ class KeyValueStore : public KeyValueStoreBase
   void removeCached(kv::ClassId classId, kv::ObjectId objectId)
   {
 #ifdef _MSC_VER
-    return objectCaches[classId]->ObjectCache::erase<T>(handler.objectId);
+    return objectCaches[classId]->ObjectCache::erase<T>(objectId);
 #else
     objectCaches[classId]->template ObjectCache::erase<T>(objectId);
 #endif
@@ -452,6 +452,7 @@ public:
             objectClassInfos[op.first]->data[id].prepareClasses.erase(cid);
         }
       }
+      return owner;
     }
     else {
       if(kv::ClassTraits<T>::traits_info->getRefCounting(id) != refcount)
