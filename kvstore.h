@@ -113,6 +113,7 @@ namespace kv {
 class ReadTransaction;
 class ExclusiveReadTransaction;
 class WriteTransaction;
+template <typename T> class ClassCursor;
 
 using ReadTransactionPtr = std::shared_ptr<kv::ReadTransaction>;
 using ExclusiveReadTransactionPtr = std::shared_ptr<kv::ExclusiveReadTransaction>;
@@ -142,6 +143,7 @@ struct ObjectCache {
 
   template <typename T> std::shared_ptr<T> &get(ObjectId id);
   template <typename T> void put(ObjectId id, std::shared_ptr<T> ptr);
+  template <typename T> void erase(ObjectId id);
 };
 template <typename T>
 struct TypedObjectCache : public ObjectCache {
@@ -154,6 +156,10 @@ template <typename T> std::shared_ptr<T> &ObjectCache::get(ObjectId id) {
 
 template <typename T> void ObjectCache::put(ObjectId id, std::shared_ptr<T> ptr) {
   dynamic_cast<TypedObjectCache<T> *>(this)->objects[id] = ptr;
+}
+
+template <typename T> void ObjectCache::erase(ObjectId id) {
+  dynamic_cast<TypedObjectCache<T> *>(this)->objects.erase(id);
 }
 
 StoreId nextStoreId();
@@ -282,6 +288,7 @@ class KeyValueStore : public KeyValueStoreBase
   friend class kv::ReadTransaction;
   friend class kv::ExclusiveReadTransaction;
   friend class kv::WriteTransaction;
+  template <typename T> friend class kv::ClassCursor;
 
   //backward mapping from ClassId, used during polymorphic operations
   kv::ObjectProperties objectProperties;
@@ -289,6 +296,26 @@ class KeyValueStore : public KeyValueStoreBase
 
   std::unordered_map<kv::TypeInfoRef, kv::ClassId, kv::TypeinfoHasher, kv::TypeinfoEqualTo> objectTypeInfos;
   std::unordered_map<kv::ClassId, std::shared_ptr<kv::ObjectCache>> objectCaches;
+
+  template <typename T> inline
+  std::shared_ptr<T> &getCached(kv::ClassId classId, kv::ObjectId objectId)
+  {
+#ifdef _MSC_VER
+    return objectCaches[classId]->ObjectCache::get<T>(handler.objectId);
+#else
+    return objectCaches[classId]->template ObjectCache::get<T>(objectId);
+#endif
+  }
+
+  template <typename T> inline
+  void removeCached(kv::ClassId classId, kv::ObjectId objectId)
+  {
+#ifdef _MSC_VER
+    return objectCaches[classId]->ObjectCache::erase<T>(handler.objectId);
+#else
+    objectCaches[classId]->template ObjectCache::erase<T>(objectId);
+#endif
+  }
 
 protected:
   kv::ClassId m_maxClassId = kv::AbstractClassInfo::MIN_USER_CLSID;
@@ -858,20 +885,36 @@ class ClassCursor
   ClassCursor(ClassCursor<T> &other) = delete;
 
   CursorHelper * const m_helper;
-  unsigned const m_storeId;
+  KeyValueStore &m_store;
+  const bool m_useCache;
   ReadTransaction * const m_tr;
   bool m_hasData;
   ClassInfo<T> *m_classInfo;
 
   bool validateClass() {
-    m_classInfo = FIND_CLS(T, m_storeId, m_helper->currentClassId());
+    m_classInfo = FIND_CLS(T, m_store.id, m_helper->currentClassId());
     return m_classInfo != nullptr || ClassTraits<T>::traits_info->substitute != nullptr;
+  }
+
+  T *makeObject(ObjectKey &key, ReadBuf &readBuf)
+  {
+    if(m_classInfo) {
+      T *obj = m_classInfo->makeObject(m_store.id, key.classId);
+      readObject<T>(m_store.id, m_tr, readBuf, key.classId, key.objectId, obj);
+      return obj;
+    }
+    else {
+      T *sp = ClassTraits<T>::getSubstitute();
+      readObject<T>(m_store.id, m_tr, readBuf, *sp, key.classId, key.objectId);
+      return sp;
+    }
   }
 
 public:
   using Ptr = std::shared_ptr<ClassCursor<T>>;
 
-  ClassCursor(CursorHelper *helper, StoreId storeId, ReadTransaction *tr) : m_helper(helper), m_storeId(storeId), m_tr(tr)
+  ClassCursor(CursorHelper *helper, KeyValueStore &store, ReadTransaction *tr)
+      : m_helper(helper), m_store(store), m_tr(tr), m_useCache((bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner)
   {
     bool hasData = helper->start();
     bool clsFound = validateClass();
@@ -904,8 +947,8 @@ public:
 
     using Traits = ClassTraits<T>;
 
-    if(Traits::needsPrepare(m_storeId, key.classId)) {
-      Properties *props = Traits::getProperties(m_storeId, key.classId);
+    if(Traits::needsPrepare(m_store.id, key.classId)) {
+      Properties *props = Traits::getProperties(m_store.id, key.classId);
       ObjectBuf obuf(readBuf.data(), readBuf.size());
 
       for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
@@ -914,11 +957,14 @@ public:
         if(!pa->enabled) continue;
 
         obuf.mark();
-        size_t psz = ClassTraits<T>::prepareDelete(m_storeId, tr.get(), obuf, pa);
+        size_t psz = ClassTraits<T>::prepareDelete(m_store.id, tr.get(), obuf, pa);
         obuf.unmark(psz);
       }
     }
+
     //now remove the object proper
+    if(m_useCache) m_store.removeCached<T>(key.classId, key.objectId);
+
     if(m_helper->erase()) {
       bool hasData=true, clsFound;
       do {
@@ -966,46 +1012,41 @@ public:
         return;
       }
       objectBuf.mark();
-      size_t psz = pa->storage->size(m_storeId, objectBuf);
+      size_t psz = pa->storage->size(m_store.id, objectBuf);
       objectBuf.unmark(psz);
     }
   }
 
   /**
    * @param key (out) the key to be read into
-   * @return the ready instantiated object at the current cursor position
+   * @return the instantiated object at the current cursor position. Object caching is ignored
    */
   T *get(ObjectKey &key)
   {
-    //load the data buffer
     ReadBuf readBuf;
     m_helper->get(key, readBuf);
 
-    //nothing here
     if(readBuf.null()) return nullptr;
 
-    if(m_classInfo) {
-      T *obj = m_classInfo->makeObject(m_storeId, key.classId);
-      readObject<T>(m_storeId, m_tr, readBuf, key.classId, key.objectId, obj);
-      return obj;
-    }
-    else {
-      T *sp = ClassTraits<T>::getSubstitute();
-      readObject<T>(m_storeId, m_tr, readBuf, *sp, key.classId, key.objectId);
-      return sp;
-    }
+    return makeObject(key, readBuf);
   }
 
   /**
-   * @return the ready instantiated object at the current cursor position. The shared_ptr also
-   * contains the ObjectId
+   * @return a persistent pointer to the object at the current cursor position. Object caching is honored
    */
   std::shared_ptr<T> get()
   {
-    ObjectId id;
     object_handler<T> handler;
-    T *obj = get(handler);
-    return std::shared_ptr<T>(obj, handler);
+    ReadBuf readBuf;
+    m_helper->get(handler, readBuf);
+
+    if(readBuf.null()) return std::shared_ptr<T>();
+
+    if(m_useCache) {
+      std::shared_ptr<T> &cached = m_store.getCached<T>(handler.classId, handler.objectId);
+      if(cached) return cached;
+    }
+    return std::shared_ptr<T>(makeObject(handler, readBuf), handler);
   }
 
   bool next() {
@@ -1117,11 +1158,7 @@ protected:
   {
     bool doCache = (bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner;
     if(doCache && !reload) {
-#ifdef _MSC_VER
-      std::shared_ptr<T> &cached = store.objectCaches[handler.classId]->ObjectCache::get<T>(handler.objectId);
-#else
-      std::shared_ptr<T> &cached = store.objectCaches[handler.classId]->template ObjectCache::get<T>(handler.objectId);
-#endif
+      std::shared_ptr<T> &cached = store.getCached<T>(handler.classId, handler.objectId);
       if(cached) return cached;
     }
 
@@ -1305,7 +1342,7 @@ public:
     using Traits = ClassTraits<T>;
     std::vector<ClassId> classIds = Traits::traits_info->allClassIds(store.id);
 
-    return typename ClassCursor<T>::Ptr(new ClassCursor<T>(_openCursor(classIds), store.id, this));
+    return typename ClassCursor<T>::Ptr(new ClassCursor<T>(_openCursor(classIds), store, this));
   }
 
   /**
@@ -1317,7 +1354,7 @@ public:
   template <typename T, typename V> typename ClassCursor<V>::Ptr openCursor(ObjectId objectId, PropertyId propertyId) {
     ClassId t_classId = ClassTraits<T>::traits_data(store.id).classId;
 
-    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(t_classId, objectId, propertyId), store.id, this));
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(t_classId, objectId, propertyId), store, this));
   }
 
   /**
@@ -1330,7 +1367,7 @@ public:
     ClassId cid = ClassTraits<T>::traits_data(store.id).classId;
     ObjectId oid = ClassTraits<T>::getObjectKey(obj)->objectId;
 
-    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(cid, oid, propertyId), store.id, this));
+    return typename ClassCursor<V>::Ptr(new ClassCursor<V>(_openCursor(cid, oid, propertyId), store, this));
   }
 
   /**

@@ -215,7 +215,6 @@ bool KeyValueStoreBase::updateClassSchema(
     if(!schemaKeyed.count(runtime.first)) {
       errors.push_back(schema_compatibility::Property(
                          runtime.second->name, runtime.second->id, schema_compatibility::keyed_property_added));
-      const_cast<PropertyAccessBase *>(runtime.second)->enabled = false;
     }
   }
 
