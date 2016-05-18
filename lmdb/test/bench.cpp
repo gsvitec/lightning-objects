@@ -289,7 +289,7 @@ void test_lmdb_read2()
 int main()
 {
 #if 1
-  KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{".", "bench"};
+  KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{0, ".", "bench"};
 
   kv->putSchema<Colored2DPoint, ColoredPolygon>();
 

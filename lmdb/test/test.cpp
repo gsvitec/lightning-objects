@@ -1070,7 +1070,7 @@ ObjectKey setupTestCompatibleDatabase(KeyValueStore *kv)
 
 void testCompatibleDatabase(ObjectKey key)
 {
-  KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
+  KeyValueStore *kv = lmdb::KeyValueStore::Factory{0, ".", "test"};
 
   //need to cleanup static data for test only
   ClassTraits<SomethingAbstract>::traits_data(kv->id).classId = 0;
@@ -1162,7 +1162,7 @@ int main()
   test_classupdate();
 
 #if 1
-  KeyValueStore *kv = lmdb::KeyValueStore::Factory{".", "test"};
+  KeyValueStore *kv = lmdb::KeyValueStore::Factory{0, ".", "test"};
 
   kv->putSchema<ObjectPropertyTest,
       RefCountingTest,

@@ -298,6 +298,14 @@ class KeyValueStore : public KeyValueStoreBase
   std::unordered_map<kv::ClassId, std::shared_ptr<kv::ObjectCache>> objectCaches;
 
   template <typename T> inline
+  std::shared_ptr<T> putCache(T *obj, kv::object_handler<T> handler)
+  {
+    std::shared_ptr<T> result = std::shared_ptr<T>(obj, handler);
+    objectCaches[handler.classId]->put(handler.objectId, result);
+    return result;
+  }
+
+  template <typename T> inline
   std::shared_ptr<T> &getCached(kv::ClassId classId, kv::ObjectId objectId)
   {
 #ifdef _MSC_VER
@@ -420,6 +428,14 @@ public:
         throw persistence_error("cache configuration already owned and differs from requested value");
       return 0;
     }
+  }
+
+  /**
+   * @return true if caching is configured for the given class
+   */
+  template <typename T> inline
+  bool isCache() {
+    return (bool)kv::ClassTraits<T>::traits_data(id).cacheOwner;
   }
 
   /**
@@ -915,7 +931,7 @@ public:
   using Ptr = std::shared_ptr<ClassCursor<T>>;
 
   ClassCursor(CursorHelper *helper, KeyValueStore &store, ReadTransaction *tr)
-      : m_helper(helper), m_store(store), m_tr(tr), m_useCache((bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner)
+      : m_helper(helper), m_store(store), m_tr(tr), m_useCache(store.isCache<T>())
   {
     bool hasData = helper->start();
     bool clsFound = validateClass();
@@ -1045,7 +1061,7 @@ public:
 
     if(m_useCache) {
       std::shared_ptr<T> &cached = m_store.getCached<T>(handler.classId, handler.objectId);
-      if(cached) return cached;
+      return cached ? cached : m_store.putCache(makeObject(handler, readBuf), handler);
     }
     return std::shared_ptr<T>(makeObject(handler, readBuf), handler);
   }
@@ -1157,7 +1173,7 @@ protected:
    */
   template<typename T> std::shared_ptr<T> loadObject(object_handler<T> &handler, bool reload=false)
   {
-    bool doCache = (bool)kv::ClassTraits<T>::traits_data(store.id).cacheOwner;
+    bool doCache = store.isCache<T>();
     if(doCache && !reload) {
       std::shared_ptr<T> &cached = store.getCached<T>(handler.classId, handler.objectId);
       if(cached) return cached;
@@ -1171,10 +1187,7 @@ protected:
     T *obj = ClassTraits<T>::makeObject(store.id, handler.classId);
     readObject<T>(store.id, this, readBuf, handler.classId, handler.objectId, obj);
 
-    std::shared_ptr<T> result(obj, handler);
-    if(doCache) store.objectCaches[handler.classId]->put(handler.objectId, result);
-
-    return result;
+    return doCache ? store.putCache(obj, handler) : std::shared_ptr<T>(obj, handler);
   }
 
   /**
@@ -1284,7 +1297,7 @@ public:
   /**
    * @return true if the given object was not previously saved
    */
-  template <typename T> bool isNew(std::shared_ptr<T> &obj)
+  template <typename T> bool isNew(const std::shared_ptr<T> &obj)
   {
     return ClassTraits<T>::getObjectKey(obj)->isNew();
   }
@@ -1779,6 +1792,13 @@ protected:
     return objectId;
   }
 
+  template <typename T>
+  void save_object(ObjectKey &key, const std::shared_ptr<T> &obj, bool useCache, bool setRefcount=true)
+  {
+    if(save_object(key, *obj, setRefcount) && useCache)
+      store.objectCaches[key.classId]->put(key.objectId, obj);
+  }
+
   /**
    * fully polymorphic, refcounting save
    *
@@ -1787,18 +1807,19 @@ protected:
    * @param setRefcount if true, set refcount to 1 on this object if a) the object is new and b) refcounting is turned on for the class
    * @param shallow skip properties that go to separate keys (except pa if present)
    * @param pa property that has changed. If null, everything will be written
+   * @return true if the object was newly made persistent
    */
   template <typename T>
-  void saveObject(ObjectKey &key, T &obj, bool setRefcount, bool shallow=false, const PropertyAccessBase *pa=nullptr)
+  bool save_object(ObjectKey &key, T &obj, bool setRefcount, bool shallow=false, const PropertyAccessBase *pa=nullptr)
   {
     Properties *properties;
-    size_t size;
     PrepareData pd;
 
     using Traits = ClassTraits<T>;
 
     bool poly = Traits::traits_info->isPoly();
-    if(key.isNew()) {
+    bool isNew = key.isNew();
+    if(isNew) {
       if(poly) {
         key.classId = getClassId(typeid(obj));
 
@@ -1828,7 +1849,7 @@ protected:
       Traits::save(store.id, this, key.classId, key.objectId, &obj, pd, pa, StoreMode::force_property);
 
     //create the data buffer
-    size = calculateBuffer(store.id, &obj, properties);
+    size_t size = calculateBuffer(store.id, &obj, properties);
     writeBuf().start(size);
     writeObject(key.classId, key.objectId, obj, pd, properties, shallow);
 
@@ -1836,6 +1857,7 @@ protected:
       throw persistence_error("data was not saved");
 
     writeBuf().reset();
+    return isNew;
   }
 
   WriteBuf &writeBuf() {
@@ -2018,7 +2040,7 @@ public:
 
   /**
    * put a new object into the KV store. Generate a new ObjectKey and store it inside the returned shared_ptr.
-   * The object becomes directly owned by the application,
+   * The object becomes directly owned by the application.
    *
    * @return a shared_ptr to the input object which contains the ObjectKey
    */
@@ -2026,7 +2048,7 @@ public:
   std::shared_ptr<T> putObject(T *obj)
   {
     object_handler<T> handler;
-    saveObject<T>(handler, *obj, true);
+    save_object<T>(handler, *obj, true);
     return std::shared_ptr<T>(obj, handler);
   }
 
@@ -2039,7 +2061,7 @@ public:
   ObjectKey putObject(T &obj)
   {
     ObjectKey key;
-    saveObject<T>(key, obj, true);
+    save_object<T>(key, obj, true);
     return key;
   }
 
@@ -2054,7 +2076,7 @@ public:
   template <typename T>
   void saveObject(T &obj, ObjectKey &key, bool setRefCount=true)
   {
-    saveObject<T>(key, obj, setRefCount);
+    save_object<T>(key, obj, setRefCount);
   }
 
   /**
@@ -2062,14 +2084,13 @@ public:
    * a new key will be assigned or an existing key will be overwritten (insert or update).. Update the key accordingly
    *
    * @param obj a persistent object pointer, which must have been obtained from KV
-   * @param setRefCount set refcount to 1 for newly created objects. Defaults to true;
    * @return the object ID
    */
   template <typename T>
   ObjectId saveObject(const std::shared_ptr<T> &obj, bool setRefCount=true)
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
-    saveObject<T>(*key, *obj, setRefCount);
+    save_object<T>(*key, obj, store.isCache<T>(), setRefCount);
     return key->objectId;
   }
 
@@ -2099,11 +2120,11 @@ public:
       }
       case StoreLayout::embedded_key:
         //save property value and shallow buffer
-        saveObject<T>(key, obj, false ,true, pa);
+        save_object<T>(key, obj, false, true, pa);
         break;
       case StoreLayout::all_embedded:
         //shallow buffer only
-        saveObject<T>(key, obj, false, true, nullptr);
+        save_object<T>(key, obj, false, true, nullptr);
     }
   }
 
@@ -2143,21 +2164,12 @@ public:
     writeBuf().appendInteger<size_t>(vect.size(), 4);
 
     for(auto &v : vect) {
-      ObjectKey *key = ClassTraits<V>::getObjectKey(v);
-
-      if(saveMembers) {
+      if(saveMembers || isNew(v)) {
         pushWriteBuf();
         saveObject(v);
         popWriteBuf();
       }
-      else {
-        if(key->isNew()) {
-          pushWriteBuf();
-          saveObject(*v, *key);
-          popWriteBuf();
-        }
-      }
-      writeBuf().append(*key);
+      writeBuf().append(*ClassTraits<V>::getObjectKey(v));
     }
 
     if(!putData(key->classId, key->objectId, propertyId, writeBuf()))
@@ -2932,7 +2944,7 @@ public:
           childKey->refcount++;
         }
         tr->pushWriteBuf();
-        tr->saveObject<V>(*childKey, *val, true);
+        tr->save_object<V>(*childKey, val, tr->store.isCache<T>());
         tr->popWriteBuf();
       }
       if(mode != StoreMode::force_property) {
@@ -2944,7 +2956,7 @@ public:
       if(refcount && mode != StoreMode::force_buffer && pe.prepareOid && tr->decrementRefCount(pe.prepareCid, pe.prepareOid) <= 1)
         tr->removeObject<V>(pe.prepareCid, pe.prepareOid);
 
-      //save the key in this objects write buffer
+      //save a placeholder in this objects write buffer
       if(mode != StoreMode::force_property)
         tr->writeBuf().append(ObjectKey::NIL);
     }
@@ -3264,6 +3276,8 @@ public:
     size_t psz = ObjectKey_sz * val.size();
     WriteBuf propBuf(psz);
 
+    bool useCache = tr->store.isCache<T>();
+
     tr->pushWriteBuf();
     for(std::shared_ptr<V> &v : val) {
       ObjectKey *childKey = ClassTraits<V>::getObjectKey(v);
@@ -3272,7 +3286,7 @@ public:
         if(ClassTraits<V>::traits_data(tr->store.id).refcounting && !childKey->isNew()) {
           if(oldKeys.empty() || !oldKeys.erase(*childKey)) childKey->refcount++;
         }
-        tr->saveObject<V>(*childKey, *v, true);
+        tr->save_object<V>(*childKey, v, useCache);
       }
       propBuf.append(*childKey);
     }
