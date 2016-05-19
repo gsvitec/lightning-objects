@@ -620,7 +620,8 @@ public:
  */
 class ObjectBuf
 {
-  template<typename T, typename V> friend struct BasePropertyStorage;
+  template<typename T, typename V> friend struct ValueEmbeddedStorage;
+  template<typename T, typename V> friend struct ValueKeyedStorage;
 
 protected:
   const bool makeCopy = false;
@@ -1111,9 +1112,10 @@ public:
  */
 class ReadTransaction
 {
-  template<typename T, typename V> friend class BasePropertyStorage;
-  template<typename T, typename V> friend class ValueVectorPropertyStorage;
-  template<typename T, typename V> friend class ValueSetPropertyStorage;
+  template<typename T, typename V> friend class ValueEmbeddedStorage;
+  template<typename T, typename V> friend class ValueKeyedStorage;
+  template<typename T, typename V> friend class ValueVectorKeyedStorage;
+  template<typename T, typename V> friend class ValueSetKeyedStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
@@ -1655,10 +1657,11 @@ static size_t calculateBuffer(StoreId storeId, T *obj, Properties *properties)
  */
 class WriteTransaction : public virtual ReadTransaction
 {
-  template<typename T, typename V> friend class BasePropertyStorage;
+  template<typename T, typename V> friend class ValueEmbeddedStorage;
+  template<typename T, typename V> friend class ValueKeyedStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
-  template<typename T, typename V> friend class ValueVectorPropertyStorage;
-  template<typename T, typename V> friend class ValueSetPropertyStorage;
+  template<typename T, typename V> friend class ValueVectorKeyedStorage;
+  template<typename T, typename V> friend class ValueSetKeyedStorage;
   template<typename T, typename V> friend class ObjectPropertyStorage;
   template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
@@ -2577,12 +2580,133 @@ public:
 };
 
 /**
- * storage class template for base types that go directly into the shallow buffer
+ * storage class template for scalar types that are saved under an individual key (property id). The type
+ * must be supported by a ValueTraits template
  */
 template<typename T, typename V>
-struct BasePropertyStorage : public StoreAccessBase
+struct ValueKeyedStorage : public StoreAccessPropertyKey
 {
-  BasePropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, TypeTraits<V>::byteSize) {}
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    V val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
+
+    WriteBuf propBuf(ValueTraits<V>::size(val));
+    ValueTraits<V>::putBytes(propBuf, val);
+
+    if(!tr->putData(classId, objectId, pa->id, propBuf))
+      throw persistence_error("data was not saved");
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    V val;
+    ValueTraits<V>::getBytes(readBuf, val);
+
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
+  }
+};
+
+/**
+ * storage template for std::vector of scalar values. All values are serialized into one consecutive buffer which is
+ * stored under a property key for the given object.
+ */
+template<typename T, typename V>
+struct ValueKeyedStorage<T, std::vector<V>> : public StoreAccessPropertyKey
+{
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::vector<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
+
+    size_t psz = 0;
+    for(auto &v : val) psz += ValueTraits<V>::size(v);
+    if(psz) {
+      WriteBuf propBuf(psz);
+
+      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
+
+      if(!tr->putData(classId, objectId, pa->id, propBuf))
+        throw persistence_error("data was not saved");
+    }
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::vector<V> val;
+
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    while(!readBuf.atEnd()) {
+      V v;
+      ValueTraits<V>::getBytes(readBuf, v);
+      val.push_back(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
+  }
+};
+
+/**
+ * storage template for std::set of scalar values. All values are serialized into one consecutive buffer which is
+ * stored under a property key for the given object.
+ */
+template<typename T, typename V>
+struct ValueKeyedStorage<T, std::set<V>> : public StoreAccessPropertyKey
+{
+  void save(WriteTransaction *tr,
+            ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::set<V> val;
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
+
+    size_t psz = 0;
+    for(auto &v : val) psz += ValueTraits<V>::size(v);
+    if(psz) {
+      WriteBuf propBuf(psz);
+
+      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
+
+      if(!tr->putData(classId, objectId, pa->id, propBuf))
+        throw persistence_error("data was not saved");
+    }
+  }
+  void load(ReadTransaction *tr, ReadBuf &buf,
+            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+  {
+    std::set<V> val;
+
+    ReadBuf readBuf;
+    tr->getData(readBuf, classId, objectId, pa->id);
+
+    while(!readBuf.atEnd()) {
+      V v;
+      ValueTraits<V>::getBytes(readBuf, v);
+      val.insert(v);
+    }
+    T *tp = reinterpret_cast<T *>(obj);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
+  }
+};
+
+/**
+ * storage class template for scalar types that go into the shallow buffer as an opaque value. The type must be
+ * supported by a ValueTraits template
+ */
+template<typename T, typename V>
+struct ValueEmbeddedStorage : public StoreAccessBase
+{
+  ValueEmbeddedStorage() : StoreAccessBase(StoreLayout::all_embedded, TypeTraits<V>::byteSize) {}
 
   size_t size(StoreId storeId, ObjectBuf &buf) const override
   {
@@ -2617,28 +2741,28 @@ struct BasePropertyStorage : public StoreAccessBase
 };
 
 /**
- * storage class template for cstring, with dynamic size calculation (type.byteSize is 0). Note that after loading
- * the data store, the pointed-to belongs to the datastore and will in all likelihood become invalid by the end of
- * the trasaction. It is up to the application to copy the value away (or use std::string)
+ * storage class template for embedded storage cstring, with dynamic size calculation (type.byteSize is 0).
+ * Note that after loading the data store, the pointed-to memory belongs to the datastore and will in all likelihood become
+ * invalid by the end of the transaction. It is up to the application to copy the value away (or use std::string)
  */
 template<typename T>
-struct BasePropertyStorage<T, const char *> : public StoreAccessBase
+struct ValueEmbeddedStorage<T, const char *> : public StoreAccessBase
 {
-  size_t size(const byte_t *buf) const override {
-    return strlen(buf)+1;
+  size_t size(StoreId storeId, ObjectBuf &buf) const override {
+    return buf.strlen()+1;
   }
   size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(storeId, *tp, pa, val);
     return strlen(val) + 1;
   }
   void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
+            ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
   {
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
+    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<const char *>::putBytes(tr->writeBuf(), val);
   }
   void load(ReadTransaction *tr, ReadBuf &buf,
@@ -2647,15 +2771,15 @@ struct BasePropertyStorage<T, const char *> : public StoreAccessBase
     const char * val;
     T *tp = reinterpret_cast<T *>(obj);
     ValueTraits<const char *>::getBytes(buf, val);
-    ClassTraits<T>::get(*tp, pa, val);
+    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
   }
 };
 
 /**
- * storage template class for std::string, with dynamic size calculation (type.byteSize is 0)
+ * storage template class for embedded storage std::string, with dynamic size calculation (type.byteSize is 0)
  */
 template<typename T>
-struct BasePropertyStorage<T, std::string> : public StoreAccessBase
+struct ValueEmbeddedStorage<T, std::string> : public StoreAccessBase
 {
   size_t size(StoreId storeId, ObjectBuf &buf) const override {
     return buf.strlen()+1;
@@ -2710,92 +2834,7 @@ struct ObjectIdStorage : public StoreAccessBase
 };
 
 /**
- * storage template for std::vector of simple values. All values are serialized into one consecutive buffer which is
- * stored under a property key for the given object.
- */
-template<typename T, typename V>
-struct ValueVectorPropertyStorage : public StoreAccessPropertyKey
-{
-  void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    std::vector<V> val;
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
-
-    size_t psz = 0;
-    for(auto &v : val) psz += ValueTraits<V>::size(v);
-    if(psz) {
-      WriteBuf propBuf(psz);
-
-      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
-
-      if(!tr->putData(classId, objectId, pa->id, propBuf))
-        throw persistence_error("data was not saved");
-    }
-  }
-  void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    std::vector<V> val;
-
-    ReadBuf readBuf;
-    tr->getData(readBuf, classId, objectId, pa->id);
-
-    while(!readBuf.atEnd()) {
-      V v;
-      ValueTraits<V>::getBytes(readBuf, v);
-      val.push_back(v);
-    }
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(tr->store.id, *tp, pa, val);
-  }
-};
-
-/**
- * storage template for sets of simnple vvalues. Similar to value vector, but based on a std::set
- */
-template<typename T, typename V>
-struct ValueSetPropertyStorage : public StoreAccessPropertyKey
-{
-  void save(WriteTransaction *tr,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    std::set<V> val;
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(*tp, pa, val);
-
-    size_t psz = 0;
-    for(auto &v : val) psz += ValueTraits<V>::size(v);
-    if(psz) {
-      WriteBuf propBuf(psz);
-
-      for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
-
-      if(!tr->putData(classId, objectId, pa->id, propBuf))
-        throw persistence_error("data was not saved");
-    }
-  }
-  void load(ReadTransaction *tr, ReadBuf &buf,
-            ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
-  {
-    std::set<V> val;
-
-    ReadBuf readBuf;
-    tr->getData(readBuf, classId, objectId, pa->id);
-
-    while(!readBuf.atEnd()) {
-      V v;
-      ValueTraits<V>::getBytes(readBuf, v);
-      val.insert(v);
-    }
-    T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::get(*tp, pa, val);
-  }
-};
-
-/**
- * storage template for mapped non-pointer object references. Since the object is referenced by value value in the enclosing
+ * storage template for mapped non-pointer object references. Since the object is referenced by value in the enclosing
  * class, storage can only be non-polymorphic. The object is serialized into a separate buffer, but the key is written to the
  * enclosing object's buffer. the referenced object is required to hold an ObjectId-typed member variable which is mapped as
  * OBJECT_ID
@@ -3479,47 +3518,32 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
   }
 };
 
-template<typename T> struct PropertyStorage<T, short> : public BasePropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, unsigned short> : public BasePropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, int> : public BasePropertyStorage<T, int>{};
-template<typename T> struct PropertyStorage<T, unsigned int> : public BasePropertyStorage<T, unsigned int>{};
-template<typename T> struct PropertyStorage<T, long> : public BasePropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, unsigned long> : public BasePropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, long long> : public BasePropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, unsigned long long> : public BasePropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, float> : public BasePropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, double> : public BasePropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, bool> : public BasePropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, const char *> : public BasePropertyStorage<T, const char *>{};
-template<typename T> struct PropertyStorage<T, std::string> : public BasePropertyStorage<T, std::string>{};
+/**
+ * mapping configuration for simple types
+ */
+template <typename O, typename P, template <typename Ox, typename Px> class S, P O::*p>
+struct ValuePropertyAssign : public PropertyAssign<O, P, p> {
+  ValuePropertyAssign(const char * name)
+      : PropertyAssign<O, P, p>(name, new S<O, P>(), PROPERTY_TYPE(P)) {}
+};
 
-template<typename T> struct PropertyStorage<T, std::vector<short>> : public ValueVectorPropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned short>> : public ValueVectorPropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, std::vector<int>> : public ValueVectorPropertyStorage<T, int>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned int>> : public ValueVectorPropertyStorage<T, unsigned int>{};
-template<typename T> struct PropertyStorage<T, std::vector<long>> : public ValueVectorPropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned long>> : public ValueVectorPropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, std::vector<long long>> : public ValueVectorPropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, std::vector<unsigned long long>> : public ValueVectorPropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, std::vector<float>> : public ValueVectorPropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, std::vector<double>> : public ValueVectorPropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, std::vector<bool>> : public ValueVectorPropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, std::vector<const char *>> : public ValueVectorPropertyStorage<T, const char *>{};
-template<typename T> struct PropertyStorage<T, std::vector<std::string>> : public ValueVectorPropertyStorage<T, std::string>{};
+/**
+ * mapping configuration for simple types that are stored under individual property keys
+ */
+template <typename O, typename P, P O::*p>
+struct ValuePropertyKeyedAssign : public ValuePropertyAssign<O, P, ValueKeyedStorage, p> {
+  ValuePropertyKeyedAssign(const char * name)
+      : ValuePropertyAssign<O, P, ValueKeyedStorage, p>(name) {}
+};
 
-template<typename T> struct PropertyStorage<T, std::set<short>> : public ValueSetPropertyStorage<T, short>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned short>> : public ValueSetPropertyStorage<T, unsigned short>{};
-template<typename T> struct PropertyStorage<T, std::set<int>> : public ValueSetPropertyStorage<T, int>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned int>> : public ValueSetPropertyStorage<T, unsigned int>{};
-template<typename T> struct PropertyStorage<T, std::set<long>> : public ValueSetPropertyStorage<T, long>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned long>> : public ValueSetPropertyStorage<T, unsigned long>{};
-template<typename T> struct PropertyStorage<T, std::set<long long>> : public ValueSetPropertyStorage<T, long long>{};
-template<typename T> struct PropertyStorage<T, std::set<unsigned long long>> : public ValueSetPropertyStorage<T, unsigned long long>{};
-template<typename T> struct PropertyStorage<T, std::set<float>> : public ValueSetPropertyStorage<T, float>{};
-template<typename T> struct PropertyStorage<T, std::set<double>> : public ValueSetPropertyStorage<T, double>{};
-template<typename T> struct PropertyStorage<T, std::set<bool>> : public ValueSetPropertyStorage<T, bool>{};
-template<typename T> struct PropertyStorage<T, std::set<const char *>> : public ValueSetPropertyStorage<T, const char *>{};
-template<typename T> struct PropertyStorage<T, std::set<std::string>> : public ValueSetPropertyStorage<T, std::string>{};
+/**
+ * mapping configuration for simple types that are stored directly into the shallow buffer
+ */
+template <typename O, typename P, P O::*p>
+struct ValuePropertyEmbeddedAssign : public ValuePropertyAssign<O, P, ValueEmbeddedStorage, p> {
+  ValuePropertyEmbeddedAssign(const char * name)
+      : ValuePropertyAssign<O, P, ValueEmbeddedStorage, p>(name) {}
+};
 
 /**
  * mapping configuration for an ObjectId property

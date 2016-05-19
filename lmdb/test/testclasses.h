@@ -268,6 +268,14 @@ struct SomethingWithEmbbededObjectVectors
   std::vector<VariableSizeObject> vsos;
 };
 
+struct SomethingWithAllValueKeyedProperties
+{
+  std::string name;
+  int counter;
+  vector<int> numbers;
+  set<string> children;
+};
+
 struct SomethingWithAnObjectIter
 {
   std::string name;
@@ -358,76 +366,83 @@ struct KVObjectHistory2 : public flexis::Overlays::ObjectHistory<T>, public KVPr
   }
 };
 START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, x)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, y)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, r)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, g)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, b)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, BasePropertyAssign, float, a)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, r)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, g)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, b)
+  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, a)
 END_MAPPING(flexis::Overlays::Colored2DPoint)
 
 START_MAPPING(flexis::Overlays::ColoredPolygon, pts, visible)
   MAPPED_PROP(flexis::Overlays::ColoredPolygon, ObjectVectorPropertyEmbeddedAssign, flexis::Overlays::Colored2DPoint, pts)
-  MAPPED_PROP(flexis::Overlays::ColoredPolygon, BasePropertyAssign, bool, visible)
+  MAPPED_PROP(flexis::Overlays::ColoredPolygon, ValuePropertyEmbeddedAssign, bool, visible)
 END_MAPPING(flexis::Overlays::ColoredPolygon)
 
 START_MAPPING_A(flexis::Overlays::IFlexisOverlay, name, userVisible, opacity, rangeIn, rangeOut)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, std::string, name)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, bool, userVisible)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, double, opacity)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, long, rangeIn)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, BasePropertyAssign, long, rangeOut)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, std::string, name)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, bool, userVisible)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, double, opacity)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeIn)
+  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeOut)
 END_MAPPING(flexis::Overlays::IFlexisOverlay)
 
 START_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlX)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlY)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlW)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, BasePropertyAssign, double, ovlH)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlW)
+  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlH)
 END_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay)
 
 START_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, fontSize)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, double, ovlX)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, double, ovlY)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, BasePropertyAssign, int, fontSize)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
+  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, int, fontSize)
 END_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay)
 
 START_MAPPING_A(OtherThing, name, dvalue)
-  MAPPED_PROP(OtherThing, BasePropertyAssign, std::string, name)
-  MAPPED_PROP(OtherThing, BasePropertyAssign, double, dvalue)
+  MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, std::string, name)
+  MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, double, dvalue)
 END_MAPPING(OtherThing)
 
 START_MAPPING_SUB(OtherThingA, OtherThing, lvalue, testnames)
-  MAPPED_PROP(OtherThingA, BasePropertyAssign, long, lvalue)
-  MAPPED_PROP(OtherThingA, BasePropertyAssign, std::vector<std::string>, testnames)
+  MAPPED_PROP(OtherThingA, ValuePropertyEmbeddedAssign, long, lvalue)
+  MAPPED_PROP(OtherThingA, ValuePropertyKeyedAssign, std::vector<std::string>, testnames)
 END_MAPPING_SUB(OtherThingA, OtherThing)
 
 
 START_MAPPING_SUB(OtherThingB, OtherThing, llvalue)
-  MAPPED_PROP(OtherThingB, BasePropertyAssign, unsigned long long, llvalue)
+  MAPPED_PROP(OtherThingB, ValuePropertyEmbeddedAssign, unsigned long long, llvalue)
 END_MAPPING_SUB(OtherThingB, OtherThing)
 
 START_MAPPING(SomethingWithALazyVector, name, otherThings)
-  MAPPED_PROP(SomethingWithALazyVector, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(SomethingWithALazyVector, ValuePropertyEmbeddedAssign, std::string, name)
   MAPPED_PROP3(SomethingWithALazyVector, ObjectPtrVectorPropertyAssign, OtherThing, otherThings, true)
 END_MAPPING(SomethingWithALazyVector)
 
+START_MAPPING(SomethingWithAllValueKeyedProperties, name, counter, numbers, children)
+  MAPPED_PROP(SomethingWithAllValueKeyedProperties, ValuePropertyKeyedAssign, std::string, name)
+  MAPPED_PROP(SomethingWithAllValueKeyedProperties, ValuePropertyKeyedAssign, int, counter)
+  MAPPED_PROP(SomethingWithAllValueKeyedProperties, ValuePropertyKeyedAssign, vector<int>, numbers)
+  MAPPED_PROP(SomethingWithAllValueKeyedProperties, ValuePropertyKeyedAssign, set<string>, children)
+END_MAPPING(SomethingWithAllValueKeyedProperties)
+
 START_MAPPING(FixedSizeObject, objectId, number1, number2)
   OBJECT_ID(FixedSizeObject, objectId)
-  MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number1)
-  MAPPED_PROP(FixedSizeObject, BasePropertyAssign, unsigned, number2)
+  MAPPED_PROP(FixedSizeObject, ValuePropertyEmbeddedAssign, unsigned, number1)
+  MAPPED_PROP(FixedSizeObject, ValuePropertyEmbeddedAssign, unsigned, number2)
 END_MAPPING(FixedSizeObject)
 
 START_MAPPING(FixedSizeObject2, objectId, number1, number2)
   OBJECT_ID(FixedSizeObject2, objectId)
-  MAPPED_PROP(FixedSizeObject2, BasePropertyAssign, double, number1)
-  MAPPED_PROP(FixedSizeObject2, BasePropertyAssign, double, number2)
+  MAPPED_PROP(FixedSizeObject2, ValuePropertyEmbeddedAssign, double, number1)
+  MAPPED_PROP(FixedSizeObject2, ValuePropertyEmbeddedAssign, double, number2)
 END_MAPPING(FixedSizeObject2)
 
 START_MAPPING(VariableSizeObject, objectId, number, name)
   OBJECT_ID(VariableSizeObject, objectId)
-  MAPPED_PROP(VariableSizeObject, BasePropertyAssign, unsigned, number)
-  MAPPED_PROP(VariableSizeObject, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, unsigned, number)
+  MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, std::string, name)
 END_MAPPING(VariableSizeObject)
 
 START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)
@@ -436,7 +451,7 @@ START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)
 END_MAPPING(SomethingWithEmbeddedObjects)
 
 START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, vsos)
-  MAPPED_PROP(SomethingWithEmbbededObjectVectors, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ValuePropertyEmbeddedAssign, std::string, name)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, SomethingWithEmbeddedObjects, sweos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, fsos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject2, fsos2)
@@ -444,17 +459,17 @@ START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, vsos
 END_MAPPING(SomethingWithEmbbededObjectVectors)
 
 START_MAPPING(flexis::player::SourceDisplayConfig, sourceIndex, attachedIndex, attached, window_x, window_y, window_width, window_height)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, sourceIndex)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, attachedIndex)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, bool, attached)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, window_x)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, window_y)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, window_width)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, BasePropertyAssign, unsigned, window_height)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, attachedIndex)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, bool, attached)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_x)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_y)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_width)
+  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_height)
 END_MAPPING(flexis::player::SourceDisplayConfig)
 
 START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverlays)
-  MAPPED_PROP(flexis::player::SourceInfo, BasePropertyAssign, unsigned, sourceIndex)
+  MAPPED_PROP(flexis::player::SourceInfo, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
   MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::Overlays::IFlexisOverlay, userOverlays)
 END_MAPPING(flexis::player::SourceInfo)
@@ -464,32 +479,32 @@ START_MAPPING(SomethingWithAnObjectIter, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPING_A(SomethingAbstract, name)
-  MAPPED_PROP(SomethingAbstract, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(SomethingAbstract, ValuePropertyEmbeddedAssign, std::string, name)
 END_MAPPING(SomethingAbstract)
 
 START_MAPPING_SUB(SomethingConcrete1, SomethingAbstract, description)
-  MAPPED_PROP(SomethingConcrete1, BasePropertyAssign, std::string, description)
+  MAPPED_PROP(SomethingConcrete1, ValuePropertyEmbeddedAssign, std::string, description)
 END_MAPPING_SUB(SomethingConcrete1, SomethingAbstract)
 
 START_MAPPING_SUB(SomethingConcrete2, SomethingAbstract, age)
-  MAPPED_PROP(SomethingConcrete2, BasePropertyAssign, unsigned, age)
+  MAPPED_PROP(SomethingConcrete2, ValuePropertyEmbeddedAssign, unsigned, age)
 END_MAPPING_SUB(SomethingConcrete2, SomethingAbstract)
 
 START_MAPPING(SomethingVirtual, id, name)
-  MAPPED_PROP(SomethingVirtual, BasePropertyAssign, unsigned, id)
-  MAPPED_PROP(SomethingVirtual, BasePropertyAssign, std::string, name)
+  MAPPED_PROP(SomethingVirtual, ValuePropertyEmbeddedAssign, unsigned, id)
+  MAPPED_PROP(SomethingVirtual, ValuePropertyEmbeddedAssign, std::string, name)
 END_MAPPING(SomethingVirtual)
 
 START_MAPPING_SUB(SomethingVirtual1, SomethingVirtual, profession)
-  MAPPED_PROP(SomethingVirtual1, BasePropertyAssign, std::string, profession)
+  MAPPED_PROP(SomethingVirtual1, ValuePropertyEmbeddedAssign, std::string, profession)
 END_MAPPING_SUB(SomethingVirtual1, SomethingVirtual)
 
 START_MAPPING_SUB(SomethingVirtual2, SomethingVirtual, hobby)
-  MAPPED_PROP(SomethingVirtual2, BasePropertyAssign, std::string, hobby)
+  MAPPED_PROP(SomethingVirtual2, ValuePropertyEmbeddedAssign, std::string, hobby)
 END_MAPPING_SUB(SomethingVirtual2, SomethingVirtual)
 
 START_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2, age)
-  MAPPED_PROP(SomethingVirtual3, BasePropertyAssign, unsigned, age)
+  MAPPED_PROP(SomethingVirtual3, ValuePropertyEmbeddedAssign, unsigned, age)
 END_MAPPING_SUB(SomethingVirtual3, SomethingVirtual2)
 
 START_MAPPING(Wonderful,

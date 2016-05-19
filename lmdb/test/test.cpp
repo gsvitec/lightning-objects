@@ -41,6 +41,28 @@ vector<shared_ptr<T>> getInstances(ReadTransactionPtr tr, function<bool(shared_p
   return result;
 }
 
+void testKeyedProperties(KeyValueStore *kv)
+{
+  SomethingWithAllValueKeyedProperties swakp;
+  swakp.name = "James";
+  swakp.counter = 22;
+  swakp.numbers = {1, 2, 3, 4, 5, 6};
+  swakp.children = {"Bob", "Mary", "Jim"};
+
+  ObjectKey key;
+  auto wtxn = kv->beginWrite();
+  wtxn->saveObject(swakp, key);
+  wtxn->commit();
+
+  SomethingWithAllValueKeyedProperties *p2;
+  auto rtxn = kv->beginRead();
+  p2 = rtxn->getObject<SomethingWithAllValueKeyedProperties>(key);
+  rtxn->abort();
+
+  assert(p2->name == "James" && p2->counter == 22 && p2->numbers.size() == 6 && p2->numbers[3] == 4
+         && p2->children.size() == 3 && p2->children.count("Jim"));
+}
+
 void testColored2DPoint(KeyValueStore *kv)
 {
   ObjectKey key;
@@ -1172,6 +1194,7 @@ int main()
       SomethingWithEmbeddedObjects,
       SomethingWithEmbbededObjectVectors,
       SomethingWithAnObjectIter,
+      SomethingWithAllValueKeyedProperties,
       SomethingAbstract,
       SomethingConcrete1,
       SomethingConcrete2,
@@ -1206,6 +1229,7 @@ int main()
   testDelete(kv, 0);
   testRefCounting(kv, 0);
 
+  testKeyedProperties(kv);
   testColored2DPoint(kv);
   testColoredPolygon(kv);
   testColoredPolygonIterator(kv);

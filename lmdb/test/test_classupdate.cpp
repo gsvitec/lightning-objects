@@ -32,15 +32,15 @@ namespace persistence {
 namespace kv {
 
 START_MAPPING(TestClass1, name, number)
-MAPPED_PROP(TestClass1, BasePropertyAssign, std::string, name)
-MAPPED_PROP(TestClass1, BasePropertyAssign, int, number)
+MAPPED_PROP(TestClass1, ValuePropertyEmbeddedAssign, std::string, name)
+MAPPED_PROP(TestClass1, ValuePropertyEmbeddedAssign, int, number)
 END_MAPPING(TestClass1)
 
 START_MAPPING(TestClass2, name, description, number, value, test1_ptr, test1_emb, test1_key)
-MAPPED_PROP(TestClass2, BasePropertyAssign, std::string, name)
-MAPPED_PROP(TestClass2, BasePropertyAssign, std::string, description)
-MAPPED_PROP(TestClass2, BasePropertyAssign, int, number)
-MAPPED_PROP(TestClass2, BasePropertyAssign, double, value)
+MAPPED_PROP(TestClass2, ValuePropertyEmbeddedAssign, std::string, name)
+MAPPED_PROP(TestClass2, ValuePropertyEmbeddedAssign, std::string, description)
+MAPPED_PROP(TestClass2, ValuePropertyEmbeddedAssign, int, number)
+MAPPED_PROP(TestClass2, ValuePropertyEmbeddedAssign, double, value)
 MAPPED_PROP(TestClass2, ObjectPtrPropertyAssign, TestClass1, test1_ptr)
 MAPPED_PROP(TestClass2, ObjectPtrVectorPropertyEmbeddedAssign, TestClass1, test1_emb)
 MAPPED_PROP(TestClass2, ObjectPtrVectorPropertyAssign, TestClass1, test1_key)

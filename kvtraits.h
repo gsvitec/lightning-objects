@@ -259,11 +259,6 @@ struct StoreAccessPropertyKey: public StoreAccessBase
   size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return 0;}
 };
 
-template<typename T, typename V, unsigned byteSize=TypeTraits<V>::byteSize> struct PropertyStorage
-    : public StoreAccessBase {
-  PropertyStorage() : StoreAccessBase(byteSize) {}
-};
-
 /**
  * base class for value handler templates.
  */
@@ -474,15 +469,6 @@ template <typename O, typename P, P O::*p> struct PropertyAssign : public Proper
       : PropertyAccess<O, P>(name, inverse, type) {}
   void set(O &o, P val) const override { o.*p = val;}
   P get(O &o) const override { return o.*p;}
-};
-
-/**
- * assignment property accessor for predeclared base types
- */
-template <typename O, typename P, P O::*p>
-struct BasePropertyAssign : public PropertyAssign<O, P, p> {
-  BasePropertyAssign(const char * name)
-      : PropertyAssign<O, P, p>(name, new PropertyStorage<O, P>(), PROPERTY_TYPE(P)) {}
 };
 
 template <typename T> struct ClassTraits;
@@ -1305,10 +1291,10 @@ struct ClassTraits<EmptyClass>
     return false;
   }
   template <typename T, typename TV>
-  static void put(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags) {
+  static void put(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=0) {
   }
   template <typename T, typename TV>
-  static void get(T &d, const PropertyAccessBase *pa, TV &value, unsigned flags) {
+  static void get(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=0) {
   }
 };
 
