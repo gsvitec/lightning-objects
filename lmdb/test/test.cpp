@@ -47,7 +47,7 @@ void testKeyedProperties(KeyValueStore *kv)
   swakp.name = "James";
   swakp.counter = 22;
   swakp.numbers = {1, 2, 3, 4, 5, 6};
-  swakp.children = {"Bob", "Mary", "Jim"};
+  swakp.children = set<string>({"Bob", "Mary", "Jim"});
 
   ObjectKey key;
   auto wtxn = kv->beginWrite();
