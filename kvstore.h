@@ -1,6 +1,21 @@
-//
-// Created by chris on 10/7/15.
-//
+/*
+ * LightningObjects C++ Object Storage based on Key/Value API
+ *
+ * Copyright (C) 2016 GS Vitec GmbH <christian@gsvitec.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, and provided
+ * in the LICENSE file in the root directory of this software.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef FLEXIS_FLEXIS_KVSTORE_H
 #define FLEXIS_FLEXIS_KVSTORE_H
@@ -332,19 +347,17 @@ protected:
 public:
   /**
    * create a new store object.
-   * <p>A store can be assigned a storeId. If multiple databases are to be used in the same process with
-   * different but overlapping schema setup, each must be assigned a 0-based, consecutive ID. A difference in schema
-   * setup occurs when the sequence of putSchema calls differs for classes whose mappings are used in both stores.
-   * A schema setup is equal if the classes that are common to all participating stores are declared at the exact same
-   * point.
+   * <p>A store is identified by a storeId. If multiple databases are to be used in the same process with
+   * different but overlapping mapping schema, each must be assigned a 0-based, consecutive ID. A mapping schema difference
+   * occurs when the sequence of putSchema calls differs for classes whose mappings are used in both stores.
    * </p>
    * Say you have classes A and B in header "mappings1.h", and class C in "mappings2.h". Database 1 sees header
-   * "mappings1.h", while database 2 sees headers "mappings1.h" and "mappings2.h". Now, if the declaration code for both
+   * "mappings1.h", while database 2 sees headers "mappings1.h" and "mappings2.h". Now, if the initialization code for both
    * databases starts with
    * <pre>
    * store->putSchema<A, B>();
    * </pre>
-   * all is well, there is no need to maintain storeIds. However, if database 2 was to declare schema like this:
+   * all is well, storeIds dont't matter. However, if database 2 was to declare schema like this:
    * <pre>
    * store->putSchema<C>();
    * store->putSchema<A, B>();
@@ -354,9 +367,9 @@ public:
    * <p>
    * There are 2 other reasons for using storeIds:
    * <ul>
-   * <li>refcounting. If refcounting is turned on and off at runtime, it will affect all databases that share mapping and
+   * <li>class configuration, e.g. refcounting + caching. Class configurations will affect all databases that share mapping and
    * storeId</li>
-   * <li>objectIds. For shared mappings in databases with identical id, objectIds will be started at the maximum value
+   * <li>objectIds. For shared mappings in databases with identical storeId, objectIds will be started at the maximum value
    * saved for any participating database. Thus, for DB's with low traffic, id's may rise in an "unnatural" way</li>
    * </ul>
    * </p>
@@ -1552,10 +1565,10 @@ public:
   {
     using Traits = ClassTraits<T>;
 
-    ObjectId objId = ClassTraits<T>::getObjectId(obj);
+    ObjectKey *objKey = ClassTraits<T>::getObjectKey(obj);
 
     ReadBuf rb;
-    ClassTraits<T>::load(store.id, this, rb, Traits::traits_data(store.id).classId, objId, &obj, pa, StoreMode::force_all);
+    ClassTraits<T>::load(store.id, this, rb, objKey->classId, objKey->objectId, &obj, pa, StoreMode::force_all);
   }
 
   ClassId getClassId(const std::type_info &ti) {
@@ -2315,6 +2328,7 @@ public:
 
     return ci->collectionId;
   }
+
   /**
    * create a top-level (chunked) member data collection and assign it to the given property, which is expected to be
    * mapped as CollectionIterPropertyAssign
