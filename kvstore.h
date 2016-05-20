@@ -396,7 +396,11 @@ public:
       objectClassInfos[info.classInfo->data[id].classId] = info.classInfo;
       objectTypeInfos[info.classInfo->typeinfo] = info.classInfo->data[id].classId;
     }
-    if(!schemaError.empty()) throw schemaError.make_error();
+    if(!schemaError.empty()) {
+      for(auto &info : vinfos)
+        if(info.classInfo->compatibility < requiredCompatibility)
+          throw schemaError.make_error();
+    }
   }
 
   /**

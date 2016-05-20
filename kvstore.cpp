@@ -177,18 +177,20 @@ bool KeyValueStoreBase::updateClassSchema(
   for(unsigned s=0, r=0; s<schemaEmbedded.size(); s++, r++)
   {
     unsigned sIndex=s;
-    for(; sIndex < schemaEmbedded.size() && schemaEmbedded[sIndex]->name != runtimeEmbedded[r]->name; sIndex++) ;
-    for(; sIndex < schemaEmbedded.size() && s<sIndex; s++) {
-      schema_compatibility::What w = sIndex == schemaEmbedded.size() ?
+    for(; sIndex < schemaEmbedded.size() && r < runtimeEmbedded.size()
+        && schemaEmbedded[sIndex]->name != runtimeEmbedded[r]->name; sIndex++) ;
+    for(; sIndex < schemaEmbedded.size() && (r==runtimeEmbedded.size() || s<sIndex); sIndex++) {
+      schema_compatibility::What w = r==runtimeEmbedded.size() ?
                                       schema_compatibility::embedded_property_removed_end :
                                       schema_compatibility::embedded_property_removed_internal;
       errors.push_back(schema_compatibility::Property(schemaEmbedded[s]->name, schemaEmbedded[s]->id, w));
     }
 
     rIndex=r;
-    for(; rIndex < runtimeEmbedded.size() && runtimeEmbedded[rIndex]->name != schemaEmbedded[s]->name; rIndex++) ;
-    for(; rIndex < runtimeEmbedded.size() && r<rIndex; r++) {
-      schema_compatibility::What w = r == runtimeEmbedded.size() ?
+    for(; rIndex < runtimeEmbedded.size() && s < schemaEmbedded.size()
+        && runtimeEmbedded[rIndex]->name != schemaEmbedded[s]->name; rIndex++) ;
+    for(; rIndex < runtimeEmbedded.size() && (s==schemaEmbedded.size() || r<rIndex); rIndex++) {
+      schema_compatibility::What w = s==schemaEmbedded.size() ?
                                     schema_compatibility::embedded_property_appended :
                                     schema_compatibility::embedded_property_inserted;
       errors.push_back(schema_compatibility::Property(runtimeEmbedded[r]->name, runtimeEmbedded[r]->id, w));

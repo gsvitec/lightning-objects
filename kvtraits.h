@@ -601,7 +601,7 @@ public:
   }
 };
 
-enum class SchemaCompatibility {write, read, none};
+enum class SchemaCompatibility {none, read, write};
 
 /**
  * mutable class metadata that is maintained per-database
