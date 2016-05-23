@@ -612,19 +612,65 @@ void testDataCollection1(KeyValueStore *kv)
     data = cd2->data();
     d0 = data[0];
     double d99 = data[99];
-    assert(d0 == 1.44 * 2 && d99 == 1.44 * 101);
+    assert(d0 == 1.44 * 2 && d99 == 1.44 * 101&& !cd2->isOwned());
 
     auto cd3 = rtxn->getDataCollection<double>(collectionId, 100, 50);
     data = cd3->data();
-    assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149);
+    assert(data[0] == 1.44 * 100 && data[49] == 1.44 * 149&& !cd3->isOwned());
 
     CollectionData<double>::Ptr cd4 = rtxn->getDataCollection<double>(collectionId2, 0, 1000);
     data = cd4->data();
-    assert(data[1] == 1.44 && data[999] == 1.44 * 999);
+    assert(data[1] == 1.44 && data[999] == 1.44 * 999&& !cd4->isOwned());
 
     CollectionData<double>::Ptr cd5 = rtxn->getDataCollection<double>(collectionId2, 1000, 1000);
     data = cd5->data();
-    assert(data[1] == 4.44 && data[999] == 4.44 * 999);
+    assert(data[1] == 4.44 && data[999] == 4.44 * 999 && !cd5->isOwned());
+
+    CollectionData<double>::Ptr cd6 = rtxn->getDataCollection<double>(collectionId2, 500, 1000);
+    data = cd6->data();
+    assert(data[0] == 1.44 * 500 && data[999] == 4.44 * 499 && cd6->isOwned());
+
+    rtxn->abort();
+  }
+
+  {
+    //load saved collection arrays into preallocated storage
+    auto rtxn = kv->beginRead();
+
+    double d2_3[3];
+    size_t r1 = rtxn->getDataCollection<double>(collectionId, 2, 3, d2_3);
+    assert(r1 == 3);
+
+    double d0 = d2_3[0];
+    double d2 = d2_3[2];
+    assert(d0 == 1.44 * 2 && d2 == 1.44 * 4);
+
+    double d2_100[100];
+    size_t r2 = rtxn->getDataCollection<double>(collectionId, 2, 100, d2_100);
+    assert(r2 == 100);
+    d0 = d2_100[0];
+    double d99 = d2_100[99];
+    assert(d0 == 1.44 * 2 && d99 == 1.44 * 101);
+
+    double d100_50[50];
+    auto r3 = rtxn->getDataCollection<double>(collectionId, 100, 50, d100_50);
+    assert(r3 == 50);
+    assert(d100_50[0] == 1.44 * 100 && d100_50[49] == 1.44 * 149);
+
+    double d0_1000[1000];
+    auto r4 = rtxn->getDataCollection<double>(collectionId2, 0, 1000, d0_1000);
+    assert(r4 == 1000);
+    assert(d0_1000[1] == 1.44 && d0_1000[999] == 1.44 * 999);
+
+    double d1000_1000[1000];
+    auto r5 = rtxn->getDataCollection<double>(collectionId2, 1000, 1000, d1000_1000);
+    assert(r5 == 1000);
+    assert(d1000_1000[1] == 4.44 && d1000_1000[999] == 4.44 * 999);
+
+    double d500_1000[1000];
+    auto r6 = rtxn->getDataCollection<double>(collectionId2, 500, 1000, d500_1000);
+    assert(r6 == 1000);
+    assert(d500_1000[0] == 1.44 * 500 && d500_1000[999] == 4.44 * 499);
 
     rtxn->abort();
   }
@@ -713,6 +759,11 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
     sov.fsos2.push_back(FixedSizeObject2(5.55, 6.66));
     sov.fsos2.push_back(FixedSizeObject2(7.77, 8.88));
 
+    sov.fsos3.push_back(FixedSizeObject2(1.11, 2.22));
+    sov.fsos3.push_back(FixedSizeObject2(3.33, 4.44));
+    sov.fsos3.push_back(FixedSizeObject2(5.55, 6.66));
+    sov.fsos3.push_back(FixedSizeObject2(7.77, 8.88));
+
     sov.vsos.push_back(VariableSizeObject(1, "Frankfurt"));
     sov.vsos.push_back(VariableSizeObject(3, "München"));
     sov.vsos.push_back(VariableSizeObject(5, "Regensburg"));
@@ -745,6 +796,13 @@ void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
            && loaded->fsos2[1].number1 == 3.33 \
            && loaded->fsos2[3].number1 == 7.77 \
            && loaded->fsos2[3].number2 == 8.88);
+
+    assert(loaded && loaded->name == "sweov" && loaded->fsos3.size() == 4 \
+           && loaded->fsos3[0].number1 == 1.11 \
+           && loaded->fsos3[0].number2 == 2.22 \
+           && loaded->fsos3[1].number1 == 3.33 \
+           && loaded->fsos3[3].number1 == 7.77 \
+           && loaded->fsos3[3].number2 == 8.88);
 
     assert(loaded->vsos.size() ==  3 && loaded->vsos[0].name == "Frankfurt" && loaded->vsos[2].name == "Regensburg");
 
@@ -1037,7 +1095,8 @@ void testObjectIterProperty(KeyValueStore *kv)
     vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
 
     assert(hist.size() == 20);
-    //auto value = soi->history->getHistoryValue(2);
+    auto value = soi->history->getHistoryValue(2);
+
     delete soi;
   }
 }
@@ -1181,10 +1240,10 @@ void test_classupdate();
 
 int main()
 {
-  test_classupdate();
+  //test_classupdate();
 
-#if 1
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{0, ".", "test"};
+#if 1
 
   kv->putSchema<ObjectPropertyTest,
       RefCountingTest,

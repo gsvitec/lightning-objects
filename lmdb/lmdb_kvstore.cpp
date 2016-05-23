@@ -439,7 +439,7 @@ class Transaction
       public flexis::persistence::kv::ExclusiveReadTransaction
 {
 public:
-  enum class Mode {read, append, write};
+  enum class Mode {read, write};
 
 private:
   const ::lmdb::env &m_env;
@@ -475,7 +475,7 @@ protected:
 public:
   Transaction(KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
       : flexis::persistence::kv::ReadTransaction(store),
-        flexis::persistence::kv::WriteTransaction(store, mode == Mode::append),
+        flexis::persistence::kv::WriteTransaction(store, false),
         flexis::persistence::kv::ExclusiveReadTransaction(store),
         m_mode(mode),
         m_env(env),
@@ -531,7 +531,7 @@ public:
 
   ReadTransactionPtr beginRead() override;
   ExclusiveReadTransactionPtr beginExclusiveRead() override;
-  WriteTransactionPtr beginWrite(bool append, unsigned needsKBs) override;
+  WriteTransactionPtr beginWrite(unsigned needsKBs) override;
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
 };
@@ -665,7 +665,7 @@ ExclusiveReadTransactionPtr KeyValueStoreImpl::beginExclusiveRead()
   return ExclusiveReadTransactionPtr(new Transaction(*this, Transaction::Mode::read, m_env, m_dbi_data, true));
 }
 
-WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs)
+WriteTransactionPtr KeyValueStoreImpl::beginWrite(unsigned needsKBs)
 {
   if(m_writeBlocks)
     throw invalid_argument("write operations are blocked by a running transaction");
@@ -674,8 +674,7 @@ WriteTransactionPtr KeyValueStoreImpl::beginWrite(bool append, unsigned needsKBs
   if(wtr && !wtr->isClosed()) throw invalid_argument("a write transaction is already running");
 
   checkAvailableSpace(needsKBs);
-  Transaction::Mode mode = append ? Transaction::Mode::append : Transaction::Mode::write;
-  auto tptr = shared_ptr<Transaction>(new Transaction(*this, mode, m_env, m_dbi_data));
+  auto tptr = shared_ptr<Transaction>(new Transaction(*this, Transaction::Mode::write, m_env, m_dbi_data));
   writeTxn = tptr;
 
   return tptr;
@@ -857,7 +856,7 @@ bool Transaction::lastChunk(ObjectId collectionId, PropertyId &chunkId, ::lmdb::
 
 bool check_chunkinfo(const ChunkInfo &run, const ChunkInfo &ref)
 {
-  return run.startIndex + run.elementCount < ref.startIndex;
+  return run.startIndex + run.elementCount - 1 < ref.startIndex;
 }
 
 bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, size_t length,
@@ -866,8 +865,8 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
   ChunkInfo chunk(0, startIndex);
   auto findStart = lower_bound(info->chunkInfos.cbegin(), info->chunkInfos.cend(), chunk, check_chunkinfo);
   if(findStart != info->chunkInfos.cend()) {
-    chunk.startIndex += length;
-    auto findEnd = lower_bound(info->chunkInfos.cbegin(), info->chunkInfos.cend(), chunk, check_chunkinfo);
+    chunk.startIndex += length-1;
+    auto findEnd = lower_bound(findStart, info->chunkInfos.cend(), chunk, check_chunkinfo);
     if(findEnd != info->chunkInfos.cend()) {
       ::lmdb::val keyval, startval, endval;
 
@@ -881,7 +880,8 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
 
       if(findStart == findEnd) {
         //all data in same chunk, Cool, we're done
-        *data = datastart;
+        if(*data) memcpy(*data, datastart, length*elementSize); //copy to user-provided memory
+        else  *data = datastart;                                //return pointer into DB memory!
         *owned = false;
       }
       else {
@@ -899,8 +899,11 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
         endlen = endcount * elementSize;
         datalen += endlen;
 
-        *data = malloc(datalen);
-        *owned = true;
+        *owned = false;
+        if(!*data) {
+          *data = malloc(datalen);
+          *owned = true;
+        }
 
         char *dta = (char *)*data;
         memcpy(dta, datastart, startlen);

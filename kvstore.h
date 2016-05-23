@@ -58,6 +58,9 @@ static const kv::ClassId COLLECTION_CLSID = 1;
 static const kv::ClassId COLLINFO_CLSID = 2;
 static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
+/**
+ * data structures and enums used during schema validation
+ */
 class schema_compatibility
 {
 public:
@@ -84,6 +87,9 @@ public:
     embedded_property_removed_end
   };
 
+  /**
+   * describes validation results regarding a given property
+   */
   struct Property {
     std::string name;
     unsigned position;
@@ -137,22 +143,9 @@ using WriteTransactionPtr = std::shared_ptr<kv::WriteTransaction>;
 using ObjectProperties = std::unordered_map<ClassId, Properties *>;
 using ObjectClassInfos = std::unordered_map<ClassId, AbstractClassInfo *>;
 
-using TypeInfoRef = std::reference_wrapper<const std::type_info>;
-
-struct TypeinfoHasher {
-  std::size_t operator()(TypeInfoRef code) const
-  {
-    return code.get().hash_code();
-  }
-};
-
-struct TypeinfoEqualTo {
-  bool operator()(TypeInfoRef lhs, TypeInfoRef rhs) const
-  {
-    return lhs.get() == rhs.get();
-  }
-};
-
+/**
+ * object cache interface
+ */
 struct ObjectCache {
   virtual ~ObjectCache() {}
 
@@ -160,6 +153,9 @@ struct ObjectCache {
   template <typename T> void put(ObjectId id, std::shared_ptr<T> ptr);
   template <typename T> void erase(ObjectId id);
 };
+/**
+ * map-based object cache implementation
+ */
 template <typename T>
 struct TypedObjectCache : public ObjectCache {
   std::unordered_map<ObjectId, std::shared_ptr<T>> objects;
@@ -177,9 +173,16 @@ template <typename T> void ObjectCache::erase(ObjectId id) {
   dynamic_cast<TypedObjectCache<T> *>(this)->objects.erase(id);
 }
 
+/**
+ * global function for assigning storage IDs
+ * @return the next available storage ID
+ */
 StoreId nextStoreId();
-}
+} //kv
 
+/**
+ * non-templated abstract base class for KeyValueStore
+ */
 class KeyValueStoreBase
 {
   friend class kv::ReadTransaction;
@@ -205,11 +208,15 @@ protected:
   };
   using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
 
+  /**
+   * compare loaded and declared property mapping
+   */
   void compare(std::vector<schema_compatibility::Property> &errors, unsigned index,
                KeyValueStoreBase::PropertyMetaInfoPtr pi, const kv::PropertyAccessBase *pa);
 
   /**
-   * check if class schema already exists. If so, check compatibility. If not, create
+   * check if class schema already exists. If so, check compatibility. If not, save it for later reference
+   *
    * @param classInfo the runtime classInfo to check
    * @param properties the runtime class properties
    * @param numProperties size of the former
@@ -220,10 +227,9 @@ protected:
                          unsigned numProperties, std::vector<schema_compatibility::Property> &errors);
 
   /**
-   * load class metadata from the store. If it doesn't already exist, save currentProps as metadata
+   * load class metadata from the store. If it doesn't already exist, save currentProps for later reference
    *
-   * @param (in/out) the ClassInfo which holds the fully qualified class name. The other fields will
-   * be set
+   * @param (in/out) the ClassInfo which holds the fully qualified class name. The other fields will be set
    * @param (in) currentProps the currently live persistent properties
    * @param (in) numProps the length of the above array
    * @param (out) the persistent propertyInfos. This will be empty if the class was newly declared
@@ -309,7 +315,22 @@ class KeyValueStore : public KeyValueStoreBase
   kv::ObjectProperties objectProperties;
   kv::ObjectClassInfos objectClassInfos;
 
-  std::unordered_map<kv::TypeInfoRef, kv::ClassId, kv::TypeinfoHasher, kv::TypeinfoEqualTo> objectTypeInfos;
+  //helpers for storing type_infos in a map
+  using TypeInfoRef = std::reference_wrapper<const std::type_info>;
+  struct TypeinfoHasher {
+    std::size_t operator()(TypeInfoRef code) const
+    {
+      return code.get().hash_code();
+    }
+  };
+  struct TypeinfoEqualTo {
+    bool operator()(TypeInfoRef lhs, TypeInfoRef rhs) const
+    {
+      return lhs.get() == rhs.get();
+    }
+  };
+
+  std::unordered_map<TypeInfoRef, kv::ClassId, TypeinfoHasher, TypeinfoEqualTo> objectTypeInfos;
   std::unordered_map<kv::ClassId, std::shared_ptr<kv::ObjectCache>> objectCaches;
 
   template <typename T> inline
@@ -348,7 +369,7 @@ public:
   /**
    * create a new store object.
    * <p>A store is identified by a storeId. If multiple databases are to be used in the same process with
-   * different but overlapping mapping schema, each must be assigned a 0-based, consecutive ID. A mapping schema difference
+   * different but overlapping mapping schema, each must be assigned a 0-based, consecutive ID. A mapping schema conflict
    * occurs when the sequence of putSchema calls differs for classes whose mappings are used in both stores.
    * </p>
    * Say you have classes A and B in header "mappings1.h", and class C in "mappings2.h". Database 1 sees header
@@ -456,7 +477,7 @@ public:
   }
 
   /**
-   * set refcounting state for the given template parameter class. When refcounting is on, a separate entry will
+   * configure refcounting for the given template parameter class. When refcounting is on, a separate entry will
    * be written for each object which holds the reference count. The reference count will be incremented whenever
    * the object is added to a shared_ptr-mapped container, and decremented when it is removed from the same
    *
@@ -496,6 +517,11 @@ public:
 
   /**
    * register a substitute type to be used in polymorphic operations where a subclass of T is unknown.
+   * <p>
+   * Explanation: you have a schema with classes A, B and C, where C is a subclass of B with virtual methods. A has a
+   * member "children" which is a vector<B *>. You save an instance of A with 2 "children": B b and C c. Later on,
+   * you load A through a schema where class C is deleted. If you configure a substitute, the number of children
+   * will be 2, but c will be an instance of the substitute class
    */
   template <typename T, typename Subst>
   void registerSubstitute()
@@ -503,46 +529,40 @@ public:
     kv::ClassTraits<T>::traits_info-> template setSubstitute<Subst>();
   }
 
+  /**
+   * @return true if the pointer points to a newly created object
+   */
   template <typename T> bool isNew(std::shared_ptr<T> &obj)
   {
     return kv::ClassTraits<T>::getObjectKey(obj)->isNew();
   }
 
+  /**
+   * @return the ObjectId held inside the given shared_ptr
+   */
   template <typename T> kv::ObjectId getObjectId(std::shared_ptr<T> obj)
   {
     return kv::ClassTraits<T>::getObjectKey(obj)->objectId;
   }
 
-  template <typename T> void getObjectKey(std::shared_ptr<T> obj, kv::ObjectKey &key)
-  {
-    key = *kv::ClassTraits<T>::getObjectKey(obj);
-  }
-
   /**
-   * @return a transaction object that allows reading the database.
+   * @return a transaction object that provides read operations.
    */
   virtual kv::ReadTransactionPtr beginRead() = 0;
 
   /**
-   * @return a transaction object that allows reading the database but prevents writing
+   * @return a transaction object that provides read operations but prevents writing
    */
   virtual kv::ExclusiveReadTransactionPtr beginExclusiveRead() = 0;
 
   /**
-   * @param append enable append mode. Append mode, if supported, is useful if a large number of homogenous simple objects
-   * are written, homogenous meaning that objects are of the same type (or subtypes). One essential requirement is that keys
-   * are written in sequential order (hence append), which is maintained if only the putObject API is used. However, this
-   * cannot be ensured if the objects written are complex, i.e. contain references to other mapped objects (either direct or
-   * as array elements), which is why these objects are not allowed.
-   * Writing in append mode can be much more efficient than standard write
-   *
    * @param needsKBs database space required by this transaction. If not set, the default will be used.
    *
    * @return a transaction object that allows reading + writing the database.
-   * @throws InvalidArgumentException if in append mode the above prerequisites are not met
-   * @throws persistence_error if write operations are currently blocked (beginRead(true))
+   * @throws invalid_argument if another write transaction is running in parralel, or write operations are currently
+   * blocked by an exclusive read transaction
    */
-  virtual kv::WriteTransactionPtr beginWrite(bool append=false, unsigned needsKBs=0) = 0;
+  virtual kv::WriteTransactionPtr beginWrite(unsigned needsKBs=0) = 0;
 };
 
 namespace kv {
@@ -588,7 +608,7 @@ template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadB
 /**
  * class that must be subclassed by CollectionIterProperty replacements
  */
-class KVPropertyBackend
+class IterPropertyBackend
 {
 protected:
   ObjectId m_objectId = 0;
@@ -602,15 +622,15 @@ public:
     if(!ib) throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
 
     //bad luck if pa->storage was not an CollectionIterPropertyStorage
-    ((KVPropertyBackend *)ib)->setObjectId(objectId);
-    ((KVPropertyBackend *)ib)->setKVStore(&store);
+    ((IterPropertyBackend *)ib)->setObjectId(objectId);
+    ((IterPropertyBackend *)ib)->setKVStore(&store);
   }
 
   ObjectId getObjectId() {return m_objectId;}
   void setObjectId(ObjectId objectId) { m_objectId = objectId;}
   void setKVStore(KeyValueStore *store) {m_store = store;}
 };
-using IterPropertyBackendPtr = std::shared_ptr<KVPropertyBackend>;
+using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend>;
 
 /**
  * data used internally during update/delete preparation
@@ -1121,8 +1141,14 @@ public:
   ~CollectionData() {
     if(m_owned) free(m_data);
   }
+  bool isOwned() {return m_owned;}
   V *data() {return m_data;}
 };
+
+#define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
+"collection data access only supported for fixed-size types with native size equal byteSize");
+#define VALUEAPI_ASSERT(_X) static_assert(has_objid<ClassTraits<_X>>::value, \
+"class must define an OBJECT_ID mapping to be usable with value-based API");
 
 /**
  * Transaction that allows read operations only. Read transactions can be run concurrently
@@ -1281,9 +1307,20 @@ protected:
   virtual void getData(ReadBuf &buf, ObjectKey &key, bool getRefount) = 0;
 
   /**
-   * read object data into a buffer. Used internally
+   * read scalar collection data
+   *
+   * @param info collection info
+   * @param startIndex start index of data to retrieve
+   * @param length number of elements to retrieve
+   * @param elementSize size of one element
+   * @param data (in, out) where to store the retrieved data. If *data != nullptr, data will be copied
+   * to target address. Otherwise, if requested data is within one chunk, *data will be set to the database-owned
+   * area where trhe chunk resides, if requested data straddles chunks, memory will be allocated and *owned will
+   * be true
+   * @param owned (out) set to true if a buffer was allocated to store the data
    */
-  //virtual void getData(ReadBuf &buf, ObjectKey &storageKey) = 0;
+  virtual bool _getCollectionData(
+      CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
 
   virtual CursorHelper * _openCursor(const std::vector<ClassId> &classIds) = 0;
   virtual CursorHelper * _openCursor(ClassId classId, ObjectId objectId, PropertyId propertyId) = 0;
@@ -1311,6 +1348,9 @@ protected:
 public:
   virtual ~ReadTransaction();
 
+  /**
+   * @return the storage id
+   */
   StoreId storeId() {return store.id;}
 
   /**
@@ -1322,11 +1362,11 @@ public:
   }
 
   /**
-   * load an object from the KV store using the key generated by a previous call to WriteTransaction::putObject().
+   * load an object from the store using the key generated by a previous call to WriteTransaction::putObject().
    * Non-polymorphical, T must be the exact type of the object. The object is allocated on the heap.
    *
    * @param objectId the key generated by a previous call to WriteTransaction::putObject()
-   * @return the object pointer, or nullptr if the key is not defined.
+   * @return the address of the newly allocated + populated object, or nullptr if the key is not defined.
    */
   template<typename T> T *getObject(ObjectKey &key)
   {
@@ -1342,7 +1382,7 @@ public:
   }
 
   /**
-   * load an object from the KV store, using the key generated by a previous call to WriteTransaction::putObject()
+   * load an object from the store, using the key generated by a previous call to WriteTransaction::putObject()
    * Non-polymorphical, T must be the exact type of the object. The object is allocated on the heap.
    *
    * @return a shared pointer to the object, or an empty shared_ptr if the key does not exist. The shared_ptr contains
@@ -1355,7 +1395,7 @@ public:
   }
 
   /**
-   * reload an object from the KV store, Non-polymorphical, T must be the exact type of the object.
+   * reload an object from the store, Non-polymorphical, T must be the exact type of the object.
    * The new object is allocated on the heap.
    *
    * @return a shared pointer to the object, or an empty shared_ptr if the object does not exist anymore. The shared_ptr contains
@@ -1380,7 +1420,8 @@ public:
 
   /**
    * @param objectId a valid object ID
-   * @param propertyId the propertyId (1-based index into declared properties)
+   * @param propertyId the propertyId (1-based index into declared properties, obtainable through PROPERTY_ID macro)
+   *
    * @return a cursor over the contents of a vector-valued, lazy-loading object property. The cursor will be empty if the
    * given property is not vector-valued
    */
@@ -1392,7 +1433,8 @@ public:
 
   /**
    * @param obj the object that holds the property
-   * @param propertyId the propertyId (1-based index into declared properties)
+   * @param propertyId the propertyId (1-based index into declared properties, obtainable through PROPERTY_ID macro)
+   *
    * @return a cursor over the contents of a vector-valued, lazy-loading object property. The cursor will be empty if the
    * given property is not vector-valued
    */
@@ -1405,7 +1447,7 @@ public:
 
   /**
    * @param collectionId the id of a top-level object collection
-   * @return a cursor over the contents of the collection
+   * @return a cursor over the contents of the top-level collection
    */
   template <typename V> typename ObjectCollectionCursor<V>::Ptr openCursor(ObjectId collectionId) {
     return typename ObjectCollectionCursor<V>::Ptr(
@@ -1414,6 +1456,7 @@ public:
 
   /**
    * @param collectionId the id of a top-level collection
+   *
    * @return a cursor over the contents of the collection. The cursor is non-polymorphic
    */
   template <typename V> typename ValueCollectionCursor<V>::Ptr openValueCursor(ObjectId collectionId) {
@@ -1494,7 +1537,7 @@ public:
   }
 
   /**
-   * load a top-level (chunked) member collection.
+   * load a top-level (chunked) member iterator collection.
    *
    * @param o the object that holds the member
    * @param p pointer to the the member variable
@@ -1503,14 +1546,14 @@ public:
   template <typename O, typename T, template <typename> class Iter>
   std::vector<std::shared_ptr<T>> getCollection(O &o, std::shared_ptr<Iter<T>> O::*p)
   {
-    KVPropertyBackend &ib = dynamic_cast<KVPropertyBackend &>(*(o.*p));
+    IterPropertyBackend &ib = dynamic_cast<IterPropertyBackend &>(*(o.*p));
 
     CollectionInfo *ci = getCollectionInfo(ib.getObjectId());
     return loadChunkedCollection<T, std::shared_ptr>(ci);
   }
 
   /**
-   * load a top-level (chunked) scalar collection
+   * load a top-level (chunked) value collection
    *
    * @param collectionId an id returned from a previous #putCollection call
    */
@@ -1532,6 +1575,32 @@ public:
       }
     }
     return result;
+  }
+
+  /**
+   * Note that the raw data API is only usable for floating point (float, double) and for integral data types that
+   * conform to the LP64 data model. This precludes the long data type on Windows platforms
+   *
+   * @param collectionId the ID of the collection
+   * @param startIndex the start index of the data
+   * @param length number of elements to retrieve
+   * @param data the memory location to copy to
+   *
+   * @return the number of bytes actually read
+   */
+  template <typename T>
+  size_t getDataCollection(ObjectId collectionId, size_t startIndex, size_t length, T* data)
+  {
+    RAWDATA_API_ASSERT
+    bool owned;
+    CollectionInfo *ci = getCollectionInfo(collectionId);
+    if(!ci) return 0;
+
+    void *dta =  data;
+    if(_getCollectionData(ci, startIndex, length, TypeTraits<T>::byteSize, &dta, &owned)) {
+      return length; //TODO
+    }
+    return 0;
   }
 
   /**
@@ -1589,20 +1658,14 @@ public:
   void abort();
 };
 
-#define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
-"collection data access only supported for fixed-size types with native size equal byteSize");
-#define VALUEAPI_ASSERT static_assert(has_objid<ClassTraits<T>>::value, \
-"class must define an OBJECT_ID mapping to be usable with value-based API");
-
 /**
  * Transaction for exclusive read and operations. Opening write transactions while an exclusive read is open
- * will fail with an exception. Likewise creating an exclusive read transcation while a write is ongoing
+ * will fail with an exception. Likewise creating an exclusive read transcation while a write is ongoing. The
+ * reason for this is is the fact that the functions in this interface may return pointers to database-owned
+ * memory. With LMDB, this memory will be invalidated upon the next write call.
  */
 class ExclusiveReadTransaction : public virtual ReadTransaction
 {
-  virtual bool _getCollectionData(
-      CollectionInfo *info, size_t startIndex, size_t length, size_t elementSize, void **data, bool *owned) = 0;
-
 protected:
   ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
 
@@ -1611,15 +1674,19 @@ public:
    * Note that the raw data API is only usable for floating point (float, double) and for integral data types that
    * conform to the LP64 data model. This precludes the long data type on Windows platforms
    *
+   * @param collectionId the ID of the collection
+   * @param startIndex the start index of the data
+   * @param length number of elements to retrieve
+   *
    * @return a pointer to a memory chunk containing the raw collection data. The memory chunk may be
    * database-owned or copied, depending on whether start and end lie within the same chunk.
    */
-  template <typename T> typename
-  CollectionData<T>::Ptr getDataCollection(ObjectId collectionId, size_t startIndex, size_t length)
+  template <typename T>
+  typename CollectionData<T>::Ptr getDataCollection(ObjectId collectionId, size_t startIndex, size_t length)
   {
     RAWDATA_API_ASSERT
-    void *data;
-    bool owned;
+    void *data = nullptr;
+    bool owned = false;
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) return nullptr;
 
@@ -2243,8 +2310,9 @@ public:
   }
 
   /**
-   * create a top-level (chunked) member object collection and assign it to the given property, which is expected to be
-   * mapped as CollectionIterPropertyAssign
+   * create a top-level (chunked) member iterator object collection and assign it to the given property.
+   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
+   * if this is not the case
    *
    * @param o the object that holds the member
    * @param pa the property accessor, usually obtained via PROPERTY macro
@@ -2253,7 +2321,7 @@ public:
   template <typename O, typename T> void putCollection(O &o, const PropertyAccessBase *pa, const std::vector<std::shared_ptr<T>> &vect)
   {
     ObjectId collectionId = putCollection<T, std::shared_ptr>(vect);
-    KVPropertyBackend::assign(store, o, pa, collectionId);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2273,8 +2341,9 @@ public:
   }
 
   /**
-   * create a top-level (chunked) member value collection and assign it to the given property, which is expected to be
-   * mapped as CollectionIterPropertyAssign
+   * create a top-level (chunked) member iterator value collection and assign it to the given property.
+   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
+   * if this is not the case
    *
    * @param o the object that holds the member
    * @param pa the property accessor, usually obtained via PROPERTY macro
@@ -2283,7 +2352,7 @@ public:
   template <typename O, typename T> void putValueCollection(O &o, const PropertyAccessBase *pa, const std::vector<T> &vect)
   {
     ObjectId collectionId = putValueCollection(vect);
-    KVPropertyBackend::assign(store, o, pa, collectionId);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2330,8 +2399,9 @@ public:
   }
 
   /**
-   * create a top-level (chunked) member data collection and assign it to the given property, which is expected to be
-   * mapped as CollectionIterPropertyAssign
+   * create a top-level (chunked) member iterator data collection and assign it to the given property.
+   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
+   * if this is not the case
    *
    * @param o the object that holds the member
    * @param pa the property accessor, usually obtained via PROPERTY macro
@@ -2341,7 +2411,7 @@ public:
   template <typename O, typename T> void putDataCollection(O &o, PropertyAccessBase *pa, const T* array, size_t arraySize)
   {
     ObjectId collectionId = putDataCollection(array, arraySize);
-    KVPropertyBackend::assign(store, o, pa, collectionId);
+    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2859,7 +2929,7 @@ struct ObjectIdStorage : public StoreAccessBase
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey
 {
-  VALUEAPI_ASSERT
+  VALUEAPI_ASSERT(V)
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
@@ -3115,8 +3185,38 @@ template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : publi
  */
 template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessPropertyKey
 {
-  VALUEAPI_ASSERT
+  VALUEAPI_ASSERT(V)
   bool m_lazy;
+
+  bool preparesUpdates(StoreId storeId, ClassId classId) override
+  {
+    return ClassTraits<V>::traits_info->hasClassId(storeId, classId);
+  }
+  size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, void *obj, const PropertyAccessBase *pa) override
+  {
+    PrepareData::Entry &pe = pd.entry(pa->id);
+    pe.updatePrepared = true;
+    return size(storeId, buf);
+  }
+  size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
+  {
+    ReadBuf readBuf;
+    tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
+    if (!readBuf.null()) {
+      //first load all keys, because decrement/remove will invalidate the buffer
+      size_t count = readBuf.size() / ObjectKey_sz;
+      std::vector<ObjectKey> oks(count);
+      for(size_t i=0; i<count; i++) readBuf.read(oks[i]);
+
+      //now work all keys + delete
+      for(size_t i=0; i<count; i++) {
+        ObjectKey &key = oks[i];
+        tr->removeObject<V>(key.classId, key.objectId);
+      }
+    }
+    tr->remove(buf.key.classId, buf.key.objectId, pa->id);
+    return size(storeId, buf);
+  }
 
 public:
   ObjectVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
@@ -3136,6 +3236,7 @@ public:
     WriteBuf propBuf(psz);
 
     //write new vector
+    //TODO garbage-collect
     tr->pushWriteBuf();
     for(V &v : val) {
       ObjectId childId = ida->get(v);
@@ -3267,7 +3368,7 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
 
   bool preparesUpdates(StoreId storeId, ClassId classId) override
   {
-    return ClassTraits<V>::traits_data(storeId).classId == classId;
+    return ClassTraits<V>::traits_info->hasClassId(storeId, classId);
   }
   size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, void *obj, const PropertyAccessBase *pa) override
   {
@@ -3494,7 +3595,7 @@ public:
 template<typename T, typename V, typename KVIter, typename Iter>
 struct CollectionIterPropertyStorage : public StoreAccessBase
 {
-  static_assert(std::is_base_of<KVPropertyBackend, KVIter>::value, "KVIter must subclass KVPropertyBackend");
+  static_assert(std::is_base_of<IterPropertyBackend, KVIter>::value, "KVIter must subclass IterPropertyBackend");
   static_assert(std::is_base_of<Iter, KVIter>::value, "KVIter must subclass Iter");
 
   CollectionIterPropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, ObjectId_sz) {}
@@ -3509,7 +3610,7 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
     auto ib = std::shared_ptr<KVIter>(it);
     ClassTraits<T>::get(storeId, *tp, pa, ib);
 
-    return static_cast<KVPropertyBackend *>(it);
+    return static_cast<IterPropertyBackend *>(it);
   }
 
   void save(WriteTransaction *tr,
@@ -3519,7 +3620,7 @@ struct CollectionIterPropertyStorage : public StoreAccessBase
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
-    IterPropertyBackendPtr ib = std::dynamic_pointer_cast<KVPropertyBackend>(val);
+    IterPropertyBackendPtr ib = std::dynamic_pointer_cast<IterPropertyBackend>(val);
     tr->writeBuf().appendRaw(ib ? ib->getObjectId() : 0);
   }
 

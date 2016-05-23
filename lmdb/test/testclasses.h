@@ -280,6 +280,7 @@ struct SomethingWithEmbbededObjectVectors
   std::vector<SomethingWithEmbeddedObjects> sweos;
   std::vector<FixedSizeObject> fsos;
   std::vector<FixedSizeObject2> fsos2;
+  std::vector<FixedSizeObject2> fsos3;
   std::vector<VariableSizeObject> vsos;
 };
 
@@ -370,7 +371,7 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory2 : public flexis::Overlays::ObjectHistory<T>, public KVPropertyBackend
+struct KVObjectHistory2 : public flexis::Overlays::ObjectHistory<T>, public IterPropertyBackend
 {
   T t;
   T& getHistoryValue(uint64_t bufferPos) override {
@@ -465,11 +466,12 @@ START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)
   MAPPED_PROP(SomethingWithEmbeddedObjects, ObjectPropertyEmbeddedAssign, VariableSizeObject, vso)
 END_MAPPING(SomethingWithEmbeddedObjects)
 
-START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, vsos)
+START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, fsos3, vsos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ValuePropertyEmbeddedAssign, std::string, name)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, SomethingWithEmbeddedObjects, sweos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject, fsos)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, FixedSizeObject2, fsos2)
+  MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyAssign, FixedSizeObject2, fsos3)
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, vsos)
 END_MAPPING(SomethingWithEmbbededObjectVectors)
 
