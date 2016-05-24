@@ -1860,7 +1860,7 @@ protected:
    * @param shallow if true, only shallow buffer will be written
    */
   template <typename T>
-  ObjectId saveValueObject(ObjectId objectId, T &obj, bool shallow=false)
+  ObjectId save_valueobject(ObjectId objectId, T &obj, bool shallow=false)
   {
     auto &cdata = ClassTraits<T>::traits_data(store.id);
     Properties *properties = ClassTraits<T>::traits_properties;
@@ -1879,6 +1879,14 @@ protected:
     return objectId;
   }
 
+  /**
+   * fully polymorphic, refcounting + caching save
+   *
+   * @param key the object key
+   * @param obj the object to save
+   * @param useCache if true, put the object into the cache after saving
+   * @param setRefcount if true, set refcount to 1 on this object if a) the object is new and b) refcounting is turned on for the class
+   */
   template <typename T>
   void save_object(ObjectKey &key, const std::shared_ptr<T> &obj, bool useCache, bool setRefcount=true)
   {
@@ -2943,7 +2951,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
 
     //save the value object
     tr->pushWriteBuf();
-    ObjectId childObjectId = tr->saveValueObject(ida->get(val), val);
+    ObjectId childObjectId = tr->save_valueobject(ida->get(val), val);
     ida->set(val, childObjectId);
     tr->popWriteBuf();
 
@@ -3180,43 +3188,12 @@ template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : publi
 };
 
 /**
- * storage template for mapped object vectors. Value-based, therefore not polymorphic. Vector element objects are required
- * to hold an ObjectId-typed member variable which is referenced through the keyPropertyId
+ * storage template for mapped object vectors. Value-based, therefore not polymorphic. Collection objects are serialized
+ * into a secondary buffer which is stored under the PropertyId
  */
 template<typename T, typename V> class ObjectVectorPropertyStorage : public StoreAccessPropertyKey
 {
-  VALUEAPI_ASSERT(V)
   bool m_lazy;
-
-  bool preparesUpdates(StoreId storeId, ClassId classId) override
-  {
-    return ClassTraits<V>::traits_info->hasClassId(storeId, classId);
-  }
-  size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, void *obj, const PropertyAccessBase *pa) override
-  {
-    PrepareData::Entry &pe = pd.entry(pa->id);
-    pe.updatePrepared = true;
-    return size(storeId, buf);
-  }
-  size_t prepareDelete(StoreId storeId, WriteTransaction *tr, ObjectBuf &buf, const PropertyAccessBase *pa) override
-  {
-    ReadBuf readBuf;
-    tr->getData(readBuf, buf.key.classId, buf.key.objectId, pa->id);
-    if (!readBuf.null()) {
-      //first load all keys, because decrement/remove will invalidate the buffer
-      size_t count = readBuf.size() / ObjectKey_sz;
-      std::vector<ObjectKey> oks(count);
-      for(size_t i=0; i<count; i++) readBuf.read(oks[i]);
-
-      //now work all keys + delete
-      for(size_t i=0; i<count; i++) {
-        ObjectKey &key = oks[i];
-        tr->removeObject<V>(key.classId, key.objectId);
-      }
-    }
-    tr->remove(buf.key.classId, buf.key.objectId, pa->id);
-    return size(storeId, buf);
-  }
 
 public:
   ObjectVectorPropertyStorage(bool lazy) : m_lazy(lazy) {}
@@ -3230,27 +3207,25 @@ public:
     T *tp = reinterpret_cast<T *>(obj);
     ClassTraits<T>::put(tr->store.id, *tp, pa, val);
 
-    auto ida = ClassTraits<V>::objectIdAccess();
-    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
-    size_t psz = ObjectKey_sz * val.size();
-    WriteBuf propBuf(psz);
+    size_t psz = sizeof(ClassId) + sizeof(size_t);
+    Properties *properties = ClassTraits<V>::traits_properties;
 
-    //write new vector
-    //TODO garbage-collect
     tr->pushWriteBuf();
-    for(V &v : val) {
-      ObjectId childId = ida->get(v);
-      if(mode != StoreMode::force_buffer) {
-        childId = tr->saveValueObject<V>(childId, v);
-        ida->set(v, childId);
-      }
-      propBuf.append(childClassId, childId);
-    }
-    tr->popWriteBuf();
+    for(V &v : val) psz += calculateBuffer(tr->store.id, &v, properties);
+    tr->writeBuf().start(psz);
 
-    //vector goes into a separate property key
-    if(!tr->putData(classId, objectId, pa->id, propBuf))
+    ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
+    tr->writeBuf().appendRaw(childClassId);
+    tr->writeBuf().appendRaw((size_t)val.size());
+
+    //write vector
+    for(V &v : val) tr->writeObject(childClassId, 0, v, pd, properties, false);
+
+    //put vector into a separate property key
+    if(!tr->putData(classId, objectId, pa->id, tr->writeBuf()))
       throw persistence_error("data was not saved");
+
+    tr->popWriteBuf();
   }
 
   void load(ReadTransaction *tr, ReadBuf &buf,
@@ -3265,11 +3240,12 @@ public:
     tr->getData(readBuf, classId, objectId, pa->id);
 
     if(!readBuf.null()) {
-      ClassId cid;
-      ObjectId oid;
-      while(readBuf.read(cid, oid)) {
-        V obj;
-        if(tr->loadObject(cid, oid, obj)) val.push_back(obj);
+      ClassId cid = readBuf.readRaw<ClassId>();
+      size_t count = readBuf.readRaw<size_t>();
+      for(int i=0; i<count;i++) {
+        V v;
+        readObject<V>(tr->store.id, tr, readBuf, cid, 0, &v);
+        val.push_back(v);
       }
     }
     T *tp = reinterpret_cast<T *>(obj);
