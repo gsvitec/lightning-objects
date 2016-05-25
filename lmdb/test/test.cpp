@@ -18,7 +18,7 @@ template <typename T>
 bool all_predicate(shared_ptr<T> t=nullptr) {return true;}
 
 template <typename T>
-unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
+unsigned countInstances(TransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
 {
   unsigned count = 0;
   for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
@@ -29,7 +29,7 @@ unsigned countInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> pre
   return count;
 }
 template <typename T>
-vector<shared_ptr<T>> getInstances(ReadTransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
+vector<shared_ptr<T>> getInstances(TransactionPtr tr, function<bool(shared_ptr<T>)> predicate=all_predicate<T>)
 {
   vector<shared_ptr<T>> result;
   for(auto curs = tr->openCursor<T>(); !curs->atEnd(); curs->next()) {
@@ -57,7 +57,7 @@ void testKeyedProperties(KeyValueStore *kv)
   SomethingWithAllValueKeyedProperties *p2;
   auto rtxn = kv->beginRead();
   p2 = rtxn->getObject<SomethingWithAllValueKeyedProperties>(key);
-  rtxn->abort();
+  rtxn->end();
 
   assert(p2->name == "James" && p2->counter == 22 && p2->numbers.size() == 6 && p2->numbers[3] == 4
          && p2->children.size() == 3 && p2->children.count("Jim"));
@@ -77,7 +77,7 @@ void testColored2DPoint(KeyValueStore *kv)
   Colored2DPoint *p2;
   auto rtxn = kv->beginRead();
   p2 = rtxn->getObject<Colored2DPoint>(key);
-  rtxn->abort();
+  rtxn->end();
 
   assert(p2 && p2->x == 2.0f && p2->y == 3.0f && p2->r == 4.0f && p2->g == 5.0f && p2->b == 6.0f && p2->a == 7.5f);
   delete p2;
@@ -111,7 +111,7 @@ void testColoredPolygon(KeyValueStore *kv)
   ColoredPolygon *loaded;
   auto rtxn = kv->beginRead();
   loaded = rtxn->getObject<ColoredPolygon>(key);
-  rtxn->abort();
+  rtxn->end();
 
   assert(loaded && loaded->pts.size() == 3);
   delete loaded;
@@ -135,7 +135,7 @@ void testColoredPolygonIterator(KeyValueStore *kv)
     }
   }
 
-  rtxn->abort();
+  rtxn->end();
 }
 
 void testClassCursor(KeyValueStore *kv)
@@ -170,7 +170,7 @@ void testClassCursor(KeyValueStore *kv)
     }
 
     assert(count == 5);
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -196,7 +196,7 @@ void testValueVectorProperty(KeyValueStore *kv)
     assert(hans->testnames[0] == "Eva");
     assert(hans->testnames[1] == "Rudi");
 
-    rtxn->abort();
+    rtxn->end();
     delete hans;
   }
 }
@@ -227,7 +227,7 @@ void testObjectMappings(KeyValueStore *kv)
     assert(test->fso_vect[0].number1 == 4 && test->fso_vect[1].number1 == 7);
     assert(test->vso_vect[0].number == 6 && test->vso_vect[1].number == 9);
 
-    rtxn->abort();
+    rtxn->end();
     delete test;
   }
 }
@@ -253,7 +253,7 @@ void testFlexisProperties(KeyValueStore *kv)
   player::SourceInfo *loaded;
   auto rtxn = kv->beginRead();
   loaded = rtxn->getObject<player::SourceInfo>(key);
-  rtxn->abort();
+  rtxn->end();
 
   assert(loaded && loaded->userOverlays.size() == 2
          && loaded->userOverlays[0]->rangeIn == -1
@@ -303,7 +303,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     for (auto &ot : loaded->otherThings)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
-    rtxn->abort();
+    rtxn->end();
     delete loaded;
   }
   {
@@ -323,7 +323,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
     }
     assert(count == 2);
 
-    rtxn->abort();
+    rtxn->end();
     delete loaded;
   }
   {
@@ -356,7 +356,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
       }
     }
     assert(count == 2);
-    rtxn->abort();
+    rtxn->end();
     delete loaded;
   }
 }
@@ -400,7 +400,7 @@ void testObjectCollection(KeyValueStore *kv)
     for (auto &ot : loaded)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //iterate over collection w/ cursor
@@ -417,7 +417,7 @@ void testObjectCollection(KeyValueStore *kv)
     }
     assert(count == 12);
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //append more test data
@@ -438,7 +438,7 @@ void testObjectCollection(KeyValueStore *kv)
     auto rtxn = kv->beginRead();
     vector<OtherThingPtr> loaded = rtxn->getCollection<OtherThing>(collectionId);
     assert(loaded.size() == 15);
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //use appender to add more test data
@@ -470,7 +470,7 @@ void testObjectCollection(KeyValueStore *kv)
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
 
     assert(loaded.size() == 35);
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -503,7 +503,7 @@ void testValueCollection(KeyValueStore *kv)
     for (auto ot : loaded)
       cout << "value: " << ot << endl;
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //iterate over collection w/ cursor
@@ -519,7 +519,7 @@ void testValueCollection(KeyValueStore *kv)
     }
     assert(count == 10);
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //append more test data. Actually, this could be of any type, but then you'd have to know
@@ -540,7 +540,7 @@ void testValueCollection(KeyValueStore *kv)
     auto rtxn = kv->beginRead();
     vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
     assert(loaded.size() == 15);
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //use appender to add more test data
@@ -564,7 +564,7 @@ void testValueCollection(KeyValueStore *kv)
       cout << "value: " << ot << endl;
 
     assert(loaded.size() == 35);
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -630,7 +630,7 @@ void testDataCollection1(KeyValueStore *kv)
     data = cd6->data();
     assert(data[0] == 1.44 * 500 && data[999] == 4.44 * 499 && cd6->isOwned());
 
-    rtxn->abort();
+    rtxn->end();
   }
 
   {
@@ -672,7 +672,7 @@ void testDataCollection1(KeyValueStore *kv)
     assert(r6 == 1000);
     assert(d500_1000[0] == 1.44 * 500 && d500_1000[999] == 4.44 * 499);
 
-    rtxn->abort();
+    rtxn->end();
   }
 }
 //test persistent collection of scalar (primitve) values sub-array API
@@ -697,7 +697,7 @@ void testDataCollection2(KeyValueStore *kv)
     long long *data2 = cd4->data();
     assert(data2[0] == -99999 * 10 && data2[49] == -99999 * 59);
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //raw array API:
@@ -717,7 +717,7 @@ void testDataCollection2(KeyValueStore *kv)
     long long *data = cd->data();
     assert(data[0] == 555 * 90 && data[9] == 555 * 99);
 
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -734,12 +734,58 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 
   auto rtxn = kv->beginRead();
   flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(key);
-  rtxn->abort();
+  rtxn->end();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
 
   delete si2;
   delete si;
+}
+
+void testAttachedCollection(KeyValueStore *kv)
+{
+  static const unsigned ATTACHED_COLLECTION_ID = 999;
+
+  ObjectId vopId;
+  {
+    VariableSizeObjectPtr vop = kv::make_obj<VariableSizeObject>();
+    vop->name = "Johnny";
+    vop->number = 22;
+
+    vector<FixedSizeObjectPtr> fops;
+    for(int i=0; i<10; i++)
+      fops.push_back(kv::make_obj<FixedSizeObject>(2 * i, 3 * i));
+
+    auto tr = kv->beginWrite();
+    vopId = tr->saveObject(vop);
+    tr->putCollection(vop, ATTACHED_COLLECTION_ID, fops);
+    tr->commit();
+  }
+  {
+    auto tr = kv->beginRead();
+    VariableSizeObjectPtr vop = tr->getObject<VariableSizeObject>(vopId);
+    assert(vop);
+
+    vector<FixedSizeObjectPtr> fops;
+    tr->getCollection(vop, ATTACHED_COLLECTION_ID, fops);
+
+    assert(fops.size() == 10);
+    for(int i=0; i<10; i++)
+      assert(fops[i]->number1 == 2 * i && fops[i]->number2 == 3 * i);
+
+    tr->end();
+
+    auto wtr = kv->beginWrite();
+    wtr->deleteCollection<VariableSizeObject, FixedSizeObject>(vop, ATTACHED_COLLECTION_ID);
+    wtr->commit();
+
+    vector<FixedSizeObjectPtr> fops2;
+    tr = kv->beginRead();
+    tr->getCollection(vop, ATTACHED_COLLECTION_ID, fops2);
+    tr->end();
+
+    assert(fops2.empty());
+  }
 }
 
 void testObjectVectorPropertyStorageEmbedded(KeyValueStore *kv)
@@ -851,7 +897,7 @@ void testGrowDatabase(KeyValueStore *kv)
 
     assert(data[0] == 1000990 && data[9] == 1000999);
 
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -902,7 +948,7 @@ void testDelete(KeyValueStore *kv, unsigned expectedOverlays)
         txn, [](shared_ptr<FixedSizeObject> v)->bool {return v->number1 == 99;});
     assert(fo == 2);
 
-    txn->abort();
+    txn->end();
   }
   {
     auto txn = kv->beginWrite();
@@ -1078,13 +1124,10 @@ void testObjectIterProperty(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     SomethingWithAnObjectIter soi;
-             
-    vector<FixedSizeObjectPtr> hist;
-    for(int i=0; i<20; i++) hist.push_back(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
+    wtxn->saveObject(soi, key); //must be persistent so interator member is initialized
 
-    wtxn->putCollection(soi, PROPERTY(SomethingWithAnObjectIter, history), hist);
-
-    wtxn->saveObject(soi, key);
+    for(int i=0; i<20; i++)
+      soi.history->addHistoryValue(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
 
     wtxn->commit();
   }
@@ -1092,10 +1135,12 @@ void testObjectIterProperty(KeyValueStore *kv)
     auto rtxn = kv->beginRead();
 
     SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(key);
-    vector<FixedSizeObjectPtr> hist = rtxn->getCollection(*soi, &SomethingWithAnObjectIter::history);
 
-    assert(hist.size() == 20);
-    auto value = soi->history->getHistoryValue(2);
+    assert(soi->history->size() == 20);
+    for(int i=0; i<soi->history->size(); i++) {
+      auto fso = soi->history->getHistoryValue(i);
+      assert(fso->number1 == i && fso->number2 == i+1);
+    }
 
     delete soi;
   }
@@ -1142,7 +1187,7 @@ ObjectKey setupTestCompatibleDatabase(KeyValueStore *kv)
 
     assert(loaded->abstractsEmbedded.size() == 2 && loaded->virtualsEmbedded.size() == 3 && loaded->virtualsPointers.size() == 3);
 
-    rtxn->abort();
+    rtxn->end();
   }
   return key;
 }
@@ -1192,7 +1237,7 @@ void testCompatibleDatabase(ObjectKey key)
     assert(loaded->toplevelVirtual1->name == "Karl" && IS_TYPE(*loaded->toplevelVirtual1, UnknownVirtual));
     assert(loaded->toplevelVirtual2->name == "Siegfried");
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //see how it goes with class cursors
@@ -1211,7 +1256,7 @@ void testCompatibleDatabase(ObjectKey key)
     //that's 2 from w.virtualsPointers, 1 from w.toplevelVirtual2, 2 from w.virtualsLazy, and 3 top-level, created in
     //testClassCursor. Objects from embedded collections don't count because they don't have a top-level key
     assert(count == 8);
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //test lazy collection cursor
@@ -1230,7 +1275,7 @@ void testCompatibleDatabase(ObjectKey key)
     }
 
     assert(count == 3 && unknownCount == 1);
-    rtxn->abort();
+    rtxn->end();
   }
 
   delete kv;
@@ -1287,6 +1332,8 @@ int main()
   testUpdate(kv, 1);
   testDelete(kv, 0);
   testRefCounting(kv, 0);
+
+  testAttachedCollection(kv);
 
   testKeyedProperties(kv);
   testColored2DPoint(kv);

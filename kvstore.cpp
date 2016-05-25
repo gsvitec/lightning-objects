@@ -318,10 +318,23 @@ void WriteTransaction::writeObjectHeader(ClassId classId, ObjectId objectId, siz
   write_integer<byte_t>(hdr+ClassId_sz+ObjectId_sz+4, 0, 1);
 }
 
+WriteTransaction::~WriteTransaction()
+{
+  //assume all was popped
+  curBuf->deleteChain();
+}
+
+void WriteTransaction::abort()
+{
+  _abort();
+}
+
 void WriteTransaction::commit()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
+    if(ci->appender) ci->appender->close();
+
     size_t sz = ObjectId_sz + sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
     writeBuf().start(sz);
     writeBuf().appendRaw(ci->collectionId);
@@ -340,31 +353,36 @@ void WriteTransaction::commit()
   doCommit();
 }
 
-ReadTransaction::~ReadTransaction()
+Transaction::~Transaction()
 {
   for(auto &it : m_collectionInfos) delete it.second;
   m_collectionInfos.clear();
 }
 
-void ReadTransaction::abort()
+void Transaction::_abort()
 {
   for(auto &it : m_collectionInfos) delete it.second;
   m_collectionInfos.clear();
   doAbort();
 }
 
-void ReadTransaction::reset()
+void ReadTransaction::end()
+{
+  _abort();
+}
+
+void Transaction::reset()
 {
   //keep collection infos alive
   doReset();
 }
 
-void ReadTransaction::renew()
+void Transaction::renew()
 {
   doRenew();
 }
 
-CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
+CollectionInfo *Transaction::readCollectionInfo(ReadBuf &readBuf)
 {
   CollectionInfo *info = new CollectionInfo();
   info->collectionId = readBuf.readRaw<ObjectId>();
@@ -388,7 +406,7 @@ CollectionInfo *ReadTransaction::readCollectionInfo(ReadBuf &readBuf)
   return info;
 }
 
-CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
+CollectionInfo *Transaction::getCollectionInfo(ObjectId collectionId)
 {
   if(m_collectionInfos.count(collectionId)) return m_collectionInfos[collectionId];
   else {
@@ -398,7 +416,7 @@ CollectionInfo *ReadTransaction::getCollectionInfo(ObjectId collectionId)
   }
 }
 
-void ObjectBuf::checkData(ReadTransaction *tr, ClassId cid, ObjectId oid) {
+void ObjectBuf::checkData(Transaction *tr, ClassId cid, ObjectId oid) {
   if(!dataChecked) {
     dataChecked = true;
     tr->getData(readBuf, cid, oid, 0);
@@ -430,8 +448,8 @@ void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSi
   collectionInfo->nextChunkId++;
 }
 
-CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
-  : m_collectionId(collectionId), m_tr(tr), m_chunkCursor(chunkCursor), m_storeId(tr->store.id)
+CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor)
+  : m_ci(tr->getCollectionInfo(collectionId)), m_tr(tr), m_chunkCursor(chunkCursor), m_storeId(tr->store.id)
 {
   if(!m_chunkCursor->atEnd()) {
     m_chunkCursor->get(m_readBuf);
@@ -455,10 +473,24 @@ bool CollectionCursorBase::next()
   return m_curElement < m_elementCount;
 }
 
+void CollectionCursorBase::seek(size_t position)
+{
+  //TODO
+  if(position < m_curElement) {
+
+  }
+}
+
+size_t CollectionCursorBase::count()
+{
+  return m_ci->count();
+}
+
 CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
     : m_chunkSize(chunkSize), m_tr(wtxn), m_writeBuf(wtxn->writeBuf())
 {
   m_collectionInfo = m_tr->getCollectionInfo(collectionId);
+  m_collectionInfo->appender = this;
   m_elementCount = 0;
 }
 
@@ -496,6 +528,8 @@ void CollectionAppenderBase::close()
   if(!ci.startIndex) ci.startIndex = m_collectionInfo->nextStartIndex;
   ci.elementCount += m_elementCount;
   ci.dataSize = m_writeBuf.size();
+
+  if(m_collectionInfo->appender == this) m_collectionInfo->appender = nullptr;
 
   m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
 }

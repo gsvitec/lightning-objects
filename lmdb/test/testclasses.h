@@ -41,10 +41,9 @@ namespace Overlays {
 template <class T> class ObjectHistory {
 
 public:
-  virtual T& getHistoryValue(uint64_t bufferPos) = 0;
-
-
-  virtual ObjectHistory<T>* clone() = 0;
+  virtual size_t size() = 0;
+  virtual shared_ptr<T> getHistoryValue(uint64_t bufferPos) = 0;
+  virtual void addHistoryValue(shared_ptr<T> val) = 0;
 };
 template <class T> using ObjectHistoryPtr = shared_ptr<ObjectHistory<T>>;
 
@@ -371,16 +370,34 @@ namespace persistence {
 namespace kv {
 
 template<typename T>
-struct KVObjectHistory2 : public flexis::Overlays::ObjectHistory<T>, public IterPropertyBackend
+struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public IterPropertyBackend
 {
-  T t;
-  T& getHistoryValue(uint64_t bufferPos) override {
-    return t;
+  typename WriteTransaction::ObjectCollectionAppender<T>::Ptr appender;
+  typename ObjectCollectionCursor<T>::Ptr loader;
+
+  size_t size() override {
+    return loader->count();
   }
-  flexis::Overlays::ObjectHistory<T>* clone() override {
-    return nullptr;
+  void init(WriteTransaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override
+  {
+    appender = tr->appendCollection<T>(m_collectionId);
+  }
+
+  void load(Transaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override
+  {
+    loader = tr->openCursor<T>(m_collectionId);
+  }
+
+  void addHistoryValue(shared_ptr<T> val) override {
+    appender->put(val);
+  }
+
+  shared_ptr<T> getHistoryValue(uint64_t bufferPos) override {
+    loader->seek(bufferPos);
+    return shared_ptr<T>(loader->get());
   }
 };
+
 START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
   MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
   MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
@@ -492,7 +509,7 @@ START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverla
 END_MAPPING(flexis::player::SourceInfo)
 
 START_MAPPING(SomethingWithAnObjectIter, history)
-  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistory2, flexis::Overlays::ObjectHistory, history)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistoryImpl, flexis::Overlays::ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPING_A(SomethingAbstract, name)

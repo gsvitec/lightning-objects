@@ -474,7 +474,7 @@ protected:
 
 public:
   Transaction(KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
-      : flexis::persistence::kv::ReadTransaction(store),
+      : flexis::persistence::kv::Transaction(store),
         flexis::persistence::kv::WriteTransaction(store, false),
         flexis::persistence::kv::ExclusiveReadTransaction(store),
         m_mode(mode),

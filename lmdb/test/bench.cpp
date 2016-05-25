@@ -75,7 +75,7 @@ void testValueCollection(KeyValueStore *kv) {
     auto rtxn = kv->beginRead();
     vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
     assert(loaded.size() == 1000);
-    rtxn->abort();
+    rtxn->end();
   }*/
   {
     //iterate over collection w/ cursor
@@ -89,7 +89,7 @@ void testValueCollection(KeyValueStore *kv) {
     }
     assert(count == 1000);
 
-    rtxn->abort();
+    rtxn->end();
   }
   {
     //append more test data.
@@ -107,7 +107,7 @@ void testValueCollection(KeyValueStore *kv) {
     auto rtxn = kv->beginRead();
     vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
     assert(loaded.size() == 2000);
-    rtxn->abort();
+    rtxn->end();
   }*/
   {
     //use appender to add more test data
@@ -124,7 +124,7 @@ void testValueCollection(KeyValueStore *kv) {
     auto rtxn = kv->beginRead();
     vector<double> loaded = rtxn->getValueCollection<double>(collectionId);
     assert(loaded.size() == 3000);
-    rtxn->abort();
+    rtxn->end();
   }
 }
 
@@ -142,7 +142,7 @@ void testColored2DPointRead(KeyValueStore *kv)
       delete loaded;
     }
   }
-  rtxn->abort();
+  rtxn->end();
   assert(count == rounds);
   DUR()
 }

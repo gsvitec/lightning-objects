@@ -131,11 +131,13 @@ public:
 
 namespace kv {
 
+class Transaction;
 class ReadTransaction;
 class ExclusiveReadTransaction;
 class WriteTransaction;
 template <typename T> class ClassCursor;
 
+using TransactionPtr = std::shared_ptr<kv::Transaction>;
 using ReadTransactionPtr = std::shared_ptr<kv::ReadTransaction>;
 using ExclusiveReadTransactionPtr = std::shared_ptr<kv::ExclusiveReadTransaction>;
 using WriteTransactionPtr = std::shared_ptr<kv::WriteTransaction>;
@@ -185,7 +187,7 @@ StoreId nextStoreId();
  */
 class KeyValueStoreBase
 {
-  friend class kv::ReadTransaction;
+  friend class kv::Transaction;
   friend class kv::WriteTransaction;
 
 public:
@@ -301,12 +303,12 @@ struct register_type {
 } //put_schema
 
 /**
- * high-performance key/value store interface. Most application-relevant functions are provided by ReadTransaction
+ * high-performance key/value store interface. Most application-relevant functions are provided by Transaction
  * and WriteTransaction, which can be obtined from this class
  */
 class KeyValueStore : public KeyValueStoreBase
 {
-  friend class kv::ReadTransaction;
+  friend class kv::Transaction;
   friend class kv::ExclusiveReadTransaction;
   friend class kv::WriteTransaction;
   template <typename T> friend class kv::ClassCursor;
@@ -576,7 +578,7 @@ bool all_predicate(std::shared_ptr<T> t=nullptr) {return true;}
 /**
  * read object data polymorphically
  */
-template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj)
+template<typename T> void readObject(StoreId storeId, Transaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj)
 {
   Properties *props = ClassTraits<T>::getProperties(storeId, classId);
   if(!props) throw persistence_error("unknown classId. Class not registered");
@@ -592,7 +594,7 @@ template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadB
 /**
  * read object data non-polymorphically
  */
-template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, T &obj,
+template<typename T> void readObject(StoreId storeId, Transaction *tr, ReadBuf &buf, T &obj,
                                      ClassId classId, ObjectId objectId, StoreMode mode = StoreMode::force_none)
 {
   Properties *props = ClassTraits<T>::traits_properties;
@@ -611,24 +613,14 @@ template<typename T> void readObject(StoreId storeId, ReadTransaction *tr, ReadB
 class IterPropertyBackend
 {
 protected:
-  ObjectId m_objectId = 0;
-  KeyValueStore *m_store = nullptr;
+  ObjectId m_collectionId = 0;
 
 public:
-  template <typename O>
-  static void assign(KeyValueStore &store, O &o, const PropertyAccessBase *pa, ObjectId objectId)
-  {
-    void * ib = ClassTraits<O>::initMember(store.id, &o, pa);
-    if(!ib) throw persistence_error(std::string("property ")+pa->name+" is not a collection member");
+  void setCollectionId(ObjectId id) {m_collectionId = id;}
+  ObjectId getCollectionId() {return m_collectionId;}
 
-    //bad luck if pa->storage was not an CollectionIterPropertyStorage
-    ((IterPropertyBackend *)ib)->setObjectId(objectId);
-    ((IterPropertyBackend *)ib)->setKVStore(&store);
-  }
-
-  ObjectId getObjectId() {return m_objectId;}
-  void setObjectId(ObjectId objectId) { m_objectId = objectId;}
-  void setKVStore(KeyValueStore *store) {m_store = store;}
+  virtual void init(WriteTransaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) = 0;
+  virtual void load(Transaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) = 0;
 };
 using IterPropertyBackendPtr = std::shared_ptr<IterPropertyBackend>;
 
@@ -667,7 +659,7 @@ protected:
   ReadBuf readBuf;
   virtual void checkData() {}
 
-  void checkData(ReadTransaction *tr, ClassId cid, ObjectId oid);
+  void checkData(Transaction *tr, ClassId cid, ObjectId oid);
 
 public:
   ObjectKey key;
@@ -678,7 +670,7 @@ public:
     readBuf.start(data, size);
   }
   ObjectBuf(ObjectKey key, bool makeCopy) : key(key), makeCopy(makeCopy) {}
-  ObjectBuf(ReadTransaction *tr, ClassId classId, ObjectId objectId, bool makeCopy)
+  ObjectBuf(Transaction *tr, ClassId classId, ObjectId objectId, bool makeCopy)
       : key({classId, objectId}), makeCopy(makeCopy) {
     checkData(tr, key.classId, key.objectId);
   }
@@ -726,13 +718,13 @@ public:
  */
 class LazyBuf : public ObjectBuf
 {
-  ReadTransaction * const m_txn;
+  Transaction * const m_txn;
 
 protected:
   void checkData() override;
 
 public:
-  LazyBuf(ReadTransaction * txn, const ObjectKey &key, bool makeCopy) : ObjectBuf(key, makeCopy), m_txn(txn) {}
+  LazyBuf(Transaction * txn, const ObjectKey &key, bool makeCopy) : ObjectBuf(key, makeCopy), m_txn(txn) {}
 };
 
 /**
@@ -810,10 +802,13 @@ struct ChunkInfo {
     return chunkId <= other.chunkId;
   }
 };
+class CollectionAppenderBase;
 struct CollectionInfo
 {
   //unique collection id
   ObjectId collectionId = 0;
+
+  CollectionAppenderBase *appender = nullptr;
 
   //collection chunks
   std::vector <ChunkInfo> chunkInfos;
@@ -823,6 +818,12 @@ struct CollectionInfo
 
   CollectionInfo() {}
   CollectionInfo(ObjectId collectionId) : collectionId(collectionId) {}
+
+  size_t count() {
+    size_t cnt = 0;
+    for(ChunkInfo &ci : chunkInfos) cnt += ci.elementCount;
+    return cnt;
+  }
 };
 
 class ChunkCursor
@@ -847,17 +848,19 @@ class CollectionCursorBase
 {
 protected:
   ChunkCursor::Ptr m_chunkCursor;
-  ReadTransaction * const m_tr;
+  Transaction * const m_tr;
   const unsigned m_storeId;
-  const ObjectId m_collectionId;
+  CollectionInfo * const m_ci;
 
   ReadBuf m_readBuf;
   size_t m_elementCount = 0, m_curElement = 0;
   virtual bool isValid() {return true;}
 public:
-  CollectionCursorBase(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor);
+  CollectionCursorBase(ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor);
   bool atEnd();
   bool next();
+  void seek(size_t position);
+  size_t count();
 };
 
 /**
@@ -885,10 +888,10 @@ protected:
 public:
   using Ptr = std::shared_ptr<ObjectCollectionCursor<T>>;
 
-  ObjectCollectionCursor(StoreId storeId, ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+  ObjectCollectionCursor(StoreId storeId, ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor)
       : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::traits_data(storeId).classId)
   {
-    if(!isValid()) next();
+    if(!m_chunkCursor->atEnd() && !isValid()) next();
   }
 
   T *get()
@@ -919,7 +922,7 @@ class ValueCollectionCursor : public CollectionCursorBase
 public:
   using Ptr = std::shared_ptr<ValueCollectionCursor<T>>;
 
-  ValueCollectionCursor(ObjectId collectionId, ReadTransaction *tr, ChunkCursor::Ptr chunkCursor)
+  ValueCollectionCursor(ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor)
       : CollectionCursorBase(collectionId, tr, chunkCursor)
   {}
 
@@ -942,7 +945,7 @@ class ClassCursor
   CursorHelper * const m_helper;
   KeyValueStore &m_store;
   const bool m_useCache;
-  ReadTransaction * const m_tr;
+  Transaction * const m_tr;
   bool m_hasData;
   ClassInfo<T> *m_classInfo;
 
@@ -968,7 +971,7 @@ class ClassCursor
 public:
   using Ptr = std::shared_ptr<ClassCursor<T>>;
 
-  ClassCursor(CursorHelper *helper, KeyValueStore &store, ReadTransaction *tr)
+  ClassCursor(CursorHelper *helper, KeyValueStore &store, Transaction *tr)
       : m_helper(helper), m_store(store), m_tr(tr), m_useCache(store.isCache<T>())
   {
     bool hasData = helper->start();
@@ -1153,7 +1156,7 @@ public:
 /**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
-class ReadTransaction
+class Transaction
 {
   template<typename T, typename V> friend class ValueEmbeddedStorage;
   template<typename T, typename V> friend class ValueKeyedStorage;
@@ -1183,7 +1186,7 @@ protected:
   bool m_blockWrites;
   std::unordered_map<ObjectId, CollectionInfo *> m_collectionInfos;
 
-  ReadTransaction(KeyValueStore &store) : store(store) {}
+  Transaction(KeyValueStore &store) : store(store) {}
 
   void setBlockWrites(bool blockWrites) {
     m_blockWrites = blockWrites;
@@ -1332,13 +1335,7 @@ protected:
 
   virtual uint16_t decrementRefCount(ClassId cid, ObjectId oid) = 0;
 
-  /**
-   * retrieve info about a top-level collection
-   *
-   * @param collectionId
-   * @return the collection info or nullptr
-   */
-  CollectionInfo *getCollectionInfo(ObjectId collectionId);
+  void _abort();
 
   /**
    * @return a cursor ofer a chunked object (e.g., collection)
@@ -1346,7 +1343,7 @@ protected:
   virtual ChunkCursor::Ptr _openChunkCursor(ClassId classId, ObjectId objectId, bool atEnd=false) = 0;
 
 public:
-  virtual ~ReadTransaction();
+  virtual ~Transaction();
 
   /**
    * @return the storage id
@@ -1360,6 +1357,14 @@ public:
   {
     return ClassTraits<T>::getObjectKey(obj)->isNew();
   }
+
+  /**
+   * retrieve info about a top-level collection. Only valid until the end of the transaction
+   *
+   * @param collectionId
+   * @return the collection info or nullptr
+   */
+  CollectionInfo *getCollectionInfo(ObjectId collectionId);
 
   /**
    * load an object from the store using the key generated by a previous call to WriteTransaction::putObject().
@@ -1537,22 +1542,6 @@ public:
   }
 
   /**
-   * load a top-level (chunked) member iterator collection.
-   *
-   * @param o the object that holds the member
-   * @param p pointer to the the member variable
-   * @return the collection contents
-   */
-  template <typename O, typename T, template <typename> class Iter>
-  std::vector<std::shared_ptr<T>> getCollection(O &o, std::shared_ptr<Iter<T>> O::*p)
-  {
-    IterPropertyBackend &ib = dynamic_cast<IterPropertyBackend &>(*(o.*p));
-
-    CollectionInfo *ci = getCollectionInfo(ib.getObjectId());
-    return loadChunkedCollection<T, std::shared_ptr>(ci);
-  }
-
-  /**
    * load a top-level (chunked) value collection
    *
    * @param collectionId an id returned from a previous #putCollection call
@@ -1652,10 +1641,17 @@ public:
    * renew a bewviously reset() transaction
    */
   void renew();
+};
+
+class ReadTransaction : public virtual Transaction {
+public:
+  ReadTransaction(KeyValueStore &store) : Transaction(store) {}
+
   /**
-   * abort (close) this transaction, The transaction must not be used afterward
+   * end (close) this transaction. Internally, this performs an abort().
+   * The transaction must not be used afterward
    */
-  void abort();
+  void end();
 };
 
 /**
@@ -1664,10 +1660,10 @@ public:
  * reason for this is is the fact that the functions in this interface may return pointers to database-owned
  * memory. With LMDB, this memory will be invalidated upon the next write call.
  */
-class ExclusiveReadTransaction : public virtual ReadTransaction
+class ExclusiveReadTransaction : public ReadTransaction
 {
 protected:
-  ExclusiveReadTransaction(KeyValueStore &store) : ReadTransaction(store) {}
+  ExclusiveReadTransaction(KeyValueStore &store) : Transaction(store), ReadTransaction(store) {}
 
 public:
   /**
@@ -1739,7 +1735,7 @@ static size_t calculateBuffer(StoreId storeId, T *obj, Properties *properties)
  * Transaction for read and write operations. Only one write transaction can be active at a time, and it should
  * be accessed from one thread only
  */
-class WriteTransaction : public virtual ReadTransaction
+class WriteTransaction : public virtual Transaction
 {
   template<typename T, typename V> friend class ValueEmbeddedStorage;
   template<typename T, typename V> friend class ValueKeyedStorage;
@@ -1777,7 +1773,7 @@ class WriteTransaction : public virtual ReadTransaction
 protected:
   const bool m_append;
 
-  WriteTransaction(KeyValueStore &store, bool append=false) : ReadTransaction(store), m_append(append) {
+  WriteTransaction(KeyValueStore &store, bool append=false) : Transaction(store), m_append(append) {
     curBuf = &writeBufStart;
   }
 
@@ -2125,12 +2121,16 @@ protected:
   virtual void doCommit() = 0;
 
 public:
-  virtual ~WriteTransaction()
-  {
-    //assume all was popped
-    curBuf->deleteChain();
-  }
+  virtual ~WriteTransaction();
 
+  /**
+   * abort this transaction. All changes written since beginnning of the transaction are discarded
+   */
+  void abort();
+
+  /**
+   * commit this transaction. Changes written since beginnning of the transaction are written to persistent storage
+   */
   void commit();
 
   /**
@@ -2318,21 +2318,6 @@ public:
   }
 
   /**
-   * create a top-level (chunked) member iterator object collection and assign it to the given property.
-   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
-   * if this is not the case
-   *
-   * @param o the object that holds the member
-   * @param pa the property accessor, usually obtained via PROPERTY macro
-   * @param vect the initial collection contents
-   */
-  template <typename O, typename T> void putCollection(O &o, const PropertyAccessBase *pa, const std::vector<std::shared_ptr<T>> &vect)
-  {
-    ObjectId collectionId = putCollection<T, std::shared_ptr>(vect);
-    IterPropertyBackend::assign(store, o, pa, collectionId);
-  }
-
-  /**
    * save a top-level (chunked) value collection.
    *
    * @param vect the initial collection contents
@@ -2346,21 +2331,6 @@ public:
     saveChunk(vect, ci);
 
     return ci->collectionId;
-  }
-
-  /**
-   * create a top-level (chunked) member iterator value collection and assign it to the given property.
-   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
-   * if this is not the case
-   *
-   * @param o the object that holds the member
-   * @param pa the property accessor, usually obtained via PROPERTY macro
-   * @param vect the initial collection contents
-   */
-  template <typename O, typename T> void putValueCollection(O &o, const PropertyAccessBase *pa, const std::vector<T> &vect)
-  {
-    ObjectId collectionId = putValueCollection(vect);
-    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2404,22 +2374,6 @@ public:
     saveChunk(*array, arraySize, ci);
 
     return ci->collectionId;
-  }
-
-  /**
-   * create a top-level (chunked) member iterator data collection and assign it to the given property.
-   * Note: the member represented by pa must be mapped onto a CollectionIterPropertyStorage. Results are unpredictable
-   * if this is not the case
-   *
-   * @param o the object that holds the member
-   * @param pa the property accessor, usually obtained via PROPERTY macro
-   * @param array the initial collection contents
-   * @param arraySize length of the contents
-   */
-  template <typename O, typename T> void putDataCollection(O &o, PropertyAccessBase *pa, const T* array, size_t arraySize)
-  {
-    ObjectId collectionId = putDataCollection(array, arraySize);
-    IterPropertyBackend::assign(store, o, pa, collectionId);
   }
 
   /**
@@ -2511,7 +2465,7 @@ public:
    */
   template <typename T>
   void clearRefCounts() {
-    clearRefCounts(ClassTraits<T>::traits_info->allClassIds());
+    clearRefCounts(ClassTraits<T>::traits_info->allClassIds(store.id));
   }
 
   /**
@@ -2547,7 +2501,7 @@ public:
       }
       size_t size = calculateBuffer(m_tr->store.id, &obj, properties) + ObjectHeader_sz;
 
-      if(m_writeBuf.avail() < size) startChunk(size);
+      if(m_collectionInfo->chunkInfos.empty() || m_writeBuf.avail() < size) startChunk(size);
 
       m_tr->writeObjectHeader(cid, oid, size);
       m_tr->writeObject(cid, oid, obj, pd, properties, false);
@@ -2641,8 +2595,13 @@ public:
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
-      ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
+      ObjectId &collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
+    if(collectionId == 0) {
+      CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+      m_collectionInfos[ci->collectionId] = ci;
+      collectionId = ci->collectionId;
+    }
     return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
         this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, ClassTraits<V>::traits_info->isPoly()));
   }
@@ -2667,7 +2626,7 @@ public:
    * @param chunkSize the keychunk size
    * @return an appender over the contents of the collection.
    */
-  template <typename T> typename ValueCollectionAppender<T>::Ptr appendDataCollection(
+  template <typename T> typename DataCollectionAppender<T>::Ptr appendDataCollection(
       ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
     RAWDATA_API_ASSERT
@@ -2695,7 +2654,7 @@ struct ValueKeyedStorage : public StoreAccessPropertyKey
     if(!tr->putData(classId, objectId, pa->id, propBuf))
       throw persistence_error("data was not saved");
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     ReadBuf readBuf;
@@ -2734,7 +2693,7 @@ struct ValueKeyedStorage<T, std::vector<V>> : public StoreAccessPropertyKey
         throw persistence_error("data was not saved");
     }
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::vector<V> val;
@@ -2777,7 +2736,7 @@ struct ValueKeyedStorage<T, std::set<V>> : public StoreAccessPropertyKey
         throw persistence_error("data was not saved");
     }
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::set<V> val;
@@ -2826,7 +2785,7 @@ struct ValueEmbeddedStorage : public StoreAccessBase
     ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<V>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     V val;
@@ -2861,7 +2820,7 @@ struct ValueEmbeddedStorage<T, const char *> : public StoreAccessBase
     ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<const char *>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     const char * val;
@@ -2894,7 +2853,7 @@ struct ValueEmbeddedStorage<T, std::string> : public StoreAccessBase
     ClassTraits<T>::put(tr->store.id, *tp, pa, val);
     ValueTraits<std::string>::putBytes(tr->writeBuf(), val);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::string val;
@@ -2921,7 +2880,7 @@ struct ObjectIdStorage : public StoreAccessBase
   {
     //not saved, only loaded
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     T *tp = reinterpret_cast<T *>(obj);
@@ -2958,7 +2917,7 @@ template<typename T, typename V> struct ObjectPropertyStorage : public StoreAcce
     //save the key in this objects write buffer
     tr->writeBuf().append(childClassId, childObjectId);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     ClassId cid; ObjectId oid;
@@ -3011,7 +2970,7 @@ template<typename T, typename V> struct ObjectPropertyStorageEmbedded : public S
     tr->writeBuf().appendInteger(sz, 4);
     tr->writeObject(childClassId, 1, val, pd, ClassTraits<V>::traits_properties, true);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     ClassId childClassId = ClassTraits<V>::traits_data(tr->store.id).classId;
@@ -3097,7 +3056,7 @@ public:
     }
     pe.reset();
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     if(m_lazy && mode == StoreMode::force_none) {
@@ -3159,7 +3118,7 @@ template<typename T, typename V> struct ObjectPtrPropertyStorageEmbedded : publi
 
     if(val) tr->writeObject(childClassId, 1, *val, pd, ClassTraits<V>::getProperties(tr->store.id, childClassId), true);
   }
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::shared_ptr<V> val;
@@ -3228,7 +3187,7 @@ public:
     tr->popWriteBuf();
   }
 
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     if(m_lazy && mode == StoreMode::force_none) return;
@@ -3310,7 +3269,7 @@ public:
     }
   }
 
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::vector<V> val;
@@ -3374,7 +3333,7 @@ template<typename T, typename V> class ObjectPtrVectorPropertyStorage : public S
     return size(storeId, buf);
   }
 
-  void loadStoredKeys(ReadTransaction *tr, ClassId cid, ObjectId oid, PropertyId pid, std::set<ObjectKey> &keys)
+  void loadStoredKeys(Transaction *tr, ClassId cid, ObjectId oid, PropertyId pid, std::set<ObjectKey> &keys)
   {
     ReadBuf readBuf;
     tr->getData(readBuf, cid, oid, pid);
@@ -3436,7 +3395,7 @@ public:
     }
   }
 
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     if(m_lazy && mode == StoreMode::force_none) return;
@@ -3531,7 +3490,7 @@ public:
     }
   }
 
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     std::vector<std::shared_ptr<V>> val;
@@ -3565,50 +3524,51 @@ public:
 };
 
 /**
- * storage template for collection iterator members. The collection id is saved within the enclosing object's buffer.
- * Storing the collection proper is done externally, or through the iterator object
+ * storage template for collection iterator members. the top-level collection id is saved under a separate PropertyId.
  */
 template<typename T, typename V, typename KVIter, typename Iter>
-struct CollectionIterPropertyStorage : public StoreAccessBase
+struct CollectionIterPropertyStorage : public StoreAccessPropertyKey
 {
   static_assert(std::is_base_of<IterPropertyBackend, KVIter>::value, "KVIter must subclass IterPropertyBackend");
   static_assert(std::is_base_of<Iter, KVIter>::value, "KVIter must subclass Iter");
 
-  CollectionIterPropertyStorage() : StoreAccessBase(StoreLayout::all_embedded, ObjectId_sz) {}
-
-  size_t size(StoreId storeId, ObjectBuf &buf) const override {return ObjectId_sz;}
-  size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override {return ObjectId_sz;}
-
-  void *initMember(StoreId storeId, void *obj, const PropertyAccessBase *pa) override
-  {
-    T *tp = reinterpret_cast<T *>(obj);
-    KVIter *it = new KVIter();
-    auto ib = std::shared_ptr<KVIter>(it);
-    ClassTraits<T>::get(storeId, *tp, pa, ib);
-
-    return static_cast<IterPropertyBackend *>(it);
-  }
+  CollectionIterPropertyStorage() : StoreAccessPropertyKey() {}
 
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, void *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) override
   {
-    std::shared_ptr<Iter> val;
     T *tp = reinterpret_cast<T *>(obj);
-    ClassTraits<T>::put(tr->store.id, *tp, pa, val);
+    std::shared_ptr<KVIter> iter;
+    ClassTraits<T>::put(tr->storeId(), *tp, pa, iter);
 
-    IterPropertyBackendPtr ib = std::dynamic_pointer_cast<IterPropertyBackend>(val);
-    tr->writeBuf().appendRaw(ib ? ib->getObjectId() : 0);
+    if(!iter) {
+      KVIter *it = new KVIter();
+      iter = std::shared_ptr<KVIter>(it);
+      ClassTraits<T>::get(tr->storeId(), *tp, pa, iter);
+
+      it->init(tr, tr->storeId(), classId, objectId, pa);
+
+      tr->pushWriteBuf();
+      tr->writeBuf().start(sizeof(ObjectId));
+      tr->writeBuf().appendRaw(it->getCollectionId());
+      tr->putData(classId, objectId, pa->id, tr->writeBuf());
+      tr->popWriteBuf();
+    }
   }
 
-  void load(ReadTransaction *tr, ReadBuf &buf,
+  void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
   {
     T *tp = reinterpret_cast<T *>(obj);
-    ObjectId collectionId = buf.readRaw<ObjectId>();
+
+    ReadBuf rb;
+    tr->getData(rb, classId, objectId, pa->id);
+    ObjectId collectionId = rb.empty() ? 0 : rb.readRaw<ObjectId>();
 
     std::shared_ptr<KVIter> it = std::make_shared<KVIter>();
-    it->setObjectId(collectionId);
+    it->setCollectionId(collectionId);
 
+    it->load(tr, tr->storeId(), classId, objectId, pa);
     ClassTraits<T>::get(tr->store.id, *tp, pa, it);
   }
 };

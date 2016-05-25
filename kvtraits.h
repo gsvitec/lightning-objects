@@ -139,7 +139,7 @@ static_assert(sizeof(ObjectId) == TypeTraits<ObjectId>::byteSize, "ObjectId: byt
 static_assert(sizeof(PropertyId) == TypeTraits<PropertyId>::byteSize, "PropertyId: byteSize must match native size");
 static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize must match native size");
 
-class ReadTransaction;
+class Transaction;
 class WriteTransaction;
 class PropertyAccessBase;
 class ObjectBuf;
@@ -220,15 +220,11 @@ struct StoreAccessBase
                     const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
 
-  virtual void load(ReadTransaction *tr,
+  virtual void load(Transaction *tr,
                     ReadBuf &buf,
                     ClassId classId, ObjectId objectId,
                     void *obj, const PropertyAccessBase *pa,
                     StoreMode mode=StoreMode::force_none) = 0;
-
-  virtual void * initMember(StoreId storeId, void *obj, const PropertyAccessBase *pa) {
-    return nullptr;
-  }
 };
 
 struct NullStorage : public StoreAccessBase {
@@ -243,7 +239,7 @@ struct NullStorage : public StoreAccessBase {
             const PropertyAccessBase *pa,
             StoreMode mode = StoreMode::force_none) { }
 
-  void load(ReadTransaction *tr,
+  void load(Transaction *tr,
             ReadBuf &buf,
             ClassId classId, ObjectId objectId,
             void *obj, const PropertyAccessBase *pa,
@@ -453,10 +449,6 @@ struct PropertyAccessBase
 
   virtual bool same(void *obj, ObjectId oid) {return false;}
   virtual ~PropertyAccessBase() {delete storage;}
-
-  void *initMember(StoreId storeId, void *obj) const {
-    return storage->initMember(storeId, obj, this);
-  }
 
   virtual void setup(Properties *props) const {}
 };
@@ -821,7 +813,6 @@ struct ClassInfo : public AbstractClassInfo
 {
   T *(* const getSubstitute)();
   size_t (* const size)(StoreId storeId, T *obj);
-  void * (* const initMember)(StoreId storeId, T *obj, const PropertyAccessBase *pa);
   T * (* const makeObject)(StoreId storeId, ClassId classId);
   bool (* const needs_prepare)(StoreId storeId, ClassId classId, bool &result, unsigned flags);
   Properties * (* const getProperties)(StoreId storeId, ClassId classId);
@@ -831,7 +822,7 @@ struct ClassInfo : public AbstractClassInfo
   bool (* const prep_update)(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa, size_t &size, unsigned flags);
   bool (* const save)(StoreId storeId, WriteTransaction *wtr,
                       ClassId classId, ObjectId objectId, T *obj, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
-  bool (* const load)(StoreId storeId, ReadTransaction *tr, ReadBuf &buf,
+  bool (* const load)(StoreId storeId, Transaction *tr, ReadBuf &buf,
                       ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa, StoreMode mode, unsigned flags);
 
   sub::Substitute<T> *substitute = nullptr;
@@ -840,7 +831,6 @@ struct ClassInfo : public AbstractClassInfo
       : AbstractClassInfo(name, typeinfo),
         getSubstitute(&ClassTraits<T>::getSubstitute),
         size(&ClassTraits<T>::size),
-        initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         needs_prepare(&ClassTraits<T>::needs_prepare),
@@ -1003,15 +993,6 @@ public:
     return nullptr;
   }
 
-  static void * initMember(StoreId storeId, T *obj, const PropertyAccessBase *pa)
-  {
-    if(pa->classId[storeId] == traits_data(storeId).classId)
-      return pa->initMember(storeId, obj);
-    else if(pa->classId[storeId])
-      return RESOLVE_SUB(pa->classId[storeId])->initMember(storeId, obj, pa);
-    return nullptr;
-  }
-
   static const PropertyAccessBase *getInverseAccess(const PropertyAccessBase *pa)
   {
     for(unsigned i=0; i<num_decl_props; i++) {
@@ -1126,7 +1107,7 @@ public:
     return false;
   }
 
-  static bool load(StoreId storeId, ReadTransaction *tr,
+  static bool load(StoreId storeId, Transaction *tr,
                    ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj, const PropertyAccessBase *pa,
                    StoreMode mode=StoreMode::force_none, unsigned flags=FLAGS_ALL)
   {
@@ -1262,10 +1243,6 @@ struct ClassTraits<EmptyClass>
   static PropertyAccess<T, ObjectId> *objectIdAccess() {
     return nullptr;
   }
-  template <typename T>
-  static void * initMember(StoreId storeId, T *obj, const PropertyAccessBase *pa) {
-    return nullptr;
-  }
   static const PropertyAccessBase *getInverseAccess(const PropertyAccessBase *pa) {
     return nullptr;
   }
@@ -1301,7 +1278,7 @@ struct ClassTraits<EmptyClass>
     return false;
   }
   template <typename T>
-  static bool load(StoreId storeId, ReadTransaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
+  static bool load(StoreId storeId, Transaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj,
                    const PropertyAccessBase *pa, StoreMode mode=StoreMode::force_none, unsigned flags=0) {
     return false;
   }

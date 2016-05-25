@@ -49,7 +49,7 @@ ObjectKey key;
     Colored2DPoint *p2;
     auto rtxn = kv->beginRead();
     p2 = rtxn->getObject<Colored2DPoint>(key);
-    rtxn->abort();
+    rtxn->end();
 }
 ```
 ##Status
