@@ -213,6 +213,10 @@ struct StoreAccessBase
     return size(storeId, buf);
   }
 
+  /** default member intialization does nothing*/
+  virtual void initMember(WriteTransaction *tr, void *obj, const PropertyAccessBase *pa) {
+  }
+
   virtual void save(WriteTransaction *tr,
                     ClassId classId, ObjectId objectId,
                     void *obj,
@@ -814,6 +818,7 @@ struct ClassInfo : public AbstractClassInfo
 {
   T *(* const getSubstitute)();
   size_t (* const size)(StoreId storeId, T *obj);
+  bool (* const initMember)(StoreId storeId, WriteTransaction *tr, T &obj, const PropertyAccessBase *pa, unsigned flags);
   T * (* const makeObject)(StoreId storeId, ClassId classId);
   bool (* const needs_prepare)(StoreId storeId, ClassId classId, bool &result, unsigned flags);
   Properties * (* const getProperties)(StoreId storeId, ClassId classId);
@@ -832,6 +837,7 @@ struct ClassInfo : public AbstractClassInfo
       : AbstractClassInfo(name, typeinfo),
         getSubstitute(&ClassTraits<T>::getSubstitute),
         size(&ClassTraits<T>::size),
+        initMember(&ClassTraits<T>::initMember),
         makeObject(&ClassTraits<T>::makeObject),
         getProperties(&ClassTraits<T>::getProperties),
         needs_prepare(&ClassTraits<T>::needs_prepare),
@@ -1053,6 +1059,20 @@ public:
     return false;
   }
 
+  static bool initMember(StoreId storeId, WriteTransaction *tr, T &obj, const PropertyAccessBase *pa, unsigned flags=FLAGS_ALL)
+  {
+    if(pa->classId[storeId] == traits_data(storeId).classId) {
+      pa->storage->initMember(tr, &obj, pa);
+      return true;
+    }
+    else if(pa->classId[storeId]) {
+      if(UP && ClassTraits<SUP>::initMember(storeId, tr, obj, pa, FLAG_UP))
+        return true;
+      return DN && RESOLVE_SUB(pa->classId[storeId])->initMember(storeId, tr, obj, pa, FLAG_DN);
+    }
+    return false;
+  }
+
   static size_t prepareUpdate(StoreId storeId, ObjectBuf &buf, PrepareData &pd, T *obj, const PropertyAccessBase *pa)
   {
     size_t size;
@@ -1254,6 +1274,9 @@ struct ClassTraits<EmptyClass>
   template <typename T>
   static ObjectKey *getObjectKey(const std::shared_ptr<T> &obj, bool force=true) {
     return nullptr;
+  }
+  template <typename T>
+  static bool initMember(StoreId storeId, WriteTransaction *tr, T &obj, const PropertyAccessBase *pa, unsigned flags=0) {
   }
   template <typename T>
   static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {

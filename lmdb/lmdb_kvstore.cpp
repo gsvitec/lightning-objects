@@ -891,7 +891,7 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
         //all data in same chunk, Cool, we're done
         if(*data) memcpy(*data, datastart, length*elementSize); //copy to user-provided memory
         else  *data = datastart;                                //return pointer into DB memory!
-        *owned = false;
+        if(owned) *owned = false;
       }
       else {
         //data crosses chunks. Too bad, need to copy
@@ -908,10 +908,10 @@ bool Transaction::_getCollectionData(CollectionInfo *info, size_t startIndex, si
         endlen = endcount * elementSize;
         datalen += endlen;
 
-        *owned = false;
+        if(owned) *owned = false;
         if(!*data) {
           *data = malloc(datalen);
-          *owned = true;
+          if(owned) *owned = true;
         }
 
         char *dta = (char *)*data;

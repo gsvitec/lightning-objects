@@ -329,11 +329,11 @@ void WriteTransaction::abort()
   _abort();
 }
 
-void WriteTransaction::commit()
+void WriteTransaction::commitCollections()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
-    if(ci->appender) ci->appender->close();
+    for(auto app : ci->appenders) app->close();
 
     size_t sz = ObjectId_sz + sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
     writeBuf().start(sz);
@@ -350,6 +350,11 @@ void WriteTransaction::commit()
     delete ci;
   }
   m_collectionInfos.clear();
+}
+
+void WriteTransaction::commit()
+{
+  commitCollections();
   doCommit();
 }
 
@@ -406,9 +411,18 @@ CollectionInfo *Transaction::readCollectionInfo(ReadBuf &readBuf)
   return info;
 }
 
-CollectionInfo *Transaction::getCollectionInfo(ObjectId collectionId)
+CollectionInfo *Transaction::getCollectionInfo(ObjectId &collectionId, bool create)
 {
-  if(m_collectionInfos.count(collectionId)) return m_collectionInfos[collectionId];
+  if(collectionId == 0) {
+    if(!create) return nullptr;
+
+    CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+    m_collectionInfos[ci->collectionId] = ci;
+    collectionId = ci->collectionId;
+    return ci;
+  }
+  else if(m_collectionInfos.count(collectionId))
+    return m_collectionInfos[collectionId];
   else {
     ReadBuf readBuf;
     getData(readBuf, COLLINFO_CLSID, collectionId, 0);
@@ -526,12 +540,19 @@ void CollectionCursorBase::objectBufSeek(size_t position)
   m_curElement = position;
 }
 
-CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)
-    : m_chunkSize(chunkSize), m_tr(wtxn), m_writeBuf(wtxn->writeBuf())
+CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId &collectionId, size_t chunkSize)
+    : m_chunkSize(chunkSize), m_tr(wtxn), m_writeBuf(wtxn->writeBuf()), m_collectionId(collectionId)
 {
-  m_collectionInfo = m_tr->getCollectionInfo(collectionId);
-  m_collectionInfo->appender = this;
   m_elementCount = 0;
+}
+
+CollectionInfo * CollectionAppenderBase::collectionInfo()
+{
+  if(!m_collectionInfo) {
+    m_collectionInfo = m_tr->getCollectionInfo(m_collectionId);
+    m_collectionInfo->appenders.insert(this);
+  }
+  return m_collectionInfo;
 }
 
 void CollectionAppenderBase::startChunk(size_t size)
@@ -564,14 +585,16 @@ void CollectionAppenderBase::startChunk(size_t size)
 
 void CollectionAppenderBase::close()
 {
-  ChunkInfo &ci = m_collectionInfo->chunkInfos.back();
-  if(!ci.startIndex) ci.startIndex = m_collectionInfo->nextStartIndex;
-  ci.elementCount += m_elementCount;
-  ci.dataSize = m_writeBuf.size();
+  if(m_collectionInfo && !m_collectionInfo->chunkInfos.empty()) {
+    ChunkInfo &ci = m_collectionInfo->chunkInfos.back();
+    if(!ci.startIndex) ci.startIndex = m_collectionInfo->nextStartIndex;
+    ci.elementCount += m_elementCount;
+    ci.dataSize = m_writeBuf.size();
 
-  if(m_collectionInfo->appender == this) m_collectionInfo->appender = nullptr;
+    m_collectionInfo->appenders.erase(this);
 
-  m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
+    m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
+  }
 }
 
 } //kv

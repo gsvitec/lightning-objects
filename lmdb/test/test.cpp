@@ -1122,11 +1122,13 @@ void testObjectIterProperty(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     SomethingWithAnObjectIter soi;
-    wtxn->saveObject(soi, key); //must be persistent so interator member is initialized
+    wtxn->initMember(soi, PROPERTY(SomethingWithAnObjectIter, history)); //ensure interator member is initialized
 
     for(int i=0; i<200; i++)
       soi.history->addHistoryValue(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
 
+    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
+    wtxn->saveObject(soi, key); //must save explicitly only in case collection was created lazily
     wtxn->commit();
   }
   {
@@ -1165,7 +1167,7 @@ void testValueIterProperty(KeyValueStore *kv)
     auto wtxn = kv->beginWrite();
 
     SomethingWithAValueIter sv;
-    wtxn->saveObject(sv, key); //must be persistent so interator member is initialized
+    wtxn->initMember(sv, PROPERTY(SomethingWithAValueIter, values)); //ensure interator member is initialized
 
     for(int i=0; i<200; i++) {
       stringstream ss;
@@ -1173,6 +1175,8 @@ void testValueIterProperty(KeyValueStore *kv)
       sv.values->add(ss.str());
     }
 
+    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
+    wtxn->saveObject(sv, key); //must save explicitly only in case collection was created lazily
     wtxn->commit();
   }
   {
@@ -1201,6 +1205,58 @@ void testValueIterProperty(KeyValueStore *kv)
 
     val = sv->values->get(12);
     assert(val == "value_12");
+
+    delete sv;
+  }
+}
+
+void testDataIterProperty(KeyValueStore *kv)
+{
+  ObjectKey key;
+
+  {
+    auto wtxn = kv->beginWrite();
+
+    SomethingWithAValueIter sv;
+    wtxn->initMember(sv, PROPERTY(SomethingWithAValueIter, datas)); //ensure interator member is initialized
+
+    long lbuf[100];
+    for(int i=0; i<200; i++) {
+      for(int j=0; j<100; j++) lbuf[j] = i;
+      sv.datas->add(lbuf, 100);
+    }
+
+    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
+    wtxn->saveObject(sv, key); //must save explicitly only in case collection was created lazily
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    SomethingWithAValueIter *sv = rtxn->getObject<SomethingWithAValueIter>(key);
+
+    assert(sv->datas->size() == 20000);
+
+    //do a little sparse positioning, forward..
+    for(int i=0; i<sv->values->count(); i+=2) {
+      long *lbuf;
+      bool success = sv->datas->get(i * 100, lbuf, 100);
+      assert(success && lbuf[0] == i && lbuf[99] == i);
+    }
+    //.. and backward
+    for(int i=sv->values->count()-1; i>=0; i-=2) {
+      long *lbuf;
+      bool success = sv->datas->get(i * 100, lbuf, 100);
+      assert(success && lbuf[0] == i && lbuf[99] == i);
+    }
+
+    //peek randomly..
+    long *lbuf;
+    bool success = sv->datas->get(133 * 100, lbuf, 100);
+    assert(success && lbuf[0] == 133 && lbuf[99] == 133);
+
+    success = sv->datas->get(12 * 100, lbuf, 100);
+    assert(success && lbuf[0] == 12 && lbuf[99] == 12);
 
     delete sv;
   }
@@ -1411,6 +1467,7 @@ int main()
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
   testValueIterProperty(kv);
+  testDataIterProperty(kv);
   testClassCursor(kv);
   testObjectMappings(kv);
 

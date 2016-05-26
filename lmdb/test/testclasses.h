@@ -299,14 +299,23 @@ struct SomethingWithAnObjectIter
 
 template <typename V>
 struct ValueIter {
+  virtual void setCollectionId(unsigned id) = 0;
   virtual size_t count() = 0;
   virtual void add(V value) = 0;
   virtual V get(size_t position) = 0;
+};
+template <typename V>
+struct DataIter {
+  virtual size_t size() = 0;
+  virtual void add(V *value, size_t size) = 0;
+  virtual bool get(size_t position, V * &value, size_t size) = 0;
+  virtual void release(V *) = 0;
 };
 struct SomethingWithAValueIter
 {
   std::string name;
   std::shared_ptr<ValueIter<string>> values;
+  std::shared_ptr<DataIter<long>> datas;
 };
 
 struct SomethingAbstract {
@@ -390,12 +399,12 @@ struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public I
   size_t size() override {
     return loader->count();
   }
-  void init(WriteTransaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override
+  void init(WriteTransaction *tr) override
   {
     appender = tr->appendCollection<T>(m_collectionId);
   }
 
-  void load(Transaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override
+  void load(Transaction *tr) override
   {
     loader = tr->openCursor<T>(m_collectionId);
   }
@@ -416,12 +425,15 @@ struct ValueIterImpl : public ValueIter<V>, public IterPropertyBackend
   typename WriteTransaction::ValueCollectionAppender<V>::Ptr appender;
   typename ValueCollectionCursor<V>::Ptr loader;
 
-  void init(WriteTransaction *tr,
-                    StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override {
+  void setCollectionId(unsigned id) override {
+    IterPropertyBackend::setCollectionId(id);
+  }
+
+  void init(WriteTransaction *tr) override {
     appender = tr->appendValueCollection<V>(m_collectionId);
   }
 
-  void load(Transaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override {
+  void load(Transaction *tr) override {
     loader = tr->openValueCursor<V>(m_collectionId);
   }
 
@@ -438,6 +450,43 @@ struct ValueIterImpl : public ValueIter<V>, public IterPropertyBackend
     V s;
     loader->get(s);
     return s;
+  }
+};
+
+template <typename V>
+struct DataIterImpl : public DataIter<V>, public IterPropertyBackend {
+
+  typename WriteTransaction::DataCollectionAppender<V>::Ptr appender;
+  CollectionInfo *collectionInfo;
+  Transaction *readTransaction;
+
+  V *lastData = nullptr;
+  bool owned;
+
+  void init(WriteTransaction *tr) override {
+    appender = tr->appendDataCollection<V>(m_collectionId);
+  }
+
+  void load(Transaction *tr) override {
+    readTransaction = tr;
+    collectionInfo = tr->getCollectionInfo(m_collectionId);
+  }
+
+  size_t size() override {
+    return collectionInfo->count();
+  }
+
+  void add(V *value, size_t size) override {
+    appender->put(value, size);
+  }
+
+  bool get(size_t position, V *&value, size_t size) override {
+    size_t result = readTransaction->getDataCollection(m_collectionId, position, size, value, &owned);
+    lastData = value;
+    return result == size;
+  }
+  void release(V *data) override {
+    if(data && data == lastData && owned) free(data);
   }
 };
 
@@ -555,8 +604,9 @@ START_MAPPING(SomethingWithAnObjectIter, history)
   MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistoryImpl, flexis::Overlays::ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
-START_MAPPING(SomethingWithAValueIter, values)
+START_MAPPING(SomethingWithAValueIter, values, datas)
   MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, std::string, ValueIterImpl, ValueIter, values)
+  MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, long, DataIterImpl, DataIter, datas)
 END_MAPPING(SomethingWithAValueIter)
 
 START_MAPPING_A(SomethingAbstract, name)
