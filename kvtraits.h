@@ -414,6 +414,7 @@ struct ValueTraitsFloat : public ValueTraitsBase<true>
 };
 
 #define PROPERTY_TYPE(P) PropertyType(TypeTraits<P>::id, TypeTraits<P>::byteSize, TypeTraits<P>::isVect)
+#define PROPERTY_TYPE_VECT(P) PropertyType(TypeTraits<P>::id, TypeTraits<P>::byteSize, true)
 
 /**
  * value handler specialization for float values

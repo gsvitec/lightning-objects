@@ -835,9 +835,9 @@ public:
   using Ptr = std::shared_ptr<ChunkCursor>;
 
   bool atEnd() const {return m_atEnd;}
-  virtual bool next() = 0;
+  virtual bool next(PropertyId *chunkId = nullptr) = 0;
   virtual void get(ReadBuf &rb) = 0;
-  virtual PropertyId chunkId() = 0;
+  virtual bool seek(PropertyId chunkId) = 0;
   virtual void close() = 0;
 };
 
@@ -849,17 +849,44 @@ class CollectionCursorBase
 protected:
   ChunkCursor::Ptr m_chunkCursor;
   Transaction * const m_tr;
-  const unsigned m_storeId;
-  CollectionInfo * const m_ci;
+  const StoreId m_storeId;
+  CollectionInfo * const m_collectionInfo;
 
   ReadBuf m_readBuf;
-  size_t m_elementCount = 0, m_curElement = 0;
+  PropertyId m_chunkId;
+  size_t m_dataSize = 0, m_startIndex = 0, m_elementCount = 0, m_curElement = 0;
+
+  bool next();
+
+  void objectBufSeek(size_t position);
+
+  /**
+   * @return true if the current entry is valid, e.g. not marked for delete
+   */
   virtual bool isValid() {return true;}
+
+  /**
+   * @seek to the given element position in the current chunk buffer
+   */
+  virtual void bufSeek(size_t position) = 0;
+
 public:
   CollectionCursorBase(ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor);
+
+  /**
+   * @return true if this cursor has reached the end
+   */
   bool atEnd();
-  bool next();
-  void seek(size_t position);
+
+  /**
+   * seek to the given 0-based position
+   * @return true if the position is valid and data is available
+   */
+  bool seek(size_t position);
+
+  /**
+   * the number of elements in this collection at the point when this cursor was created
+   */
   size_t count();
 };
 
@@ -891,11 +918,19 @@ public:
   ObjectCollectionCursor(StoreId storeId, ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor)
       : CollectionCursorBase(collectionId, tr, chunkCursor), m_declClass(ClassTraits<T>::traits_data(storeId).classId)
   {
-    if(!m_chunkCursor->atEnd() && !isValid()) next();
   }
 
+  void bufSeek(size_t position) {
+    objectBufSeek(position);
+  }
+
+  /**
+   * @return the next object read from the buffer, or nullptr if the end was reached
+   */
   T *get()
   {
+    if(!next()) return nullptr;
+
     ClassId classId;
     ObjectId objectId;
     readObjectHeader(m_readBuf, &classId, &objectId);
@@ -914,7 +949,7 @@ public:
 };
 
 /**
- * cursor for iterating over top-level object collections
+ * cursor for iterating over top-level (chunked) value collections
  */
 template <typename T>
 class ValueCollectionCursor : public CollectionCursorBase
@@ -926,11 +961,35 @@ public:
       : CollectionCursorBase(collectionId, tr, chunkCursor)
   {}
 
-  T get()
+  void bufSeek(size_t position) {
+    if(position > m_curElement) {
+      for(size_t pos=0, epos=position-m_curElement; pos < epos; pos++) {
+        T val;
+        ValueTraits<T>::getBytes(m_readBuf, val);
+      }
+    }
+    else {
+      m_readBuf.reset();
+      readChunkHeader(m_readBuf, 0, 0, 0);
+      for(size_t pos=0; pos < position; pos++) {
+        T val;
+        ValueTraits<T>::getBytes(m_readBuf, val);
+      }
+    }
+    m_curElement = position;
+  }
+
+  /**
+   * read the current value
+   * @param val the value to read into
+   * @return true if data was available
+   */
+  bool get(T &val)
   {
-    T val;
+    if(!next()) return false;
+
     ValueTraits<T>::getBytes(m_readBuf, val);
-    return val;
+    return true;
   }
 };
 
@@ -2548,7 +2607,7 @@ public:
 
       size_t avail = m_writeBuf.avail();
 
-      if(avail < sz) startChunk(sz);
+      if(m_collectionInfo->chunkInfos.empty() || avail < sz) startChunk(sz);
 
       ValueTraits<T>::putBytes(m_writeBuf, val);
       m_elementCount++;
@@ -2607,15 +2666,20 @@ public:
   }
 
   /**
-   * create an appender for the given top-level raw-data collection
+   * create an appender for the given top-level value collection
    *
    * @param collectionId the id of a top-level collection
    * @param chunkSize the chunk size
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ValueCollectionAppender<V>::Ptr appendValueCollection(
-      ObjectId collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
+      ObjectId &collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
   {
+    if(collectionId == 0) {
+      CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
+      m_collectionInfos[ci->collectionId] = ci;
+      collectionId = ci->collectionId;
+    }
     return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(this, collectionId, chunkSize));
   }
 
@@ -3707,6 +3771,15 @@ template <typename O, typename P, typename KVIter, typename Iter, std::shared_pt
 struct CollectionIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter>, p> {
   CollectionIterPropertyAssign(const char * name)
       : PropertyAssign<O, std::shared_ptr<Iter>, p>(name, new CollectionIterPropertyStorage<O, P, KVIter, Iter>(), object_vector_t<P>()) {}
+};
+/**
+ * mapping configuration for a property which holds an object iterator. An object iterator has access to a collectionId which refers to
+ * a top-level object collection.
+ */
+template <typename O, typename P, typename KVIter, typename Iter, std::shared_ptr<Iter> O::*p>
+struct ValueCollectionIterPropertyAssign : public PropertyAssign<O, std::shared_ptr<Iter>, p> {
+  ValueCollectionIterPropertyAssign(const char * name)
+      : PropertyAssign<O, std::shared_ptr<Iter>, p>(name, new CollectionIterPropertyStorage<O, P, KVIter, Iter>(), PROPERTY_TYPE_VECT(P)) {}
 };
 
 } //kv

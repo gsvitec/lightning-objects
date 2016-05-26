@@ -449,7 +449,7 @@ void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSi
 }
 
 CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, Transaction *tr, ChunkCursor::Ptr chunkCursor)
-  : m_ci(tr->getCollectionInfo(collectionId)), m_tr(tr), m_chunkCursor(chunkCursor), m_storeId(tr->store.id)
+  : m_collectionInfo(tr->getCollectionInfo(collectionId)), m_tr(tr), m_chunkCursor(chunkCursor), m_storeId(tr->store.id)
 {
   if(!m_chunkCursor->atEnd()) {
     m_chunkCursor->get(m_readBuf);
@@ -458,32 +458,72 @@ CollectionCursorBase::CollectionCursorBase(ObjectId collectionId, Transaction *t
 }
 
 bool CollectionCursorBase::atEnd() {
-  return m_curElement >= m_elementCount;
+  return m_curElement >= m_elementCount && m_chunkCursor->atEnd();
 }
 
 bool CollectionCursorBase::next()
 {
   do {
-    if(++m_curElement == m_elementCount && m_chunkCursor->next()) {
-      m_chunkCursor->get(m_readBuf);
-      readChunkHeader(m_readBuf, 0, 0, &m_elementCount);
-      m_curElement = 0;
+    if(++m_curElement > m_elementCount) {
+      m_curElement = m_elementCount = 0;
+      if(m_chunkCursor->next(&m_chunkId)) {
+        m_chunkCursor->get(m_readBuf);
+        readChunkHeader(m_readBuf, &m_dataSize, &m_startIndex, &m_elementCount);
+      }
     }
-  } while(m_curElement < m_elementCount && !isValid());
-  return m_curElement < m_elementCount;
+  } while(m_curElement && !isValid());
+  return (bool)m_curElement;
 }
 
-void CollectionCursorBase::seek(size_t position)
+bool CollectionCursorBase::seek(size_t position)
 {
-  //TODO
-  if(position < m_curElement) {
+  if(position == m_startIndex+m_curElement) return true;
 
+  if(m_startIndex <= position && m_startIndex + m_elementCount > position) {
+    bufSeek(position - m_startIndex);
+    return true;
   }
+  for(auto &ci : m_collectionInfo->chunkInfos) {
+    if(ci.startIndex <= position && ci.startIndex + ci.elementCount > position) {
+      m_chunkCursor->seek(ci.chunkId);
+      m_chunkCursor->get(m_readBuf);
+      m_curElement = m_elementCount = 0;
+      readChunkHeader(m_readBuf, 0, &m_startIndex, &m_elementCount);
+      bufSeek(position - m_startIndex);
+      return true;
+    }
+  }
+  return false;
 }
 
 size_t CollectionCursorBase::count()
 {
-  return m_ci->count();
+  return m_collectionInfo->count();
+}
+
+void CollectionCursorBase::objectBufSeek(size_t position)
+{
+  if(position > m_curElement) {
+    for(size_t pos=0, epos=position-m_curElement; pos < epos; ) {
+      size_t sz;
+      bool deleted;
+      readObjectHeader(m_readBuf, 0, 0, &sz, &deleted);
+      m_readBuf.read(sz-ObjectHeader_sz);
+      if(!deleted) pos++;
+    }
+  }
+  else {
+    m_readBuf.reset();
+    readChunkHeader(m_readBuf, 0, 0, 0);
+    for(size_t pos=0; pos < position; ) {
+      size_t sz;
+      bool deleted;
+      readObjectHeader(m_readBuf, 0, 0, &sz, &deleted);
+      m_readBuf.read(sz-ObjectHeader_sz);
+      if(!deleted) pos++;
+    }
+  }
+  m_curElement = position;
 }
 
 CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId collectionId, size_t chunkSize)

@@ -214,14 +214,23 @@ public:
     }
   }
 
-  PropertyId chunkId() override {
-    return SK_PROPID(keyval.data<byte_t>());
+  bool seek(PropertyId chunkId) override {
+    SK_CONSTR(k, m_classId, m_objectId, chunkId);
+    keyval.assign(k, sizeof(k));
+
+    m_atEnd = !m_cursor.get(keyval, dataval, MDB_SET);
+    return m_atEnd;
   }
 
-  bool next() override {
+  bool next(PropertyId *chunkId = nullptr) override {
     m_atEnd = !m_cursor.get(keyval, dataval, MDB_NEXT);
+
     if(!m_atEnd)
       m_atEnd = SK_CLASSID(keyval.data<byte_t>()) != m_classId || SK_OBJID(keyval.data<byte_t>()) != m_objectId;
+
+    if(chunkId && !m_atEnd)
+      *chunkId = SK_PROPID(keyval.data<byte_t>());
+
     return !m_atEnd;
   }
 

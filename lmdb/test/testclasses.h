@@ -297,6 +297,18 @@ struct SomethingWithAnObjectIter
   flexis::Overlays::ObjectHistoryPtr<FixedSizeObject> history;
 };
 
+template <typename V>
+struct ValueIter {
+  virtual size_t count() = 0;
+  virtual void add(V value) = 0;
+  virtual V get(size_t position) = 0;
+};
+struct SomethingWithAValueIter
+{
+  std::string name;
+  std::shared_ptr<ValueIter<string>> values;
+};
+
 struct SomethingAbstract {
   std::string name;
   SomethingAbstract(string n) : name(n) {}
@@ -395,6 +407,37 @@ struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public I
   shared_ptr<T> getHistoryValue(uint64_t bufferPos) override {
     loader->seek(bufferPos);
     return shared_ptr<T>(loader->get());
+  }
+};
+
+template <typename V>
+struct ValueIterImpl : public ValueIter<V>, public IterPropertyBackend
+{
+  typename WriteTransaction::ValueCollectionAppender<V>::Ptr appender;
+  typename ValueCollectionCursor<V>::Ptr loader;
+
+  void init(WriteTransaction *tr,
+                    StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override {
+    appender = tr->appendValueCollection<V>(m_collectionId);
+  }
+
+  void load(Transaction *tr, StoreId storeId, ClassId classId, ObjectId objectId, const PropertyAccessBase *pa) override {
+    loader = tr->openValueCursor<V>(m_collectionId);
+  }
+
+  size_t count() override {
+    return loader->count();
+  }
+
+  void add(V value) override {
+    appender->put(value);
+  }
+
+  V get(size_t position) override {
+    loader->seek(position);
+    V s;
+    loader->get(s);
+    return s;
   }
 };
 
@@ -511,6 +554,10 @@ END_MAPPING(flexis::player::SourceInfo)
 START_MAPPING(SomethingWithAnObjectIter, history)
   MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistoryImpl, flexis::Overlays::ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
+
+START_MAPPING(SomethingWithAValueIter, values)
+  MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, std::string, ValueIterImpl, ValueIter, values)
+END_MAPPING(SomethingWithAValueIter)
 
 START_MAPPING_A(SomethingAbstract, name)
   MAPPED_PROP(SomethingAbstract, ValuePropertyEmbeddedAssign, std::string, name)

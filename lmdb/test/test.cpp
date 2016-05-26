@@ -409,9 +409,8 @@ void testObjectCollection(KeyValueStore *kv)
     cout << "COLLECTION CURSOR:" << endl;
     unsigned count = 0;
     auto cursor = rtxn->openCursor<OtherThing>(collectionId);
-    for (; !cursor->atEnd(); cursor->next()) {
+    while (OtherThing *ot = cursor->get()) {
       count++;
-      OtherThing *ot = cursor->get();
       cout << ot->sayhello() << " my name is " << ot->name << " my number is " << ot->dvalue << endl;
       delete ot;
     }
@@ -512,9 +511,8 @@ void testValueCollection(KeyValueStore *kv)
     cout << "VALUE COLLECTION CURSOR:" << endl;
     unsigned count = 0;
     auto cursor = rtxn->openValueCursor<double>(collectionId);
-    for (; !cursor->atEnd(); cursor->next()) {
+    for (double val; cursor->get(val); ) {
       count++;
-      double val = cursor->get();
       cout << "value: " << val << endl;
     }
     assert(count == 10);
@@ -1126,7 +1124,7 @@ void testObjectIterProperty(KeyValueStore *kv)
     SomethingWithAnObjectIter soi;
     wtxn->saveObject(soi, key); //must be persistent so interator member is initialized
 
-    for(int i=0; i<20; i++)
+    for(int i=0; i<200; i++)
       soi.history->addHistoryValue(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
 
     wtxn->commit();
@@ -1136,13 +1134,75 @@ void testObjectIterProperty(KeyValueStore *kv)
 
     SomethingWithAnObjectIter *soi = rtxn->getObject<SomethingWithAnObjectIter>(key);
 
-    assert(soi->history->size() == 20);
-    for(int i=0; i<soi->history->size(); i++) {
+    assert(soi->history->size() == 200);
+
+    //do a little sparse positioning, forward..
+    for(int i=0; i<soi->history->size(); i+=2) {
+      auto fso = soi->history->getHistoryValue(i);
+      assert(fso->number1 == i && fso->number2 == i+1);
+    }
+    //.. and backward
+    for(int i=soi->history->size()-1; i>=0; i-=2) {
       auto fso = soi->history->getHistoryValue(i);
       assert(fso->number1 == i && fso->number2 == i+1);
     }
 
+    //peek randomly..
+    auto fso = soi->history->getHistoryValue(133);
+    assert(fso->number1 == 133 && fso->number2 == 134);
+    fso = soi->history->getHistoryValue(12);
+    assert(fso->number1 == 12 && fso->number2 == 13);
+
     delete soi;
+  }
+}
+
+void testValueIterProperty(KeyValueStore *kv)
+{
+  ObjectKey key;
+
+  {
+    auto wtxn = kv->beginWrite();
+
+    SomethingWithAValueIter sv;
+    wtxn->saveObject(sv, key); //must be persistent so interator member is initialized
+
+    for(int i=0; i<200; i++) {
+      stringstream ss;
+      ss << "value_" << i;
+      sv.values->add(ss.str());
+    }
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    SomethingWithAValueIter *sv = rtxn->getObject<SomethingWithAValueIter>(key);
+
+    assert(sv->values->count() == 200);
+
+    //do a little sparse positioning, forward..
+    for(int i=0; i<sv->values->count(); i+=2) {
+      auto val = sv->values->get(i);
+      stringstream ss; ss << "value_" << i;
+      assert(val == ss.str());
+    }
+    //.. and backward
+    for(int i=sv->values->count()-1; i>=0; i-=2) {
+      auto val = sv->values->get(i);
+      stringstream ss; ss << "value_" << i;
+      assert(val == ss.str());
+    }
+
+    //peek randomly..
+    auto val = sv->values->get(133);
+    assert(val == "value_133");
+
+    val = sv->values->get(12);
+    assert(val == "value_12");
+
+    delete sv;
   }
 }
 
@@ -1350,6 +1410,7 @@ int main()
   testGrowDatabase(kv);
   testObjectVectorPropertyStorageEmbedded(kv);
   testObjectIterProperty(kv);
+  testValueIterProperty(kv);
   testClassCursor(kv);
   testObjectMappings(kv);
 
