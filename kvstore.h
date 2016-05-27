@@ -808,6 +808,7 @@ struct CollectionInfo
   //unique collection id
   ObjectId collectionId = 0;
 
+  //appenders that will be automatically closed on commit
   std::set<CollectionAppenderBase *> appenders;
 
   //collection chunks
@@ -949,7 +950,7 @@ public:
 };
 
 /**
- * cursor for iterating over top-level (chunked) value collections
+ * cursor for iterating over a top-level (chunked) value collection
  */
 template <typename T>
 class ValueCollectionCursor : public CollectionCursorBase
@@ -1241,9 +1242,10 @@ class Transaction
   CollectionInfo *readCollectionInfo(ReadBuf &readBuf);
 
 protected:
+  std::unordered_map<ObjectId, CollectionInfo *> m_collectionInfos;
+
   KeyValueStore &store;
   bool m_blockWrites;
-  std::unordered_map<ObjectId, CollectionInfo *> m_collectionInfos;
 
   Transaction(KeyValueStore &store) : store(store) {}
 
@@ -2208,7 +2210,7 @@ public:
    */
   void abort();
 
-  void commitCollections();
+  void writeCollections();
 
   /**
    * commit this transaction. Changes written since beginnning of the transaction are written to persistent storage

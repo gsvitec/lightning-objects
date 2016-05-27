@@ -120,6 +120,7 @@ struct DatabaseInfo
   ::lmdb::dbi m_dbi_data = 0;
 
   vector<ClassInfo> classInfos;
+  vector<kv::CollectionInfo *> collectionInfos;
 
   DatabaseInfo(string location, string name, size_t mapsize) : m_env(::lmdb::env::create())
   {
@@ -222,6 +223,47 @@ struct DatabaseInfo
     cursor.close();
     txn.abort();
   }
+
+  void loadCollectionInfos()
+  {
+    auto txn = ::lmdb::txn::begin(m_env, nullptr, MDB_RDONLY);
+
+    ::lmdb::val key;
+    auto cursor = ::lmdb::cursor::open(txn, m_dbi_data);
+
+    SK_CONSTR(sk, COLLINFO_CLSID, 1, 0);
+    key.assign(sk, sizeof(sk));
+
+    while(cursor.get(key, MDB_SET_RANGE) && SK_CLASSID(key.data<byte_t>()) == COLLINFO_CLSID) {
+      ::lmdb::val val;
+      cursor.get(key, val, MDB_GET_CURRENT);
+
+      ReadBuf readBuf((byte_t *)val.data(), val.size());
+      CollectionInfo *info = new CollectionInfo();
+      collectionInfos.push_back(info);
+
+      info->collectionId = readBuf.readRaw<ObjectId>();
+      size_t sz = readBuf.readRaw<size_t>();
+      for(size_t i=0; i<sz; i++) {
+        PropertyId chunkId = readBuf.readRaw<PropertyId>();
+        if(chunkId >= info->nextChunkId)
+          info->nextChunkId = chunkId + PropertyId(1);
+
+        size_t startIndex = readBuf.readRaw<size_t>();
+        size_t elementCount = readBuf.readRaw<size_t>();
+        if(startIndex + elementCount > info->nextStartIndex)
+          info->nextStartIndex = startIndex + elementCount;
+
+        size_t dataSize = readBuf.readRaw<size_t>();
+        info->chunkInfos.push_back(ChunkInfo(chunkId, startIndex, elementCount, dataSize));
+      }
+
+      SK_CONSTR(sk, COLLINFO_CLSID, info->collectionId+1, 0);
+      key.assign(sk, sizeof(sk));
+    }
+    cursor.close();
+    txn.abort();
+  }
 };
 
 }
@@ -240,18 +282,26 @@ std::ifstream::pos_type filesize(const char* filename)
 void dumpClassesMeta(DatabaseInfo &dbinfo, string opt);
 void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId);
 void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId);
+void dumpCollectionInfo(DatabaseInfo &dbinfo, ObjectId collId);
+void dumpCollectionInfos(DatabaseInfo &dbinfo);
 
 int main(int argc, char* argv[])
 {
   string opt = argc > 3 ? argv[3] : "";
-  unsigned minArgs = (opt == "m" || opt == "o") ? 5 : 3;
-
-  if(argc < minArgs) {
-    cout << "usage: lo_dump <path> <name> [c|n|m <classId>|o <classId>]" << endl;
+  bool found = opt.empty();
+  for(auto o : {"c", "n", "m", "o", "ci"}) {
+    if(opt == o) {
+      found = true;
+      break;
+    }
+  }
+  if(!found || (opt == "o" || opt == "m") && argc < 5 || argc < 3) {
+    cout << "usage: lo_dump <path> <name> [c|n|m <classId>|o <classId>] | [ci|ci <collectionId>]" << endl;
     cout << "c: sort by instance count" << endl;
     cout << "n: sort by class name" << endl;
     cout << "m: dump metadata for class <classId>" << endl;
-    cout << "o: dump object simple data for class <classId>" << endl;
+    cout << "o: dump object simple data for class <classId>";
+    cout << "ci: dump collection infos. If collectionId is given, dump chunk infos for that collections" << endl;
     return -1;
   }
 
@@ -273,8 +323,17 @@ int main(int argc, char* argv[])
       ClassId classId = (ClassId)atoi(argv[4]);
       dumpClassObjects(dbinfo, classId);
     }
-    else
+    else if(opt == "ci") {
+      dbinfo.loadCollectionInfos();
+      if(argc > 4) {
+        ObjectId collId = (ObjectId)atoi(argv[4]);
+        dumpCollectionInfo(dbinfo, collId);
+      }
+      else  dumpCollectionInfos(dbinfo);
+    }
+    else {
       dumpClassesMeta(dbinfo, opt);
+    }
   }
   catch(::lmdb::runtime_error e) {
     cout <<"database error " << e.what() << endl;
@@ -311,6 +370,46 @@ void dumpClassesMeta(DatabaseInfo &dbinfo, string opt)
       cout << r.first << "(" << r.second << ")";
     }
     cout << endl;
+  }
+}
+
+void dumpCollectionInfos(DatabaseInfo &dbinfo)
+{
+  for(auto ci : dbinfo.collectionInfos) {
+    stringstream ss; ss << "(" << ci->collectionId << ")";
+    cout << "collection " << setw(8) << ss.str();
+    cout << setw(6) << ci->chunkInfos.size() << setw(12) << " chunks";
+    cout << setw(8) << ci->count() << " elements" << endl;
+  }
+}
+
+void dumpCollectionInfo(DatabaseInfo &dbinfo, ObjectId collId)
+{
+  CollectionInfo *ci = nullptr;
+  for(auto i : dbinfo.collectionInfos) {
+    if(i->collectionId == collId) {
+      ci = i;
+      break;
+    }
+  }
+  if(!ci) {
+    cout << "collection " << collId << "not found" << endl;
+    return;
+  }
+
+  cout << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left);
+
+  stringstream ss; ss << "(" << ci->collectionId << ")";
+  cout << "collection " << setw(8) << ss.str();
+  cout << " chunks: " << setw(6) << ci->chunkInfos.size();
+  cout << " elements: " << setw(8) << ci->count() << endl;
+
+  for(auto &chunk : ci->chunkInfos) {
+    stringstream ss; ss << "(" << chunk.chunkId << ")";
+    cout << "chunk " << setw(6) << ss.str();
+    cout << "  startIndex: " << setw(8) << chunk.startIndex;
+    cout << "  elementCount: " << setw(8) << chunk.elementCount;
+    cout << "  dataSize: " << setw(8) << chunk.dataSize << endl;
   }
 }
 

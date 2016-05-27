@@ -329,7 +329,7 @@ void WriteTransaction::abort()
   _abort();
 }
 
-void WriteTransaction::commitCollections()
+void WriteTransaction::writeCollections()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
@@ -354,7 +354,7 @@ void WriteTransaction::commitCollections()
 
 void WriteTransaction::commit()
 {
-  commitCollections();
+  writeCollections();
   doCommit();
 }
 

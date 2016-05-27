@@ -1127,8 +1127,8 @@ void testObjectIterProperty(KeyValueStore *kv)
     for(int i=0; i<200; i++)
       soi.history->addHistoryValue(FixedSizeObjectPtr(new FixedSizeObject(i, i+1)));
 
-    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
-    wtxn->saveObject(soi, key); //must save explicitly only in case collection was created lazily
+    wtxn->writeCollections();  //must write collections first, as the last chunk may still be dangling
+    wtxn->saveObject(soi, key); //must save explicitly only because collection was created lazily
     wtxn->commit();
   }
   {
@@ -1175,8 +1175,8 @@ void testValueIterProperty(KeyValueStore *kv)
       sv.values->add(ss.str());
     }
 
-    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
-    wtxn->saveObject(sv, key); //must save explicitly only in case collection was created lazily
+    wtxn->writeCollections();  //must write collections first, as the last chunk may still be dangling
+    wtxn->saveObject(sv, key); //must save explicitly only because collection was created lazily
     wtxn->commit();
   }
   {
@@ -1226,8 +1226,8 @@ void testDataIterProperty(KeyValueStore *kv)
       sv.datas->add(lbuf, 100);
     }
 
-    wtxn->commitCollections();  //must commit collections first, as the last chnuk may still be dangling
-    wtxn->saveObject(sv, key); //must save explicitly only in case collection was created lazily
+    wtxn->writeCollections();  //must write collections first, as the last chunk may still be dangling
+    wtxn->saveObject(sv, key); //must save explicitly only because collection was created lazily
     wtxn->commit();
   }
   {
