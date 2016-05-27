@@ -1220,7 +1220,7 @@ void testDataIterProperty(KeyValueStore *kv)
     SomethingWithAValueIter sv;
     wtxn->initMember(sv, PROPERTY(SomethingWithAValueIter, datas)); //ensure interator member is initialized
 
-    long lbuf[100];
+    long long lbuf[100];
     for(int i=0; i<200; i++) {
       for(int j=0; j<100; j++) lbuf[j] = i;
       sv.datas->add(lbuf, 100);
@@ -1239,19 +1239,19 @@ void testDataIterProperty(KeyValueStore *kv)
 
     //do a little sparse positioning, forward..
     for(int i=0; i<sv->values->count(); i+=2) {
-      long *lbuf;
+      long long *lbuf;
       bool success = sv->datas->get(i * 100, lbuf, 100);
       assert(success && lbuf[0] == i && lbuf[99] == i);
     }
     //.. and backward
     for(int i=sv->values->count()-1; i>=0; i-=2) {
-      long *lbuf;
+      long long *lbuf;
       bool success = sv->datas->get(i * 100, lbuf, 100);
       assert(success && lbuf[0] == i && lbuf[99] == i);
     }
 
     //peek randomly..
-    long *lbuf;
+    long long *lbuf;
     bool success = sv->datas->get(133 * 100, lbuf, 100);
     assert(success && lbuf[0] == 133 && lbuf[99] == 133);
 

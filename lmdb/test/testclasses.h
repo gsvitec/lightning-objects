@@ -315,7 +315,7 @@ struct SomethingWithAValueIter
 {
   std::string name;
   std::shared_ptr<ValueIter<string>> values;
-  std::shared_ptr<DataIter<long>> datas;
+  std::shared_ptr<DataIter<long long>> datas;
 };
 
 struct SomethingAbstract {
@@ -606,7 +606,7 @@ END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPING(SomethingWithAValueIter, values, datas)
   MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, std::string, ValueIterImpl, ValueIter, values)
-  MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, long, DataIterImpl, DataIter, datas)
+  MAPPED_PROP_ITER(SomethingWithAValueIter, ValueCollectionIterPropertyAssign, long long, DataIterImpl, DataIter, datas)
 END_MAPPING(SomethingWithAValueIter)
 
 START_MAPPING_A(SomethingAbstract, name)

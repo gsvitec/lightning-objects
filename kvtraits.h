@@ -1277,6 +1277,7 @@ struct ClassTraits<EmptyClass>
   }
   template <typename T>
   static bool initMember(StoreId storeId, WriteTransaction *tr, T &obj, const PropertyAccessBase *pa, unsigned flags=0) {
+    return false;
   }
   template <typename T>
   static bool get_objectkey(const std::shared_ptr<T> &obj, ObjectKey *&key, unsigned flags) {
