@@ -9,7 +9,7 @@ since LMDB has multi-process support, this can easily be implemented in LO at a 
 for a remote protocol - but again, LO is mostly a mapping layer, and properties of the underlying platform can
 easily be exposed.
 ##Features
-LO fully supports polymorphism
+LO supports (single) inheritance and polymorphism
 
 LO provides flexible mapping options that range from scalar values to multi-valued
 object relationships. Mappings can be combined with different storage strategies, for example:
@@ -53,12 +53,12 @@ ObjectKey key;
 }
 ```
 ##Status
-LO is currently in alpha state. This means that there are features that are not fully tested, and
-documentation is partly outdated and mostly incomplete. However, LO has already proven to be useful
-and will be improved in the near future into a fully production-ready object storage solution.
+LO is currently in alpha state. This means that there are features that are not fully tested (but quite a few
+are, as you can see in the test subdirectory), and API changes might still happen. However, LO has already proven
+to be useful and will be improved in the near future into a fully production-ready object storage solution.
 ##License
 LO is licensed under the GNU Lesser General Public License, Version 3.0
 ##More Information..
-.. can be gathered from the (currently outdated) documentation and from the test/demo programs (lmdb/test).
+.. can be gathered from the accompanying documentation and from the test/demo programs (lmdb/test).
 Don't forget to try the lo_dump tool which allows you to inspect the contents of a LO
 database interactively
