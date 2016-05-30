@@ -390,6 +390,12 @@ namespace flexis {
 namespace persistence {
 namespace kv {
 
+/**
+ * replacement implementation for ObjectHistory. Note that although this implementation is based on an
+ * appender/cursor pair, this is in no way mandated by LO. Any other LO- or non-LO- feature could be used as well.
+ * Note however that IterPropertyBackend uses one ObjectId (called m_collectionId) as the persistent handle to
+ * whatever is done in the iterator
+ */
 template<typename T>
 struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public IterPropertyBackend
 {
@@ -401,6 +407,7 @@ struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public I
   }
   void init(WriteTransaction *tr) override
   {
+    //if collectionId == 0, appender will set it when the first data arrives
     appender = tr->appendCollection<T>(m_collectionId);
   }
 
@@ -419,6 +426,9 @@ struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public I
   }
 };
 
+/**
+ * replacement implementation for ValueIter. See comments in KVObjectHistoryImpl
+ */
 template <typename V>
 struct ValueIterImpl : public ValueIter<V>, public IterPropertyBackend
 {
@@ -453,6 +463,10 @@ struct ValueIterImpl : public ValueIter<V>, public IterPropertyBackend
   }
 };
 
+/**
+ * replacement implementation for DataIter. See comments in KVObjectHistoryImpl. Since there is no
+ * DataCursor, we use direct transaction API for reading
+ */
 template <typename V>
 struct DataIterImpl : public DataIter<V>, public IterPropertyBackend {
 

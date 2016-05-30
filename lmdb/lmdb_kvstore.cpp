@@ -543,6 +543,7 @@ public:
   WriteTransactionPtr beginWrite(unsigned needsKBs) override;
 
   void transactionCompleted(Transaction::Mode mode, bool blockWrites);
+  size_t getOptimalChunkSize(size_t reserved) override {return m_pageSize - reserved;};
 };
 
 KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
@@ -784,20 +785,18 @@ bool Transaction::remove(ClassId classId, ObjectId objectId)
 {
   SK_CONSTR(kv, classId, objectId, 1);
   ::lmdb::val k{kv, sizeof(kv)};
-  ::lmdb::val v{};
-  ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+  ::lmdb::dbi_del(m_txn, m_dbi.handle(), k);
 
   SK_PROPID(kv) = 0;
   k.assign(kv, sizeof(kv));
-  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k);
 }
 
 bool Transaction::remove(ClassId classId, ObjectId objectId, PropertyId propertyId)
 {
   SK_CONSTR(kv, classId, objectId, propertyId);
   ::lmdb::val k{kv, sizeof(kv)};
-  ::lmdb::val v{};
-  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k, v);
+  return ::lmdb::dbi_del(m_txn, m_dbi.handle(), k);
 }
 
 uint16_t Transaction::decrementRefCount(ClassId cid, ObjectId oid)

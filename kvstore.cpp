@@ -439,6 +439,19 @@ void ObjectBuf::checkData(Transaction *tr, ClassId cid, ObjectId oid) {
   }
 }
 
+void WriteTransaction::deleteCollection(ObjectId collectionId)
+{
+  CollectionInfo *ci = getCollectionInfo(collectionId, false);
+  if(ci) {
+    m_collectionInfos.erase(collectionId);
+    if(!remove(COLLINFO_CLSID, collectionId, 0))
+      throw persistence_error("error deleting collection info");
+    for(auto chunk : ci->chunkInfos)
+      if(!remove(COLLECTION_CLSID, collectionId, chunk.chunkId))
+        throw persistence_error("error deleting collection chunk");
+  }
+}
+
 void LazyBuf::checkData() {
   ObjectBuf::checkData(m_txn, key.classId, key.objectId);
 }
@@ -481,6 +494,7 @@ bool CollectionCursorBase::next()
     if(++m_curElement > m_elementCount) {
       m_curElement = m_elementCount = 0;
       if(m_chunkCursor->next(&m_chunkId)) {
+        m_curElement = 1;
         m_chunkCursor->get(m_readBuf);
         readChunkHeader(m_readBuf, &m_dataSize, &m_startIndex, &m_elementCount);
       }

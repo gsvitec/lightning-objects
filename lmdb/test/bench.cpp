@@ -43,7 +43,7 @@ static const long rounds = 1000000;
 #define DUR() std::chrono::high_resolution_clock::duration dur = std::chrono::high_resolution_clock::now() - begin; \
 std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(dur); cout << ms.count() << endl;
 
-void testColored2DPointWrite(KeyValueStore *kv)
+void benchColored2DPointWrite(KeyValueStore *kv)
 {
   BEG()
   auto wtxn = kv->beginWrite(true); //we use a bulk transaction here,because we know objects are shallow
@@ -56,8 +56,8 @@ void testColored2DPointWrite(KeyValueStore *kv)
   DUR()
 }
 
-void testValueCollection(KeyValueStore *kv) {
-  //test to persistent collection of scalar (primitve) values
+void benchValueCollection(KeyValueStore *kv) {
+  //test persistent collection of scalar (primitve) values
   ObjectId collectionId;
 
   {
@@ -83,9 +83,10 @@ void testValueCollection(KeyValueStore *kv) {
 
     unsigned count = 0;
     auto cursor = rtxn->openValueCursor<double>(collectionId);
-    for (; !cursor->atEnd(); cursor->next()) {
+    while(!cursor->atEnd()) {
       count++;
-      double val = cursor->get();
+      double val;
+      cursor->get(val);
     }
     assert(count == 1000);
 
@@ -128,7 +129,7 @@ void testValueCollection(KeyValueStore *kv) {
   }
 }
 
-void testColored2DPointRead(KeyValueStore *kv)
+void benchColored2DPointRead(KeyValueStore *kv)
 {
   BEG()
   auto rtxn = kv->beginRead();
@@ -145,6 +146,98 @@ void testColored2DPointRead(KeyValueStore *kv)
   rtxn->end();
   assert(count == rounds);
   DUR()
+}
+
+void benchDataCollection(KeyValueStore *kv)
+{
+  ObjectId collectionId = 0;
+  {
+    BEG()
+    auto wtxn = kv->beginWrite();
+
+    long long buf[200];
+    auto appender = wtxn->appendDataCollection<long long>(collectionId, kv->getOptimalChunkSize());
+    for(unsigned i=0; i<1000; i++) {
+      for(auto j=0; j<200; j++) buf[j] = i;
+      appender->put(buf, 200);
+    }
+
+    appender->close();
+
+    wtxn->commit();
+    DUR()
+  }
+  {
+    BEG()
+    auto rtxn = kv->beginRead();
+
+    for(unsigned i=0; i<500; i++) {
+      long long *data = nullptr;
+      bool owned = false;
+      rtxn->getDataCollection(collectionId, i*400, 400, data, &owned);
+
+      assert(data[0] == i*2 && data[399] == i*2+1);
+      if(owned) free(data);
+    }
+
+    rtxn->end();
+    DUR()
+  }
+  {
+    auto wtxn = kv->beginWrite();
+    wtxn->deleteCollection(collectionId);
+    wtxn->commit();
+
+    auto rtxn = kv->beginRead();
+    CollectionInfo *ci = rtxn->getCollectionInfo(collectionId, false);
+    assert(!ci);
+    rtxn->end();
+  }
+}
+
+void benchObjectCollection(KeyValueStore *kv)
+{
+  ObjectId collectionId = 0;
+  {
+    BEG()
+    auto wtxn = kv->beginWrite();
+
+    auto appender = wtxn->appendCollection<FixedSizeObject>(collectionId, kv->getOptimalChunkSize());
+    for(unsigned i=0; i<25000; i++) {
+      auto fso = make_shared<FixedSizeObject>(i, i+1);
+      appender->put(fso);
+    }
+
+    appender->close();
+
+    wtxn->commit();
+    DUR()
+  }
+  {
+    BEG()
+    auto rtxn = kv->beginRead();
+
+    auto cursor = rtxn->openCursor<FixedSizeObject>(collectionId);
+    size_t count = 0;
+    while(auto fso = cursor->get()) {
+      count++;
+      assert(fso->number2 == fso->number1+1);
+      delete fso;
+    }
+    assert(count == 25000);
+    rtxn->end();
+    DUR()
+  }
+  {
+    auto wtxn = kv->beginWrite();
+    wtxn->deleteCollection(collectionId);
+    wtxn->commit();
+
+    auto rtxn = kv->beginRead();
+    CollectionInfo *ci = rtxn->getCollectionInfo(collectionId, false);
+    assert(!ci);
+    rtxn->end();
+  }
 }
 
 //raw LMDB tests
@@ -306,16 +399,18 @@ int main()
 #if 1
   KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{0, ".", "bench"};
 
-  kv->putSchema<Colored2DPoint, ColoredPolygon>();
+  kv->putSchema<Colored2DPoint, ColoredPolygon, FixedSizeObject>();
 
-  testColored2DPointWrite(kv);
-  testColored2DPointRead(kv);
-  testValueCollection(kv);
+  benchColored2DPointWrite(kv);
+  benchColored2DPointRead(kv);
+  benchValueCollection(kv);
+  benchDataCollection(kv);
+  benchObjectCollection(kv);
 
   delete kv;
 
-  test_lmdb_write();
-  test_lmdb_read();
+  //test_lmdb_write();
+  //test_lmdb_read();
 #endif
 #if 0
 

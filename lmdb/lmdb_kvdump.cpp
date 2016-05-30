@@ -300,7 +300,7 @@ int main(int argc, char* argv[])
     cout << "c: sort by instance count" << endl;
     cout << "n: sort by class name" << endl;
     cout << "m: dump metadata for class <classId>" << endl;
-    cout << "o: dump object simple data for class <classId>";
+    cout << "o: dump object simple data for class <classId>" << endl;
     cout << "ci: dump collection infos. If collectionId is given, dump chunk infos for that collections" << endl;
     return -1;
   }

@@ -361,7 +361,7 @@ void testLazyPolymorphicCursor(KeyValueStore *kv)
   }
 }
 
-void testObjectCollection(KeyValueStore *kv)
+void benchObjectCollection(KeyValueStore *kv)
 {
   //test polymorphic access to persistent collection
   ObjectId collectionId;
@@ -474,7 +474,7 @@ void testObjectCollection(KeyValueStore *kv)
 }
 
 //test persistent collection of scalar (primitve) values
-void testValueCollection(KeyValueStore *kv)
+void benchValueCollection(KeyValueStore *kv)
 {
   ObjectId collectionId;
 
@@ -1457,8 +1457,8 @@ int main()
   testColoredPolygonIterator(kv);
   testFlexisProperties(kv);
   testLazyPolymorphicCursor(kv);
-  testObjectCollection(kv);
-  testValueCollection(kv);
+  benchObjectCollection(kv);
+  benchValueCollection(kv);
   testObjectPtrPropertyStorage(kv);
   testValueVectorProperty(kv);
   testDataCollection1(kv);

@@ -211,6 +211,11 @@ protected:
   using PropertyMetaInfoPtr = std::shared_ptr<PropertyMetaInfo>;
 
   /**
+   * @return the optimal chunk size minus the reserved size
+   */
+  virtual size_t getOptimalChunkSize(size_t reserved) = 0;
+
+  /**
    * compare loaded and declared property mapping
    */
   void compare(std::vector<schema_compatibility::Property> &errors, unsigned index,
@@ -242,6 +247,14 @@ protected:
       const kv::PropertyAccessBase ** currentProps[],
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) = 0;
+
+public:
+  /**
+   * @return the optimal chunk size, which is the current page size minus the chunk header
+   */
+  size_t getOptimalChunkSize() {
+    return getOptimalChunkSize(kv::ChunkHeader_sz);
+  }
 };
 
 namespace put_schema {
@@ -2393,6 +2406,14 @@ public:
     }
     remove(key->classId, key->objectId, propertyId);
   }
+
+  /**
+   * delete a top-level (chunked) collection.
+   *
+   * @param vect the initial collection contents
+   * @throw persistence_error
+   */
+  void deleteCollection(ObjectId collectionId);
 
   /**
    * create a top-level (chunked) object collection.

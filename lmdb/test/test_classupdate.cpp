@@ -101,6 +101,11 @@ class KeyValueStore : public KeyValueStoreBase
     return mi;
   }
 
+protected:
+  size_t getOptimalChunkSize(size_t reserved) override {
+    return 1024;
+  }
+
 public:
   unsigned test_no = 0;
 
