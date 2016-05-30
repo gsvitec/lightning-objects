@@ -190,7 +190,9 @@ struct StoreAccessBase
    * prepare an update for the given object property. This function is called on dependent objects (objects which
    * are referenced through a pointer or a collection) whenever the parent object is updated
    *
+   * @param storeId the store id
    * @param buf the object data as currently saved
+   * @param pd prepare data cache used by storage objects
    * @param obj the object about to be saved
    * @param pa the property about to be saved
    * @return the same as size(buf)
@@ -203,9 +205,9 @@ struct StoreAccessBase
    * prepare a delete for the given object property. This function is called on dependent objects (objects which
    * are referenced through a pointer or a collection) whenever the parent object is deleted
    *
+   * @param storeId the store id
    * @param tr the write transaction
    * @param buf the object data as currently saved
-   * @param obj the object about to be deleted
    * @param pa the property represented by this storage
    * @return the same as size(buf)
    */
