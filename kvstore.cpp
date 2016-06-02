@@ -188,7 +188,7 @@ bool KeyValueStoreBase::updateClassSchema(
       runtimeKeyed[pa->name] = pa;
   }
 
-  unsigned rIndex;
+  unsigned rIndex=0;
   for(unsigned s=0, r=0; s<schemaEmbedded.size(); s++, r++)
   {
     unsigned sIndex=s;
