@@ -112,24 +112,23 @@ public:
     return classProperties.empty();
   }
 
-  struct error : public persistence_error
+  class error : public std::exception
   {
+    std::string m_msg;
+
+  public:
     const std::shared_ptr<const schema_compatibility> compatibility;
+
     error(std::string message, std::shared_ptr<const schema_compatibility> compatibility)
-        : persistence_error(message), compatibility(compatibility) {}
+        : m_msg(message), compatibility(compatibility) {}
+
+    const char* what() const noexcept {return m_msg.c_str();}
 
     void printDetails(std::ostream &os);
     std::unordered_map<std::string, std::vector<std::string>> getDetails();
   };
 
   error make_error();
-};
-
-class class_not_registered_error : public persistence_error
-{
-public:
-  class_not_registered_error(const std::string className)
-      : persistence_error("class has not been registered", className) {}
 };
 
 namespace kv {
@@ -425,6 +424,7 @@ public:
    * register and validate the class schema for this store
    * @param requiredCompatibility the compatibility level thta must be reached. Throw an incompatible_schema_error if any
    * schema change violates that requirement
+   * @throw schema_compatibility::error
    */
   template <typename... Cls>
   void putSchema(kv::SchemaCompatibility requiredCompatibility=kv::SchemaCompatibility::write)
