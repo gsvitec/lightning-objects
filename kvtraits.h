@@ -33,7 +33,6 @@
 
 namespace flexis {
 namespace persistence {
-
 namespace kv {
 
 /** constant designating the maximum number of databases allowed within one process */
@@ -41,12 +40,32 @@ unsigned const MAX_DATABASES = 10;
 
 #define ARRAY_SZ(x) unsigned(sizeof(x) / sizeof(decltype(*x)))
 
-class invalid_pointer_error : public persistence_error
+#if _MSC_VER && _MSC_VER < 1900
+#define LO_NOEXCEPT
+#else
+#define LO_NOEXCEPT noexcept
+#endif
+
+class error : public std::exception
+{
+  std::string m_msg, m_detail;
+
+public:
+  explicit error(const std::string& msg, const std::string& detail="")
+      : m_msg(msg), m_detail(detail) {};
+
+  virtual ~error() LO_NOEXCEPT {};
+
+  const char* what() const LO_NOEXCEPT {return m_msg.c_str();}
+  const char* detail() const LO_NOEXCEPT {return m_detail.c_str();}
+};
+
+class invalid_pointer_error : public error
 {
 public:
-  invalid_pointer_error() : persistence_error("invalid pointer argument: not created by KV store", "") {}
+  invalid_pointer_error() : error("invalid pointer argument: not created by KV store", "") {}
 };
-class invalid_classid_error : public persistence_error
+class invalid_classid_error : public error
 {
   std::string mk(const char *msg, ClassId cid) {
     std::stringstream ss;
@@ -54,7 +73,7 @@ class invalid_classid_error : public persistence_error
     return ss.str();
   }
 public:
-  invalid_classid_error(ClassId cid) : persistence_error(mk("invalid classid: ", cid), "is class registered?") {}
+  invalid_classid_error(ClassId cid) : error(mk("invalid classid: ", cid), "is class registered?") {}
 };
 
 struct PropertyType
@@ -717,13 +736,13 @@ struct AbstractClassInfo {
   /**
    * search the inheritance tree rooted in this object for a class info with the given classId
    * @return the classinfo
-   * @throw persistence_error if not found
+   * @throw error if not found
    */
   AbstractClassInfo *doresolve(StoreId storeId, ClassId otherClassId)
   {
     AbstractClassInfo *resolved = resolve(storeId, otherClassId);
     if(!resolved) {
-      throw persistence_error("unknow classId. Class missing from registry");
+      throw error("unknow classId. Class missing from registry");
     }
     return resolved;
   }
@@ -731,13 +750,13 @@ struct AbstractClassInfo {
   /**
    * search the inheritance tree rooted in this object for a class info with the given typeid
    * @return the classinfo
-   * @throw persistence_error if not found
+   * @throw error if not found
    */
   AbstractClassInfo *doresolve(const std::type_info &ti)
   {
     AbstractClassInfo *resolved = resolve(ti);
     if(!resolved) {
-      throw persistence_error("unknow typeid. Class missing from registry");
+      throw error("unknow typeid. Class missing from registry");
     }
     return resolved;
   }
@@ -1149,7 +1168,7 @@ public:
   template <typename TV>
   static void put(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
     if(pa->classId[storeId] != traits_data(storeId).classId)
-      throw persistence_error("internal error: type mismatch");
+      throw error("internal error: type mismatch");
 
     const PropertyAccess <T, TV> *acc = (const PropertyAccess <T, TV> *) pa;
     value = acc->get(d);
@@ -1162,7 +1181,7 @@ public:
   template <typename TV>
   static void get(StoreId storeId, T &d, const PropertyAccessBase *pa, TV &value, unsigned flags=FLAGS_ALL) {
     if(pa->classId[storeId] != traits_data(storeId).classId)
-      throw persistence_error("internal error: type mismatch");
+      throw error("internal error: type mismatch");
 
     const PropertyAccess<T, TV> *acc = (const PropertyAccess<T, TV> *)pa;
     acc->set(d, value);
@@ -1179,7 +1198,7 @@ template <typename T> struct ClassTraitsAbstract
   static T *makeObject(StoreId storeId, ClassId classId)
   {
     if(classId == ClassTraits<T>::traits_data(storeId).classId) {
-      throw persistence_error("abstract class cannot be instantiated");
+      throw error("abstract class cannot be instantiated");
     }
     else if(classId)
       return RESOLVE_SUB(classId)->makeObject(storeId, classId);

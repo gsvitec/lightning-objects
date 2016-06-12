@@ -112,17 +112,13 @@ public:
     return classProperties.empty();
   }
 
-  class error : public std::exception
+  class error : public kv::error
   {
-    std::string m_msg;
-
   public:
     const std::shared_ptr<const schema_compatibility> compatibility;
 
     error(std::string message, std::shared_ptr<const schema_compatibility> compatibility)
-        : m_msg(message), compatibility(compatibility) {}
-
-    const char* what() const noexcept {return m_msg.c_str();}
+        : kv::error(message), compatibility(compatibility) {}
 
     void printDetails(std::ostream &os);
     std::unordered_map<std::string, std::vector<std::string>> getDetails();
@@ -466,7 +462,7 @@ public:
    * @param owner an owner id returned from a previous call to this function
    * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected but the
    * setting is already as requested
-   * @throw persistence_error if the setting is already owned and not the same as requested
+   * @throw error if the setting is already owned and not the same as requested
    */
   template <typename T>
   unsigned setCache(bool cache=true, unsigned owner=0) {
@@ -482,7 +478,7 @@ public:
     }
     else {
       if(static_cast<bool>(objectCaches.count(kv::ClassTraits<T>::traits_data(id).classId)) != cache)
-        throw persistence_error("cache configuration already owned and differs from requested value");
+        throw kv::error("cache configuration already owned and differs from requested value");
       return 0;
     }
   }
@@ -507,7 +503,7 @@ public:
    * @param owner an owner id returned from a previous call to this function
    * @return a non-0 owner id if the operation was performed successfully, or 0 if it was rejected but the
    * setting is already as requested
-   * @throw persistence_error if the setting is already owned and not the same as requested
+   * @throw error if the setting is already owned and not the same as requested
    */
   template <typename T>
   unsigned  setRefCounting(bool refcount=true, unsigned owner=0)
@@ -529,7 +525,7 @@ public:
     }
     else {
       if(kv::ClassTraits<T>::traits_info->getRefCounting(id) != refcount)
-        throw persistence_error("refcounting configuration already owned and differs from requested value");
+        throw kv::error("refcounting configuration already owned and differs from requested value");
       return 0;
     }
   }
@@ -598,7 +594,7 @@ bool all_predicate(std::shared_ptr<T> t=nullptr) {return true;}
 template<typename T> void readObject(StoreId storeId, Transaction *tr, ReadBuf &buf, ClassId classId, ObjectId objectId, T *obj)
 {
   Properties *props = ClassTraits<T>::getProperties(storeId, classId);
-  if(!props) throw persistence_error("unknown classId. Class not registered");
+  if(!props) throw error("unknown classId. Class not registered");
 
   for(unsigned px=0, sz=props->full_size(); px < sz; px++) {
     const PropertyAccessBase *p = props->get(px);
@@ -1079,7 +1075,7 @@ public:
     ReadBuf readBuf;
     m_helper->get(key, readBuf);
     if(readBuf.null()) return m_hasData;
-    if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
+    if(key.refcount > 1) throw error("removeObject: refcount > 1");
 
     using Traits = ClassTraits<T>;
 
@@ -1604,7 +1600,7 @@ public:
       }
       else {
         std::shared_ptr<V> obj = loadObject<V>(hdl);
-        if(!obj) throw persistence_error("collection object not found");
+        if(!obj) throw error("collection object not found");
         vect.push_back(obj);
       }
     }
@@ -1968,7 +1964,7 @@ protected:
     writeObject(cdata.classId, objectId, obj, pd, properties, shallow);
 
     if(!putData(cdata.classId, objectId, 0, writeBuf()))
-      throw persistence_error("data was not saved");
+      throw error("data was not saved");
 
     writeBuf().reset();
     return objectId;
@@ -2014,7 +2010,7 @@ protected:
         key.classId = getClassId(typeid(obj));
 
         AbstractClassInfo *classInfo = store.objectClassInfos.at(key.classId);
-        if(!classInfo) throw persistence_error("class not registered");
+        if(!classInfo) throw error("class not registered");
 
         if(setRefcount && classInfo->data[store.id].refcounting) key.refcount =  1;
 
@@ -2044,7 +2040,7 @@ protected:
     writeObject(key.classId, key.objectId, obj, pd, properties, shallow);
 
     if(!putData(key, writeBuf()))
-      throw persistence_error("data was not saved");
+      throw error("data was not saved");
 
     writeBuf().reset();
     return isNew;
@@ -2378,7 +2374,7 @@ public:
     }
 
     if(!putData(key->classId, key->objectId, propertyId, writeBuf()))
-      throw persistence_error("putData failed");
+      throw error("putData failed");
   }
 
   /**
@@ -2415,7 +2411,7 @@ public:
    * delete a top-level (chunked) collection.
    *
    * @param collectionId a collection id. Silently fails if invalid
-   * @throw persistence_error if an error occurred
+   * @throw error if an error occurred
    */
   void deleteCollection(ObjectId collectionId);
 
@@ -2504,7 +2500,7 @@ public:
   void appendCollection(ObjectId collectionId, const std::vector<Ptr<T>> &vect)
   {
     CollectionInfo *ci = getCollectionInfo(collectionId);
-    if(!ci) throw persistence_error("collection not found");
+    if(!ci) throw error("collection not found");
 
     saveChunk(vect, ci, ClassTraits<T>::traits_info->isPoly());
   }
@@ -2519,7 +2515,7 @@ public:
   void appendValueCollection(ObjectId collectionId, const std::vector<T> &vect)
   {
     CollectionInfo *ci= getCollectionInfo(collectionId);
-    if(!ci) throw persistence_error("collection not found");
+    if(!ci) throw error("collection not found");
 
     saveChunk(vect, ci);
   }
@@ -2538,7 +2534,7 @@ public:
   {
     RAWDATA_API_ASSERT
     CollectionInfo *ci = getCollectionInfo(collectionId);
-    if(!ci) throw persistence_error("collection not found");
+    if(!ci) throw error("collection not found");
 
     saveChunk(data, dataSize, ci);
   }
@@ -2559,7 +2555,7 @@ public:
   {
     RAWDATA_API_ASSERT
     CollectionInfo *ci = getCollectionInfo(collectionId);
-    if(!ci) throw persistence_error("collection not found");
+    if(!ci) throw error("collection not found");
 
     *data = nullptr;
     saveChunk(*data, dataSize, ci);
@@ -2568,7 +2564,7 @@ public:
   template <typename T>
   void deleteObject(ObjectKey &key) {
     if(!key.isValid()) return;
-    if(key.refcount > 1) throw persistence_error("removeObject: refcount > 1");
+    if(key.refcount > 1) throw error("removeObject: refcount > 1");
     removeObject<T>(key.classId, key.objectId);
   }
 
@@ -2576,7 +2572,7 @@ public:
   void deleteObject(std::shared_ptr<T> obj) {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
     if(!key->isValid()) return;
-    if(key->refcount > 1) throw persistence_error("removeObject: refcount > 1");
+    if(key->refcount > 1) throw error("removeObject: refcount > 1");
     removeObject<T>(key->classId, key->objectId);
   }
 
@@ -2768,7 +2764,7 @@ struct ValueKeyedStorage : public StoreAccessPropertyKey
     ValueTraits<V>::putBytes(propBuf, val);
 
     if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
+      throw error("data was not saved");
   }
   void load(Transaction *tr, ReadBuf &buf,
             ClassId classId, ObjectId objectId, void *obj, const PropertyAccessBase *pa, StoreMode mode) override
@@ -2806,7 +2802,7 @@ struct ValueKeyedStorage<T, std::vector<V>> : public StoreAccessPropertyKey
       for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
 
       if(!tr->putData(classId, objectId, pa->id, propBuf))
-        throw persistence_error("data was not saved");
+        throw error("data was not saved");
     }
   }
   void load(Transaction *tr, ReadBuf &buf,
@@ -2849,7 +2845,7 @@ struct ValueKeyedStorage<T, std::set<V>> : public StoreAccessPropertyKey
       for(auto v : val) ValueTraits<V>::putBytes(propBuf, v);
 
       if(!tr->putData(classId, objectId, pa->id, propBuf))
-        throw persistence_error("data was not saved");
+        throw error("data was not saved");
     }
   }
   void load(Transaction *tr, ReadBuf &buf,
@@ -3298,7 +3294,7 @@ public:
 
     //put vector into a separate property key
     if(!tr->putData(classId, objectId, pa->id, tr->writeBuf()))
-      throw persistence_error("data was not saved");
+      throw error("data was not saved");
 
     tr->popWriteBuf();
   }
@@ -3503,7 +3499,7 @@ public:
 
     //vector goes into a separate property key
     if(!tr->putData(classId, objectId, pa->id, propBuf))
-      throw persistence_error("data was not saved");
+      throw error("data was not saved");
 
     //cleanup orphaned objects
     for(auto &key : oldKeys) {

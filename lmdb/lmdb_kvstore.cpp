@@ -298,7 +298,7 @@ protected:
   }
 
   bool erase() {
-    throw persistence_error("not implemented");
+    throw error("not implemented");
   }
 
   void close() {
@@ -410,7 +410,7 @@ protected:
         rb.start(dataval.data<byte_t>(), dataval.size());
       }
       else {
-        throw new persistence_error("corrupted vector: item not found");
+        throw new error("corrupted vector: item not found");
       }
     }
   }
@@ -428,7 +428,7 @@ protected:
         buf.start(dataval.data<byte_t>(), dataval.size());
       }
       else {
-        throw new persistence_error("corrupted vector: item not found");
+        throw new error("corrupted vector: item not found");
       }
     }
   }
@@ -552,7 +552,7 @@ KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
     return new KeyValueStoreImpl(storeId, location, name, options);
   }
   catch(::lmdb::error &err) {
-    throw persistence_error(err.what());
+    throw error(err.what());
   }
 }
 
@@ -592,7 +592,7 @@ KeyValueStoreImpl::KeyValueStoreImpl(StoreId storeId, string location, string na
     m_env.open(m_dbpath.c_str(), m_flags, 0664);
   }
   catch(::lmdb::runtime_error e) {
-    throw persistence_error("error opening database", e.what());
+    throw error("error opening database", e.what());
   }
 
   MDB_stat envstat;

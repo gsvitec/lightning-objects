@@ -20,7 +20,6 @@
 #ifndef FLEXIS_KVWRITEBUF_H
 #define FLEXIS_KVWRITEBUF_H
 
-#include "../persistence_error.h"
 #include <string.h>
 #include <memory>
 
@@ -283,7 +282,7 @@ public:
     size_t sz = m_appendptr - m_data;
     if(sz > m_allocsize) {
       if(m_growsize == 0)
-        throw persistence_error("memory exhausted");
+        throw std::exception("memory exhausted");
 
       m_allocsize += m_growsize;
       m_data = (byte_t *)realloc(m_data, m_allocsize);

@@ -271,7 +271,7 @@ namespace kv {
 static StoreId storeId = 0;
 StoreId nextStoreId() {
   if(storeId == MAX_DATABASES)
-    throw persistence_error("maximum number of databases reached");
+    throw error("maximum number of databases reached");
 
   StoreId ret = storeId;
   storeId++;
@@ -445,10 +445,10 @@ void WriteTransaction::deleteCollection(ObjectId collectionId)
   if(ci) {
     m_collectionInfos.erase(collectionId);
     if(!remove(COLLINFO_CLSID, collectionId, 0))
-      throw persistence_error("error deleting collection info");
+      throw error("error deleting collection info");
     for(auto chunk : ci->chunkInfos)
       if(!remove(COLLECTION_CLSID, collectionId, chunk.chunkId))
-        throw persistence_error("error deleting collection chunk");
+        throw error("error deleting collection chunk");
   }
 }
 
@@ -462,7 +462,7 @@ void WriteTransaction::startChunk(CollectionInfo *collectionInfo, size_t chunkSi
   chunkSize += ChunkHeader_sz;
 
   if(!allocData(COLLECTION_CLSID, collectionInfo->collectionId, collectionInfo->nextChunkId, chunkSize, &data))
-    throw persistence_error("allocData failed");
+    throw error("allocData failed");
 
   collectionInfo->chunkInfos.push_back(ChunkInfo(
       collectionInfo->nextChunkId, collectionInfo->nextStartIndex, elementCount, chunkSize));
@@ -592,7 +592,7 @@ void CollectionAppenderBase::startChunk(size_t size)
 
     m_collectionInfo->nextChunkId++;
   }
-  else throw persistence_error("allocData failed");
+  else throw error("allocData failed");
 
   m_elementCount = 0;
 }
