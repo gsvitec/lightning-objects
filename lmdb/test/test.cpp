@@ -232,6 +232,40 @@ void testObjectMappings(KeyValueStore *kv)
   }
 }
 
+void testCustomValueTypes(KeyValueStore *kv)
+{
+  ObjectKey key;
+  {
+    VariableSizeObject vo;
+    vo.number = 1;
+    vo.name = "HansOtto";
+    vo.vtest.number = 22;
+    vo.vtest.name = "Gabi";
+    vo.vtest2.number = 1.55;
+    vo.vtest2.number2 = 3.55;
+
+    auto wtxn = kv->beginWrite();
+
+    wtxn->saveObject(vo, key);
+
+    wtxn->commit();
+  }
+  {
+    auto rtxn = kv->beginRead();
+
+    VariableSizeObject *vo = rtxn->getObject<VariableSizeObject>(key);
+    assert(vo->number == 1);
+    assert(vo->name == "HansOtto");
+    assert(vo->vtest.number == 22);
+    assert(vo->vtest.name == "Gabi");
+    assert(vo->vtest2.number == (float)1.55);
+    assert(vo->vtest2.number2 == (float)3.55);
+
+    rtxn->end();
+    delete vo;
+  }
+}
+
 void testFlexisProperties(KeyValueStore *kv)
 {
   flexis::player::SourceInfo si;
@@ -1399,12 +1433,33 @@ void testCompatibleDatabase(ObjectKey key)
 
 void test_classupdate();
 
+using namespace lightningobjects::valuetest;
+
 int main()
 {
   //test_classupdate();
 
   KeyValueStore *kv = lmdb::KeyValueStore::Factory{0, ".", "test"};
 #if 1
+
+  //be a little nasty with type registrations
+  kv->putTypes<ValueTest>();
+  kv->putTypes<ValueTest, ValueTest2>();
+  kv->putTypes<ValueTest2, ValueTest>();
+  kv->putTypes<ValueTest3>();
+  //this will create a second chunk
+  kv->putTypes<ValueTest4, ValueTest5, ValueTest6, ValueTest7, ValueTest8, ValueTest9, ValueTest10, ValueTest11, ValueTest12>();
+  //now validate once more
+  kv->putTypes<ValueTest, ValueTest2, ValueTest3, ValueTest8, ValueTest4, ValueTest5, ValueTest6, ValueTest7, ValueTest12>();
+
+  cout << "ValueTest::id: " << TypeTraits<ValueTest>::id << endl;
+  cout << "ValueTest2::id: " << TypeTraits<ValueTest2>::id << endl;
+  cout << "ValueTest3::id: " << TypeTraits<ValueTest3>::id << endl;
+  cout << "ValueTest4::id: " << TypeTraits<ValueTest4>::id << endl;
+  cout << "ValueTest5::id: " << TypeTraits<ValueTest5>::id << endl;
+  cout << "ValueTest6::id: " << TypeTraits<ValueTest6>::id << endl;
+  cout << "ValueTest7::id: " << TypeTraits<ValueTest7>::id << endl;
+  cout << "ValueTest8::id: " << TypeTraits<ValueTest8>::id << endl;
 
   kv->putSchema<ObjectPropertyTest,
       RefCountingTest,
@@ -1470,6 +1525,7 @@ int main()
   testDataIterProperty(kv);
   testClassCursor(kv);
   testObjectMappings(kv);
+  testCustomValueTypes(kv);
 
   ObjectKey key = setupTestCompatibleDatabase(kv);
   delete kv;

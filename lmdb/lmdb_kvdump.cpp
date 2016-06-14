@@ -111,6 +111,12 @@ void make_propertyinfo(MDB_val *mdbVal, PropertyInfo &pi)
     pi.className = (const char *)readPtr;
 }
 
+struct TypeInfo {
+  string name;
+  ClassId typeId;
+  PropertyId chunkId;
+};
+
 struct DatabaseInfo
 {
   string m_dbpath;
@@ -120,6 +126,7 @@ struct DatabaseInfo
   ::lmdb::dbi m_dbi_data = 0;
 
   vector<ClassInfo> classInfos;
+  vector<TypeInfo> typeInfos;
   vector<kv::CollectionInfo *> collectionInfos;
 
   DatabaseInfo(string location, string name, size_t mapsize) : m_env(::lmdb::env::create())
@@ -165,7 +172,10 @@ struct DatabaseInfo
       bool first = true;
       ::lmdb::val dupkey;
 
-      classInfos.push_back(ClassInfo(string(key.data(), key.size())));
+      string cname(key.data(), key.size());
+      if(cname == "schema_compatibility::ValuetypeInfo") continue;
+
+      classInfos.push_back(ClassInfo(cname));
       ClassInfo &ci = classInfos.back();
       for (bool read = cursor.get(dupkey, val, MDB_FIRST_DUP); read; read = cursor.get(dupkey, val, MDB_NEXT_DUP)) {
         if(first) {
@@ -264,6 +274,38 @@ struct DatabaseInfo
     cursor.close();
     txn.abort();
   }
+
+  void loadValueTypeInfos()
+  {
+    auto txn = ::lmdb::txn::begin(m_env, nullptr, MDB_RDONLY);
+
+    ::lmdb::val key, val;
+    key.assign("schema_compatibility::ValuetypeInfo");
+
+    auto cursor = ::lmdb::cursor::open(txn, m_dbi_meta);
+    if(cursor.get(key, val, MDB_SET)) {
+      do {
+        ReadBuf buf;
+        buf.start(val.data<byte_t>(), val.size());
+
+        PropertyId chunkId = buf.readInteger<PropertyId>(PropertyId_sz);
+        buf.read(ClassId_sz);
+
+        size_t count = buf.readRaw<size_t>();
+        for(size_t i=0; i < count; i++) {
+          TypeInfo ti;
+
+          ti.name = buf.readCString();
+          ti.typeId = buf.readRaw<ClassId>();
+          ti.chunkId = chunkId;
+
+          typeInfos.push_back(ti);
+        }
+      } while(cursor.get(key, val, MDB_NEXT_DUP));
+    }
+    cursor.close();
+    txn.abort();
+  }
 };
 
 }
@@ -284,24 +326,26 @@ void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId);
 void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId);
 void dumpCollectionInfo(DatabaseInfo &dbinfo, ObjectId collId);
 void dumpCollectionInfos(DatabaseInfo &dbinfo);
+void dumpValueTypeInfos(DatabaseInfo &dbinfo);
 
 int main(int argc, char* argv[])
 {
   string opt = argc > 3 ? argv[3] : "";
   bool found = opt.empty();
-  for(auto o : {"c", "n", "m", "o", "ci"}) {
+  for(auto o : {"c", "n", "m", "o", "ci", "ti"}) {
     if(opt == o) {
       found = true;
       break;
     }
   }
   if(!found || (opt == "o" || opt == "m") && argc < 5 || argc < 3) {
-    cout << "usage: lo_dump <path> <name> [c|n|m <classId>|o <classId>] | [ci|ci <collectionId>]" << endl;
+    cout << "usage: lo_dump <path> <name> [c|n|m <classId>|o <classId>] | [ci|ci <collectionId>] | ti" << endl;
     cout << "c: sort by instance count" << endl;
     cout << "n: sort by class name" << endl;
     cout << "m: dump metadata for class <classId>" << endl;
     cout << "o: dump object simple data for class <classId>" << endl;
     cout << "ci: dump collection infos. If collectionId is given, dump chunk infos for that collections" << endl;
+    cout << "ti: dump value type infos" << endl;
     return -1;
   }
 
@@ -330,6 +374,10 @@ int main(int argc, char* argv[])
         dumpCollectionInfo(dbinfo, collId);
       }
       else  dumpCollectionInfos(dbinfo);
+    }
+    else if(opt == "ti") {
+      dbinfo.loadValueTypeInfos();
+      dumpValueTypeInfos(dbinfo);
     }
     else {
       dumpClassesMeta(dbinfo, opt);
@@ -380,6 +428,18 @@ void dumpCollectionInfos(DatabaseInfo &dbinfo)
     cout << "collection " << setw(8) << ss.str();
     cout << setw(6) << ci->chunkInfos.size() << setw(12) << " chunks";
     cout << setw(8) << ci->count() << " elements" << endl;
+  }
+}
+
+void dumpValueTypeInfos(DatabaseInfo &dbinfo)
+{
+  size_t maxSize = 0;
+  for(auto &ti : dbinfo.typeInfos)
+    if(ti.name.length() > maxSize) maxSize = ti.name.length();
+
+  for(auto &ti : dbinfo.typeInfos) {
+    cout << setw(maxSize+5) << std::resetiosflags(std::ios::adjustfield) << setiosflags(std::ios::left) << ti.name;
+    cout << setw(7) << "TypeId: " << setw(8) << ti.typeId << setw(7) << "ChunkId: " << setw(8) << ti.chunkId << endl;
   }
 }
 

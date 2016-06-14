@@ -103,54 +103,38 @@ struct PropertyType
 };
 
 template <typename T> struct TypeTraits;
-#define TYPETRAITS template <> struct TypeTraits
-#define TYPETRAITSV template <> struct TypeTraits<std::vector
-#define TYPETRAITSS template <> struct TypeTraits<std::set
 
-#define TYPEDEF(_id, _sz) static const ClassId id=_id; static const unsigned byteSize=_sz; static const bool isVect=false;
-#define TYPEDEFV(_id, _sz) static const ClassId id=_id; static const unsigned byteSize=_sz; static const bool isVect=true;
+/**
+ * macro for declaring basic types with static id. Also declares corresponding vector and set container types.
+ */
+#define KV_TYPEDEF_SV(__type, __id, __bytes) template <> struct TypeTraits<__type> {\
+static const ClassId id=__id; static const unsigned byteSize=__bytes; static const bool isVect=false;\
+}; \
+template <> struct TypeTraits<std::vector<__type>> {\
+static const ClassId id=__id; static const unsigned byteSize=__bytes; static const bool isVect=true;\
+}; \
+template <> struct TypeTraits<std::set<__type>> {\
+static const ClassId id=__id; static const unsigned byteSize=__bytes; static const bool isVect=true;\
+};
 
-TYPETRAITS<short>             {TYPEDEF(1, 2);};
-TYPETRAITS<unsigned short>    {TYPEDEF(2, 2);};
-TYPETRAITS<int>               {TYPEDEF(3, 4);};
-TYPETRAITS<unsigned int>      {TYPEDEF(4, 4);};
-TYPETRAITS<long>              {TYPEDEF(5, 8);};
-TYPETRAITS<unsigned long>     {TYPEDEF(6, 8);};
-TYPETRAITS<long long>         {TYPEDEF(7, 8);};
-TYPETRAITS<unsigned long long>{TYPEDEF(8, 8);};
-TYPETRAITS<bool>              {TYPEDEF(9, 1);};
-TYPETRAITS<float>             {TYPEDEF(10, 4);};
-TYPETRAITS<double>            {TYPEDEF(11, 8);};
-TYPETRAITS<const char *>      {TYPEDEF(12, 0);};
-TYPETRAITS<std::string>       {TYPEDEF(13, 0);};
+/*
+ * predefined basic types with static ids. Static ids must stay below 100
+ */
+KV_TYPEDEF_SV(short, 			         1, 2)
+KV_TYPEDEF_SV(unsigned short, 	   2, 2)
+KV_TYPEDEF_SV(int, 			           3, 4)
+KV_TYPEDEF_SV(unsigned int, 		   4, 4)
+KV_TYPEDEF_SV(long, 			         5, 8)
+KV_TYPEDEF_SV(unsigned long, 		   6, 8)
+KV_TYPEDEF_SV(long long, 		       7, 8)
+KV_TYPEDEF_SV(unsigned long long,	 8, 8)
+KV_TYPEDEF_SV(bool, 			         9, 1)
+KV_TYPEDEF_SV(float, 			        10, 4)
+KV_TYPEDEF_SV(double, 			      11, 8)
+KV_TYPEDEF_SV(const char *, 		  12, 0)
+KV_TYPEDEF_SV(std::string, 		    13, 0)
 
-TYPETRAITSV<short>>             {TYPEDEFV(1, 2);};
-TYPETRAITSV<unsigned short>>    {TYPEDEFV(2, 2);};
-TYPETRAITSV<int>>               {TYPEDEFV(3, 4);};
-TYPETRAITSV<unsigned int>>      {TYPEDEFV(4, 4);};
-TYPETRAITSV<long>>              {TYPEDEFV(5, 8);};
-TYPETRAITSV<unsigned long>>     {TYPEDEFV(6, 8);};
-TYPETRAITSV<long long>>         {TYPEDEFV(7, 8);};
-TYPETRAITSV<unsigned long long>>{TYPEDEFV(8, 8);};
-TYPETRAITSV<bool>>              {TYPEDEFV(9, 1);};
-TYPETRAITSV<float>>             {TYPEDEFV(10, 4);};
-TYPETRAITSV<double>>            {TYPEDEFV(11, 8);};
-TYPETRAITSV<const char *>>      {TYPEDEFV(12, 0);};
-TYPETRAITSV<std::string>>       {TYPEDEFV(13, 0);};
-
-TYPETRAITSS<short>>             {TYPEDEFV(1, 2);};
-TYPETRAITSS<unsigned short>>    {TYPEDEFV(2, 2);};
-TYPETRAITSS<int>>               {TYPEDEFV(3, 4);};
-TYPETRAITSS<unsigned int>>      {TYPEDEFV(4, 4);};
-TYPETRAITSS<long>>              {TYPEDEFV(5, 8);};
-TYPETRAITSS<unsigned long>>     {TYPEDEFV(6, 8);};
-TYPETRAITSS<long long>>         {TYPEDEFV(7, 8);};
-TYPETRAITSS<unsigned long long>>{TYPEDEFV(8, 8);};
-TYPETRAITSS<bool>>              {TYPEDEFV(9, 1);};
-TYPETRAITSS<float>>             {TYPEDEFV(10, 4);};
-TYPETRAITSS<double>>            {TYPEDEFV(11, 8);};
-TYPETRAITSS<const char *>>      {TYPEDEFV(12, 0);};
-TYPETRAITSS<std::string>>       {TYPEDEFV(13, 0);};
+static const ClassId MIN_VALUETYPE = 100;
 
 //these assertions must hold because certain elmements are written/read natively
 static_assert(sizeof(ClassId) == TypeTraits<ClassId>::byteSize, "ClassId: byteSize must match native size");
@@ -252,6 +236,9 @@ struct StoreAccessBase
                     StoreMode mode=StoreMode::force_none) = 0;
 };
 
+/**
+ * storage access class that stores to dev/null
+ */
 struct NullStorage : public StoreAccessBase {
   NullStorage() : StoreAccessBase(StoreLayout::none, 0) { }
 
@@ -656,8 +643,12 @@ struct ClassData
 /**
  * metadata for mapped classes. Non-templated superclass for ClassInfo
  */
-struct AbstractClassInfo {
-  static const ClassId MIN_USER_CLSID = 10; //ids below are reserved
+struct AbstractClassInfo
+{
+  /**
+   * minimum id for user-mapped classes. Values below are reserved for stuff like collections
+   */
+  static const ClassId MIN_USER_CLSID = 10;
 
   AbstractClassInfo(const AbstractClassInfo &other) = delete;
 

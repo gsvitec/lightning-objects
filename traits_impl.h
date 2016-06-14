@@ -16,6 +16,8 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef TRAITS_IMPL_INCLUDED
+#define TRAITS_IMPL_INCLUDED
 
 #include "prop_decl.h"
 
@@ -251,3 +253,20 @@ const PropertyAccessBase *ClassTraits<cls>::propname = new propkind<cls, proptyp
 #define OBJECT_ID(cls, propname) \
 const bool ClassTraits<cls>::traits_has_objid = true; \
 const PropertyAccessBase *ClassTraits<cls>::propname = new ObjectIdAssign<cls, &cls::propname>();
+
+/**
+ * macro for declaring basic types. If schema compatibility checks are required, the type must be registered with
+ * store#putTypes() before being used
+ *
+ * example usage: KV_TYPEDEF(my::Type, 4, false)
+ *
+ * @param __type the data type to declare. Fully qualified class name required!
+ * @param __bytes the byte size of one element, 0 if variable
+ * @param __isCont true if this is a container type
+ */
+#define KV_TYPEDEF(__type, __bytes, __isCont) template <> struct TypeTraits<__type> {\
+static ClassId id; static const char *name; static const unsigned byteSize=__bytes; static const bool isVect=__isCont;\
+}; \
+ClassId TypeTraits<__type>::id = 0; const char * TypeTraits<__type>::name = #__type;
+
+#endif //TRAITS_IMPL_INCLUDED

@@ -16,6 +16,8 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef TRAITS_DECL_INCLUDED
+#define TRAITS_DECL_INCLUDED
 
 /////////////////////////////////////////////////////////////////////////////////////////////
 // declaration-only macros for inclusion in application files. If mappings are referenced from multiple
@@ -75,3 +77,10 @@ static const PropertyAccessBase prop_decl(__VA_ARGS__) ;};
 
 /** @see header traits_impl.h */
 #define OBJECT_ID(_cls, prop)
+
+/** @see header traits_impl.h */
+#define KV_TYPEDEF(__type, __bytes, __isCont) template <> struct TypeTraits<__type> {\
+static ClassId id; static const char *name; static const unsigned byteSize=__bytes; static const bool isVect=__isCont;\
+};
+
+#endif //TRAITS_DECL_INCLUDED

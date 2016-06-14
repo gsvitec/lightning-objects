@@ -555,7 +555,8 @@ void CollectionCursorBase::objectBufSeek(size_t position)
 }
 
 CollectionAppenderBase::CollectionAppenderBase(WriteTransaction *wtxn, ObjectId &collectionId, size_t chunkSize)
-    : m_chunkSize(chunkSize), m_tr(wtxn), m_writeBuf(wtxn->writeBuf()), m_collectionId(collectionId)
+    : m_chunkSize(chunkSize ? chunkSize : wtxn->store.getOptimalChunkSize()),
+      m_tr(wtxn), m_writeBuf(wtxn->writeBuf()), m_collectionId(collectionId)
 {
   m_elementCount = 0;
 }

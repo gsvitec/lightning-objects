@@ -518,6 +518,7 @@ class KeyValueStoreImpl : public KeyValueStore
 
   size_t m_curMapSize;
   unsigned m_pageSize;
+  unsigned m_maxKeySize;
   unsigned m_writeBlocks = 0;
 
   PropertyMetaInfoPtr make_propertyinfo(MDB_val *mdbVal);
@@ -531,6 +532,8 @@ protected:
       const PropertyAccessBase ** currentProps[],
       unsigned numProps,
       vector<PropertyMetaInfoPtr> &propertyInfos) override;
+
+  void registerTypes(std::unordered_map<std::string, kv::ClassId *> typeinfos) override;
 
   void checkAvailableSpace(unsigned needsKBs);
 
@@ -598,6 +601,8 @@ KeyValueStoreImpl::KeyValueStoreImpl(StoreId storeId, string location, string na
   MDB_stat envstat;
   mdb_env_stat(m_env, &envstat);
   m_pageSize = envstat.ms_psize;
+
+  m_maxKeySize = ::lmdb::env_get_max_keysize(m_env);
 
   //make sure we've got room to grow
   checkAvailableSpace(0);
@@ -1099,6 +1104,129 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     classInfo->data[id].maxObjectId = 0;
   }
+}
+
+static const size_t type_header_sz = PropertyId_sz + ClassId_sz + sizeof(size_t);
+
+/**
+ * register value types. Registered types are written into the classmeta sub-database with a key
+ * 'schema_compatibility::ValuetypeInfo'. Since data size for MDB_DUPSORT databases is limited to
+ * max_keysize, we spread types over as many duplicate entries (chunks) as required. ValueType
+ * chunks always have a size of max_keysize.
+ *
+ * A ValueType chunk consists of a header and a data area. The header has the following structure:
+ *
+ * name       type        description
+ * ================================================
+ * chunkId    PropertyId  chunk number starting at 0
+ * classId    ClassId     unused, always 0
+ * count      size_t      number of type entries in this chunk
+ *
+ * the data area consists of a sequence of [count] entries of the following form:
+ *
+ * name           description
+ * ================================================
+ * typename       0-terminated string
+ * id             type Id, starting at 100
+ *
+ * This function may be called multiple times. Each time it will read the metadata and compare it with the
+ * types passed in as parameter. For types that already have an id > 0, a check will be performed that the
+ * saved id is equal. Those that are 0 and have a saved counterpart will be assigned the saved id.
+ * The rest will be assigned a new id and appended to the chunk data.
+ *
+ * @param typeinfos the types to register/validate
+ */
+void KeyValueStoreImpl::registerTypes(std::unordered_map<std::string, kv::ClassId *> typeinfos)
+{
+  auto txn = ::lmdb::txn::begin(m_env, nullptr);
+
+  ::lmdb::val key, val;
+  key.assign("schema_compatibility::ValuetypeInfo");
+
+  ClassId tid = MIN_VALUETYPE-1;
+  PropertyId chunkId = 0;
+  size_t oldsize = 0, oldcount = 0;
+
+  //assign existing typeids
+  auto cursor = ::lmdb::cursor::open(txn, m_dbi_meta);
+  if(cursor.get(key, val, MDB_SET)) {
+    do {
+      ReadBuf buf;
+      buf.start(val.data<byte_t>(), val.size());
+
+      chunkId = buf.readInteger<PropertyId>(PropertyId_sz);
+      buf.read(ClassId_sz);
+
+      oldsize = 0;
+      oldcount = buf.readRaw<size_t>();
+
+      for(size_t i=0; i < oldcount; i++) {
+        string nm = buf.readCString();
+        tid = buf.readRaw<ClassId>();
+        oldsize += ClassId_sz + nm.length() + 1;
+
+        if(typeinfos.count(nm)) {
+          ClassId preTid = *(typeinfos[nm]);
+
+          //validate already assigned id
+          if(preTid && preTid != tid)
+            throw kv::error("custom value type already has a conflicting id");
+
+          *(typeinfos[nm]) = tid;
+        }
+      }
+    } while(cursor.get(key, val, MDB_NEXT_DUP));
+  }
+  while(true) {
+    //append new typeids
+    std::unordered_map<std::string, kv::ClassId> newtypes;
+    bool spillover = false;
+    size_t addsize = 0, threshh = oldsize + 1 + ClassId_sz + type_header_sz;
+
+    for(auto it = typeinfos.cbegin(); it != typeinfos.cend(); it++) {
+      auto p = *it;
+      if(!*p.second) {
+        if(addsize + p.first.length() + threshh > m_maxKeySize) {
+          spillover = true;
+          break;
+        }
+        addsize += p.first.length() + 1 + ClassId_sz;
+        *p.second = ++tid;
+        newtypes[p.first] = tid;
+      }
+    }
+    if(addsize) {
+      byte_t buf[m_maxKeySize];
+      WriteBuf wb(buf, m_maxKeySize);
+      wb.appendInteger(chunkId, PropertyId_sz);
+      wb.appendInteger(0, ClassId_sz);
+      wb.appendRaw(oldcount + newtypes.size());
+
+      if(oldsize) {
+        byte_t *olddata = val.data<byte_t>() + type_header_sz;
+        wb.append(olddata, oldsize);
+      }
+      for(auto &nt : newtypes) {
+        wb.appendCString(nt.first.c_str());
+        wb.appendRaw(nt.second);
+      }
+
+      ::lmdb::val newval{buf, m_maxKeySize};
+      ::lmdb::cursor_put(cursor.handle(), key, newval, oldsize ? MDB_CURRENT :  0);
+
+      if(spillover) {
+        oldsize = oldcount = 0;
+        chunkId++;
+      }
+    }
+    else if(spillover) {
+      oldsize = oldcount = 0;
+      chunkId++;
+    }
+    else break;
+  }
+  cursor.close();
+  txn.commit();
 }
 
 } //lmdb

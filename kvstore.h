@@ -54,9 +54,14 @@ struct has_objid<T,
     typename std::enable_if<T::traits_has_objid, bool>::type> : std::true_type
 {};
 
+/**
+ * predefined ClassId for collections
+ */
 static const kv::ClassId COLLECTION_CLSID = 1;
+/**
+ * predefined ClassId for collection metadata
+ */
 static const kv::ClassId COLLINFO_CLSID = 2;
-static const size_t DEFAULT_CHUNKSIZE = 1024 * 2; //default chunksize. All data in one page
 
 /**
  * data structures and enums used during schema validation
@@ -247,6 +252,12 @@ protected:
       unsigned numProps,
       std::vector<PropertyMetaInfoPtr> &propertyInfos) = 0;
 
+  /**
+   * register custom value types. This function maybe called as often as required (or even more often). Each time
+   * it will read the custom type meta data, compare it against the types passed in as parameter and write new types
+   */
+  virtual void registerTypes(std::unordered_map<std::string, kv::ClassId *> typeinfos) = 0;
+
 public:
   /**
    * @return the optimal chunk size, which is the current page size minus the chunk header
@@ -258,7 +269,7 @@ public:
 
 namespace put_schema {
 /*
- * helper structs for processing the variadic template list which is passed to KeyValueStore#putSchema
+ * helper structs for processing the variadic template list which is passed to KeyValueStore#putSchema/#putTypes
  */
 
 struct validate_info {
@@ -275,40 +286,52 @@ struct validate_info {
 
 //primary template
 template<typename... Sargs>
-struct register_type;
+struct collect_types;
 
 //worker template
 template<typename S>
-struct register_type<S>
+struct collect_types<S>
 {
-  using Traits = kv::ClassTraits<S>;
-
-  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos)
+  static void addClasses(kv::StoreId storeId, std::vector<validate_info> &vinfos)
   {
-    //collect infos
+    using Traits = kv::ClassTraits<S>;
+
     vinfos.push_back(
         validate_info(Traits::traits_info, &Traits::traits_data(storeId), Traits::traits_properties,
                       Traits::decl_props, Traits::num_decl_props));
 
     Traits::init();
   }
+  static void addValues(kv::StoreId storeId, std::unordered_map<std::string, kv::ClassId *> &vinfos)
+  {
+    using Traits = kv::TypeTraits<S>;
+    vinfos[Traits::name] = &Traits::id;
+  }
 };
 
 //helper for working the variadic temnplate list
 template<typename S, typename... Sargs>
-struct register_helper
+struct collect_helper
 {
-  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
-    register_type<S>().addTypes(storeId, vinfos);
-    register_type<Sargs...>().addTypes(storeId, vinfos);
+  static void addClasses(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
+    collect_types<S>().addClasses(storeId, vinfos);
+    collect_types<Sargs...>().addClasses(storeId, vinfos);
+  }
+  static void addValues(kv::StoreId storeId, std::unordered_map<std::string, kv::ClassId *> &vinfos) {
+    collect_types<S>().addValues(storeId, vinfos);
+    collect_types<Sargs...>().addValues(storeId, vinfos);
   }
 };
 
 //secondary template
 template<typename... Sargs>
-struct register_type {
-  static void addTypes(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
-    register_helper<Sargs...>().addTypes(storeId, vinfos);
+struct collect_types {
+  static void addClasses(kv::StoreId storeId, std::vector<validate_info> &vinfos) {
+    collect_helper<Sargs...>().addClasses(storeId, vinfos);
+  }
+
+  static void addValues(kv::StoreId storeId, std::unordered_map<std::string, kv::ClassId *> &vinfos) {
+    collect_helper<Sargs...>().addValues(storeId, vinfos);
   }
 };
 
@@ -426,7 +449,7 @@ public:
   void putSchema(kv::SchemaCompatibility requiredCompatibility=kv::SchemaCompatibility::write)
   {
     std::vector<put_schema::validate_info> vinfos;
-    put_schema::register_type<Cls...>::addTypes(id, vinfos);
+    put_schema::collect_types<Cls...>::addClasses(id, vinfos);
 
     schema_compatibility schemaError;
     for(auto &info : vinfos) {
@@ -450,6 +473,20 @@ public:
         if(info.classInfo->compatibility < requiredCompatibility)
           throw schemaError.make_error();
     }
+  }
+
+  /**
+   * register custom value types with the store. This call must precede the call to putSchema for all classes
+   * that use the value types (i.e., have mapped members of these types). The function may be called as often
+   * as required. Types that are passed in multiple times will only be validated but not re-written. Types
+   * that were not previously passed in (i.e., have a type id == 0) will either be assigned their already saved
+   * type id or a new one which is then appended to the metadata
+   */
+  template <typename... __Types>
+  void putTypes() {
+    std::unordered_map<std::string, kv::ClassId *> vinfos;
+    put_schema::collect_types<__Types...>::addValues(id, vinfos);
+    registerTypes(vinfos);
   }
 
   /**
@@ -1222,7 +1259,7 @@ public:
   V *data() {return m_data;}
 };
 
-#define RAWDATA_API_ASSERT static_assert(TypeTraits<T>::byteSize == sizeof(T), \
+#define RAWDATA_API_ASSERT(_T) static_assert(TypeTraits<_T>::byteSize == sizeof(_T), \
 "collection data access only supported for fixed-size types with native size equal byteSize");
 #define VALUEAPI_ASSERT(_X) static_assert(has_objid<ClassTraits<_X>>::value, \
 "class must define an OBJECT_ID mapping to be usable with value-based API");
@@ -1660,7 +1697,7 @@ public:
   template <typename T>
   size_t getDataCollection(ObjectId collectionId, size_t startIndex, size_t length, T* &data, bool *owned)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) return 0;
 
@@ -1771,7 +1808,7 @@ public:
   template <typename T>
   typename CollectionData<T>::Ptr getDataCollection(ObjectId collectionId, size_t startIndex, size_t length)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     void *data = nullptr;
     bool owned = false;
     CollectionInfo *ci = getCollectionInfo(collectionId);
@@ -2458,7 +2495,7 @@ public:
   template <typename T>
   ObjectId putDataCollection(const T* array, size_t arraySize)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
@@ -2480,7 +2517,7 @@ public:
   template <typename T>
   ObjectId putDataCollection(T ** array, size_t arraySize)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     CollectionInfo *ci = new CollectionInfo(++store.m_maxCollectionId);
     m_collectionInfos[ci->collectionId] = ci;
 
@@ -2532,7 +2569,7 @@ public:
   template <typename T>
   void appendDataCollection(ObjectId collectionId, const T *data, size_t dataSize)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) throw error("collection not found");
 
@@ -2553,7 +2590,7 @@ public:
   template <typename T>
   void appendDataCollection(ObjectId collectionId, T **data, size_t dataSize)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     CollectionInfo *ci = getCollectionInfo(collectionId);
     if(!ci) throw error("collection not found");
 
@@ -2708,11 +2745,11 @@ public:
    * create an appender for the given top-level object collection
    *
    * @param collectionId the id of a top-level collection
-   * @param chunkSize the chunk size
+   * @param chunkSize the chunk size. If 0, the optimal generic size will be calculated
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ObjectCollectionAppender<V>::Ptr appendCollection(
-      ObjectId &collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
+      ObjectId &collectionId, size_t chunkSize = 0)
   {
     return typename ObjectCollectionAppender<V>::Ptr(new ObjectCollectionAppender<V>(
         this, collectionId, chunkSize, &store.objectClassInfos, &store.objectProperties, ClassTraits<V>::traits_info->isPoly()));
@@ -2722,11 +2759,11 @@ public:
    * create an appender for the given top-level value collection
    *
    * @param collectionId the id of a top-level collection
-   * @param chunkSize the chunk size
+   * @param chunkSize the chunk size. if 0, the optimal generic size will be calculated
    * @return an appender over the contents of the collection.
    */
   template <typename V> typename ValueCollectionAppender<V>::Ptr appendValueCollection(
-      ObjectId &collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
+      ObjectId &collectionId, size_t chunkSize = 0)
   {
     return typename ValueCollectionAppender<V>::Ptr(new ValueCollectionAppender<V>(this, collectionId, chunkSize));
   }
@@ -2735,13 +2772,13 @@ public:
    * create an appender for the given top-level raw-data collection
    *
    * @param collectionId the id of a top-level collection
-   * @param chunkSize the keychunk size
+   * @param chunkSize the keychunk size. If 0, the optimal generic size will be calculated
    * @return an appender over the contents of the collection.
    */
   template <typename T> typename DataCollectionAppender<T>::Ptr appendDataCollection(
-      ObjectId &collectionId, size_t chunkSize = DEFAULT_CHUNKSIZE)
+      ObjectId &collectionId, size_t chunkSize = 0)
   {
-    RAWDATA_API_ASSERT
+    RAWDATA_API_ASSERT(T)
     return typename DataCollectionAppender<T>::Ptr(new DataCollectionAppender<T>(this, collectionId, chunkSize));
   }
 };

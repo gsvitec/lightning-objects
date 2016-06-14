@@ -180,6 +180,56 @@ struct SourceInfo {
 
 } //flexis
 
+namespace lightningobjects {
+namespace valuetest {
+
+struct ValueTest {
+  int number;
+  std::string name;
+};
+struct ValueTest2 {
+  float number;
+  float number2;
+};
+struct ValueTest3 {
+  float number;
+  float number2;
+};
+struct ValueTest4 {
+  float number;
+  float number2;
+};
+struct ValueTest5 {
+  float number;
+  float number2;
+};
+struct ValueTest6 {
+  float number;
+  float number2;
+};
+struct ValueTest7 {
+  float number;
+  float number2;
+};
+struct ValueTest8 {
+  float number;
+  float number2;
+};
+struct ValueTest9 {
+  double number;
+};
+struct ValueTest10 {
+  double number;
+};
+struct ValueTest11 {
+  double number;
+};
+struct ValueTest12 {
+  double number;
+};
+}
+}
+
 struct OtherThing {
   std::string name;
   double dvalue = 7.99765;
@@ -234,6 +284,8 @@ struct VariableSizeObject {
 
   unsigned number;
   std::string name;
+  lightningobjects::valuetest::ValueTest vtest;
+  lightningobjects::valuetest::ValueTest2 vtest2;
 
   VariableSizeObject() : number(0), name("") {}
   VariableSizeObject(unsigned number, const char *nm) : number(number), name(nm) {}
@@ -504,6 +556,258 @@ struct DataIterImpl : public DataIter<V>, public IterPropertyBackend {
   }
 };
 
+/**
+ * declare a few custom value types so we get a real test
+ */
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest> : public ValueTraitsBase<false>
+{
+  RAWDATA_API_ASSERT(int)
+
+  static size_t size(ReadBuf &buf) {
+    return buf.strlen() + 1 + sizeof(int);
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest &val) {
+    return val.name.length() + 1 + sizeof(int);
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest &val) {
+    val.name = buf.readCString();
+    val.number = buf.readRaw<int>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest &val) {
+    buf.appendCString(val.name.c_str());
+    buf.appendRaw(val.number);
+  }
+};
+
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest2, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest2> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest2 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest2 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest2 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest3, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest3> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest3 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest3 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest3 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest4, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest4> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest4 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest4 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest4 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest5, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest5> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest5 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest5 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest5 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest6, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest6> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest6 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest6 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest6 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest7, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest7> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest7 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest7 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest7 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest8, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest8> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest8 &val) {
+    return TypeTraits<float>::byteSize * 2;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest8 &val) {
+    val.number = buf.readRaw<float>();
+    val.number2 = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest8 &val) {
+    buf.appendRaw(val.number);
+    buf.appendRaw(val.number2);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest9, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest9> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest9 &val) {
+    return TypeTraits<float>::byteSize;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest9 &val) {
+    val.number = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest9 &val) {
+    buf.appendRaw(val.number);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest10, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest10> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest10 &val) {
+    return TypeTraits<float>::byteSize;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest10 &val) {
+    val.number = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest10 &val) {
+    buf.appendRaw(val.number);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest11, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest11> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest11 &val) {
+    return TypeTraits<float>::byteSize;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest11 &val) {
+    val.number = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest11 &val) {
+    buf.appendRaw(val.number);
+  }
+};
+KV_TYPEDEF(lightningobjects::valuetest::ValueTest12, 0, false)
+template <>
+struct ValueTraits<lightningobjects::valuetest::ValueTest12> : public ValueTraitsBase<true>
+{
+  RAWDATA_API_ASSERT(float)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<float>::byteSize;
+  }
+  static size_t size(const lightningobjects::valuetest::ValueTest12 &val) {
+    return TypeTraits<float>::byteSize;
+  }
+  static void getBytes(ReadBuf &buf, lightningobjects::valuetest::ValueTest12 &val) {
+    val.number = buf.readRaw<float>();
+  }
+  static void putBytes(WriteBuf &buf, lightningobjects::valuetest::ValueTest12 &val) {
+    buf.appendRaw(val.number);
+  }
+};
+
+
 START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
   MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
   MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
@@ -578,10 +882,12 @@ START_MAPPING(FixedSizeObject2, objectId, number1, number2)
   MAPPED_PROP(FixedSizeObject2, ValuePropertyEmbeddedAssign, double, number2)
 END_MAPPING(FixedSizeObject2)
 
-START_MAPPING(VariableSizeObject, objectId, number, name)
+START_MAPPING(VariableSizeObject, objectId, number, name, vtest, vtest2)
   OBJECT_ID(VariableSizeObject, objectId)
   MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, unsigned, number)
   MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, std::string, name)
+  MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, lightningobjects::valuetest::ValueTest, vtest)
+  MAPPED_PROP(VariableSizeObject, ValuePropertyEmbeddedAssign, lightningobjects::valuetest::ValueTest2, vtest2)
 END_MAPPING(VariableSizeObject)
 
 START_MAPPING(SomethingWithEmbeddedObjects, fso, vso)

@@ -119,7 +119,7 @@ public:
   }
 
 protected:
-  virtual void loadSaveClassMeta(kv::StoreId storeId, kv::AbstractClassInfo *classInfo, const PropertyAccessBase ***currentProps,
+  void loadSaveClassMeta(kv::StoreId storeId, kv::AbstractClassInfo *classInfo, const PropertyAccessBase ***currentProps,
                                  unsigned numProps, std::vector<PropertyMetaInfoPtr> &propertyInfos) override
   {
     switch(test_no) {
@@ -169,6 +169,10 @@ protected:
         propertyInfos.push_back(make_propertyinfo<TestClass1>(5, "test1_key", true, StoreLayout::property));
         break;
     }
+  }
+
+  void registerTypes(std::unordered_map<std::string, kv::ClassId *> typeinfos) override {
+
   }
 };
 
