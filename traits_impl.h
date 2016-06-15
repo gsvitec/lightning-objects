@@ -20,6 +20,7 @@
 #define TRAITS_IMPL_INCLUDED
 
 #include "prop_decl.h"
+#include "traits_undef.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // horrible macro mess used to make the mapping macro language a little

@@ -333,7 +333,8 @@ void WriteTransaction::writeCollections()
 {
   for(auto &it : m_collectionInfos) {
     CollectionInfo *ci = it.second;
-    for(auto app : ci->appenders) app->close();
+    for(auto app : ci->appenders) app->close(false);
+    ci->appenders.clear();
 
     size_t sz = ObjectId_sz + sizeof(size_t) + ci->chunkInfos.size() * (PropertyId_sz + 3 * sizeof(size_t));
     writeBuf().start(sz);
@@ -598,7 +599,7 @@ void CollectionAppenderBase::startChunk(size_t size)
   m_elementCount = 0;
 }
 
-void CollectionAppenderBase::close()
+void CollectionAppenderBase::close(bool erase)
 {
   if(m_collectionInfo && !m_collectionInfo->chunkInfos.empty()) {
     ChunkInfo &ci = m_collectionInfo->chunkInfos.back();
@@ -606,7 +607,7 @@ void CollectionAppenderBase::close()
     ci.elementCount += m_elementCount;
     ci.dataSize = m_writeBuf.size();
 
-    m_collectionInfo->appenders.erase(this);
+    if(erase) m_collectionInfo->appenders.erase(this);
 
     m_tr->writeChunkHeader(ci.startIndex, ci.elementCount);
   }

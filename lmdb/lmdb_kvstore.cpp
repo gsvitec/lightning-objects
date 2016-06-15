@@ -1196,7 +1196,7 @@ void KeyValueStoreImpl::registerTypes(std::unordered_map<std::string, kv::ClassI
       }
     }
     if(addsize) {
-      byte_t buf[m_maxKeySize];
+      byte_t *buf = new byte_t[m_maxKeySize];
       WriteBuf wb(buf, m_maxKeySize);
       wb.appendInteger(chunkId, PropertyId_sz);
       wb.appendInteger(0, ClassId_sz);
@@ -1218,6 +1218,7 @@ void KeyValueStoreImpl::registerTypes(std::unordered_map<std::string, kv::ClassI
         oldsize = oldcount = 0;
         chunkId++;
       }
+      delete [] buf;
     }
     else if(spillover) {
       oldsize = oldcount = 0;

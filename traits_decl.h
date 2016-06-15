@@ -26,6 +26,7 @@
 // application files and traits_impl.h for the mapping definition file
 ////////////////////////////////////////////////////////////////////////////////////////////
 #include "prop_decl.h"
+#include "traits_undef.h"
 
 /** @see header traits_impl.h */
 #define START_MAPPING(_cls, ...) template <> struct ClassTraits<_cls> : \

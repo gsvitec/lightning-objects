@@ -125,6 +125,8 @@ struct DatabaseInfo
   ::lmdb::dbi m_dbi_meta = 0;
   ::lmdb::dbi m_dbi_data = 0;
 
+  bool useLockFile = false;
+
   vector<ClassInfo> classInfos;
   vector<TypeInfo> typeInfos;
   vector<kv::CollectionInfo *> collectionInfos;
@@ -140,7 +142,12 @@ struct DatabaseInfo
     //classmeta + classdata db
     m_env.set_max_dbs(2);
 
-    m_env.open(m_dbpath.c_str(), MDB_NOSUBDIR | MDB_NOLOCK | MDB_RDONLY, 0664);
+    unsigned flags = MDB_NOSUBDIR;
+    if(!useLockFile) flags |= MDB_NOLOCK;
+#ifndef _WIN32
+    flags |= MDB_RDONLY; //heaven knows why this doesn't work on windows
+#endif
+    m_env.open(m_dbpath.c_str(), flags, 0664);
 
     MDB_stat envstat;
     mdb_env_stat(m_env, &envstat);

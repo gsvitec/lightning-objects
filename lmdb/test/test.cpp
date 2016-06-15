@@ -1273,22 +1273,24 @@ void testDataIterProperty(KeyValueStore *kv)
 
     //do a little sparse positioning, forward..
     for(int i=0; i<sv->values->count(); i+=2) {
-      long long *lbuf;
+      long long *lbuf = nullptr;
       bool success = sv->datas->get(i * 100, lbuf, 100);
       assert(success && lbuf[0] == i && lbuf[99] == i);
     }
     //.. and backward
     for(int i=sv->values->count()-1; i>=0; i-=2) {
-      long long *lbuf;
+      long long *lbuf = nullptr;
       bool success = sv->datas->get(i * 100, lbuf, 100);
       assert(success && lbuf[0] == i && lbuf[99] == i);
     }
 
     //peek randomly..
-    long long *lbuf;
+    long long *lbuf = nullptr;
     bool success = sv->datas->get(133 * 100, lbuf, 100);
     assert(success && lbuf[0] == 133 && lbuf[99] == 133);
 
+    //we must nullify the pointer so the API will set it to DB memory
+    lbuf = nullptr;
     success = sv->datas->get(12 * 100, lbuf, 100);
     assert(success && lbuf[0] == 12 && lbuf[99] == 12);
 
@@ -1469,6 +1471,7 @@ int main()
       SomethingWithEmbeddedObjects,
       SomethingWithEmbbededObjectVectors,
       SomethingWithAnObjectIter,
+      SomethingWithAValueIter,
       SomethingWithAllValueKeyedProperties,
       SomethingAbstract,
       SomethingConcrete1,

@@ -1839,7 +1839,7 @@ protected:
   void startChunk(size_t size);
 
 public:
-  void close();
+  void close(bool erase=true);
 };
 
 /**

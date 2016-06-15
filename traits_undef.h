@@ -30,3 +30,4 @@
 #undef MAPPED_PROP2
 #undef MAPPED_PROP3
 #undef OBJECT_ID
+#undef KV_TYPEDEF
