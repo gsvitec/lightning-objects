@@ -131,7 +131,7 @@ KV_TYPEDEF_SV(unsigned long long,	 8, 8)
 KV_TYPEDEF_SV(bool, 			         9, 1)
 KV_TYPEDEF_SV(float, 			        10, 4)
 KV_TYPEDEF_SV(double, 			      11, 8)
-KV_TYPEDEF_SV(const char *, 		  12, 0)
+KV_TYPEDEF_SV(const char *, 		  13, 0)
 KV_TYPEDEF_SV(std::string, 		    13, 0)
 
 static const ClassId MIN_VALUETYPE = 100;

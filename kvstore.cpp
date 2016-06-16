@@ -35,7 +35,7 @@ ClassInfo<EmptyClass> * ClassTraits<kv::EmptyClass>::traits_info = new ClassInfo
 schema_compatibility::error schema_compatibility::make_error()
 {
   stringstream msg;
-  msg << "saved class schema is incompatible with application. " << classProperties.size() <<  " class affected";
+  msg << "saved class schema is incompatible with application. " << classProperties.size() <<  " class(es) affected";
 
   auto sc = make_shared<schema_compatibility>(*this);
   return error(msg.str(), sc);
@@ -44,26 +44,29 @@ schema_compatibility::error schema_compatibility::make_error()
 void write_prop(const schema_compatibility::Property &prop, const char *prefix, ostream &os)
 {
   switch(prop.what) {
+    case schema_compatibility::embedded_property_moved:
+      os << prefix << "property '" << prop.name << "' was moved within the shallow buffer" << endl;
+      break;
     case schema_compatibility::embedded_property_appended:
-      os << prefix << "property '" << prop.name << "' appended to shallow buffer" << endl;
+      os << prefix << "property '" << prop.name << "' was appended to shallow buffer" << endl;
       break;
     case schema_compatibility::embedded_property_inserted:
-      os << prefix << "property '" << prop.name << "' insertied into shallow buffer" << endl;
+      os << prefix << "property '" << prop.name << "' was inserted into shallow buffer" << endl;
       break;
     case schema_compatibility::embedded_property_removed_end:
-      os << prefix << "property '" << prop.name << "' removed from end of shallow buffer" << endl;
+      os << prefix << "property '" << prop.name << "' was removed from end of shallow buffer" << endl;
       break;
-    case schema_compatibility::embedded_property_removed_internal:
-      os << prefix << "property '" << prop.name << "' removed from middle of shallow buffer" << endl;
+    case schema_compatibility::embedded_property_removed:
+      os << prefix << "property '" << prop.name << "' was removed from shallow buffer" << endl;
       break;
     case schema_compatibility::keyed_property_added:
-      os << prefix << "property '" << prop.name << "' added to keyed storage" << endl;
+      os << prefix << "property '" << prop.name << "' was added to keyed storage" << endl;
       break;
     case schema_compatibility::keyed_property_removed:
-      os << prefix << "property '" << prop.name << "' removed from keyed storage" << endl;
+      os << prefix << "property '" << prop.name << "' was removed from keyed storage" << endl;
       break;
     case schema_compatibility::property_modified:
-      os << prefix << "property '" << prop.name << "': " << prop.description << " modified. Schema: " << prop.saved << " runtime: " << prop.runtime << endl;
+      os << prefix << "property '" << prop.name << "': " << prop.description << " was modified. Schema: " << prop.saved << " runtime: " << prop.runtime << endl;
       break;
   }
 }
@@ -112,8 +115,8 @@ inline bool is_embedded(StoreLayout layout) {
   return layout == StoreLayout::embedded_key || layout == StoreLayout::all_embedded;
 }
 
-void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors, unsigned index,
-             KeyValueStoreBase::PropertyMetaInfoPtr pi, const PropertyAccessBase *pa)
+void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors,
+                                KeyValueStoreBase::PropertyMetaInfoPtr pi, const PropertyAccessBase *pa)
 {
   auto layout_msg = [](StoreLayout l) -> const char * {
     switch(l) {
@@ -125,7 +128,7 @@ void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors, 
         return "not embedded";
     }
   };
-  schema_compatibility::Property err(pa->name, index, schema_compatibility::property_modified);
+  schema_compatibility::Property err(pa->name, schema_compatibility::property_modified);
   if(pa->storage->layout != pi->storeLayout &&
      ((pa->storage->layout == StoreLayout::all_embedded || pa->storage->layout == StoreLayout::embedded_key)
       || (pi->storeLayout == StoreLayout::all_embedded || pi->storeLayout != StoreLayout::embedded_key)))
@@ -188,50 +191,67 @@ bool KeyValueStoreBase::updateClassSchema(
       runtimeKeyed[pa->name] = pa;
   }
 
-  unsigned rIndex=0;
-  for(unsigned s=0, r=0; s<schemaEmbedded.size(); s++, r++)
+  map<string, tuple<schema_compatibility::What, PropertyMetaInfoPtr, const PropertyAccessBase *>> errMap;
+  for(unsigned i=0; i<schemaEmbedded.size(); i++)
   {
-    unsigned sIndex=s;
-    for(; sIndex < schemaEmbedded.size() && r < runtimeEmbedded.size()
-        && schemaEmbedded[sIndex]->name != runtimeEmbedded[r]->name; sIndex++) ;
-    for(; sIndex < schemaEmbedded.size() && (r==runtimeEmbedded.size() || s<sIndex); sIndex++) {
-      schema_compatibility::What w = r==runtimeEmbedded.size() ?
-                                      schema_compatibility::embedded_property_removed_end :
-                                      schema_compatibility::embedded_property_removed_internal;
-      errors.push_back(schema_compatibility::Property(schemaEmbedded[s]->name, schemaEmbedded[s]->id, w));
+    if(i >= runtimeEmbedded.size()) {
+      if(errMap.count(schemaEmbedded[i]->name)) {
+        auto t = get<2>(errMap[schemaEmbedded[i]->name]);
+        errMap[schemaEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_moved, schemaEmbedded[i], t);
+      }
+      else
+        errMap[schemaEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_removed_end, schemaEmbedded[i], nullptr);
     }
-
-    rIndex=r;
-    for(; rIndex < runtimeEmbedded.size() && s < schemaEmbedded.size()
-        && runtimeEmbedded[rIndex]->name != schemaEmbedded[s]->name; rIndex++) ;
-    for(; rIndex < runtimeEmbedded.size() && (s==schemaEmbedded.size() || r<rIndex); rIndex++) {
-      schema_compatibility::What w = s==schemaEmbedded.size() ?
-                                    schema_compatibility::embedded_property_appended :
-                                    schema_compatibility::embedded_property_inserted;
-      errors.push_back(schema_compatibility::Property(runtimeEmbedded[r]->name, runtimeEmbedded[r]->id, w));
-      const_cast<PropertyAccessBase *>(runtimeEmbedded[r])->enabled = false;
+    else if(schemaEmbedded[i]->name != runtimeEmbedded[i]->name) {
+      bool schemaMoved = false, runtimeMoved = false;
+      if(errMap.count(schemaEmbedded[i]->name)) {
+        schemaMoved = true;
+        auto t = get<2>(errMap[schemaEmbedded[i]->name]);
+        errMap[schemaEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_moved, schemaEmbedded[i], t);
+      }
+      if(errMap.count(runtimeEmbedded[i]->name)) {
+        runtimeMoved = true;
+        auto t = get<1>(errMap[runtimeEmbedded[i]->name]);
+        errMap[runtimeEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_moved, t, runtimeEmbedded[i]);
+      }
+      if(!schemaMoved)
+        errMap[schemaEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_removed, schemaEmbedded[i], nullptr);
+      if(!runtimeMoved)
+        errMap[runtimeEmbedded[i]->name] = make_tuple(schema_compatibility::embedded_property_inserted, nullptr, runtimeEmbedded[i]);
     }
-
-    if(sIndex < schemaEmbedded.size() && rIndex < runtimeEmbedded.size())
-      compare(errors, s, schemaEmbedded[sIndex], runtimeEmbedded[rIndex]);
+    else {
+      errMap[schemaEmbedded[i]->name] = make_tuple(schema_compatibility::property_modified, schemaEmbedded[i], runtimeEmbedded[i]);
+    }
   }
-  for(unsigned j=rIndex+1; j<runtimeEmbedded.size(); j++) {
-    errors.push_back(schema_compatibility::Property(
-        runtimeEmbedded[j]->name, runtimeEmbedded[j]->id, schema_compatibility::embedded_property_appended));
+  for(auto r=schemaEmbedded.size(); r < runtimeEmbedded.size(); r++)
+  {
+    if(errMap.count(runtimeEmbedded[r]->name)) {
+      auto t = get<1>(errMap[runtimeEmbedded[r]->name]);
+      errMap[runtimeEmbedded[r]->name] = make_tuple(schema_compatibility::embedded_property_moved, t, runtimeEmbedded[r]);
+    }
+    else {
+      errMap[runtimeEmbedded[r]->name] = make_tuple(schema_compatibility::embedded_property_appended, nullptr, runtimeEmbedded[r]);
+    }
+  }
+
+  for(auto &entry : errMap) {
+    auto tuple = entry.second;
+    if(get<0>(tuple) == schema_compatibility::property_modified)
+      compare(errors, get<1>(tuple), get<2>(tuple));
+    else
+      errors.push_back(schema_compatibility::Property(entry.first, get<0>(tuple)));
   }
 
   for(auto &schema : schemaKeyed) {
     if(runtimeKeyed.count(schema.first))
-      compare(errors, schema.second->id, schema.second, runtimeKeyed[schema.first]);
+      compare(errors, schema.second, runtimeKeyed[schema.first]);
     else {
-      errors.push_back(schema_compatibility::Property(
-                         schema.second->name, schema.second->id, schema_compatibility::keyed_property_removed));
+      errors.push_back(schema_compatibility::Property(schema.second->name, schema_compatibility::keyed_property_removed));
     }
   }
   for(auto &runtime : runtimeKeyed) {
     if(!schemaKeyed.count(runtime.first)) {
-      errors.push_back(schema_compatibility::Property(
-                         runtime.second->name, runtime.second->id, schema_compatibility::keyed_property_added));
+      errors.push_back(schema_compatibility::Property(runtime.second->name, schema_compatibility::keyed_property_added));
     }
   }
 
@@ -252,10 +272,13 @@ bool KeyValueStoreBase::updateClassSchema(
       case schema_compatibility::embedded_property_appended:
         classInfo->compatibility = hasSubclasses ? SchemaCompatibility::none : SchemaCompatibility::read;
         break;
+      case schema_compatibility::embedded_property_moved:
+        classInfo->compatibility = SchemaCompatibility::none;
+        break;
       case schema_compatibility::embedded_property_inserted:
         classInfo->compatibility = SchemaCompatibility::none;
         break;
-      case schema_compatibility::embedded_property_removed_internal:
+      case schema_compatibility::embedded_property_removed:
         classInfo->compatibility = SchemaCompatibility::none;
         break;
       case schema_compatibility::embedded_property_removed_end:

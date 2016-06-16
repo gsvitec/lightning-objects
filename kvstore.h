@@ -88,8 +88,11 @@ public:
     /** runtime has a new emmbedded property before the end of the buffer */
     embedded_property_inserted,
 
+    /** an embedded property was moved to a different position*/
+    embedded_property_moved,
+
     /** runtime is missing an embedded property before the end of the buffer */
-    embedded_property_removed_internal,
+    embedded_property_removed,
 
     /** runtime is missing an embedded property at the end of the buffer */
     embedded_property_removed_end
@@ -100,12 +103,11 @@ public:
    */
   struct Property {
     std::string name;
-    unsigned position;
     What what;
     std::string description;
     std::string runtime, saved;
 
-    Property(std::string nm, unsigned pos, What what) : what(what), name(nm), position(pos) {}
+    Property(std::string nm, What what) : what(what), name(nm) {}
   };
   std::unordered_map<std::string, std::vector<Property>> classProperties;
 
@@ -221,7 +223,7 @@ protected:
   /**
    * compare loaded and declared property mapping
    */
-  void compare(std::vector<schema_compatibility::Property> &errors, unsigned index,
+  void compare(std::vector<schema_compatibility::Property> &errors,
                KeyValueStoreBase::PropertyMetaInfoPtr pi, const kv::PropertyAccessBase *pa);
 
   /**
