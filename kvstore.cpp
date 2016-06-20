@@ -115,6 +115,19 @@ inline bool is_embedded(StoreLayout layout) {
   return layout == StoreLayout::embedded_key || layout == StoreLayout::all_embedded;
 }
 
+template <typename T>
+string _to_string(T t) {
+  stringstream ss;
+  ss << t;
+  return ss.str();
+}
+template <>
+string _to_string(bool b) {
+  stringstream ss;
+  ss << b ? "true" : "false";
+  return ss.str();
+}
+
 void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors,
                                 KeyValueStoreBase::PropertyMetaInfoPtr pi, const PropertyAccessBase *pa)
 {
@@ -139,13 +152,13 @@ void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors,
   }
   else if(pa->type.id != pi->typeId && (!is_integer(pa->type.id) || !is_integer(pi->typeId))) {
     err.description = "type";
-    err.runtime = to_string(pa->type.id);
-    err.saved = to_string(pi->typeId);
+    err.runtime = _to_string(pa->type.id);
+    err.saved = _to_string(pi->typeId);
   }
   else if(pa->type.byteSize != pi->byteSize) {
     err.description = "byteSize";
-    err.runtime = to_string(pa->type.byteSize);
-    err.saved = to_string(pi->byteSize);
+    err.runtime = _to_string(pa->type.byteSize);
+    err.saved = _to_string(pi->byteSize);
   }
   else if(!streq(pi->className, pa->type.className)) {
     err.description = "className";
@@ -154,8 +167,8 @@ void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors,
   }
   else if(pi->isVector != pa->type.isVector) {
     err.description = "isVector";
-    err.runtime = to_string(pa->type.isVector);
-    err.saved = to_string(pi->isVector);
+    err.runtime = _to_string(pa->type.isVector);
+    err.saved = _to_string(pi->isVector);
   }
   if(!err.description.empty()) {
     errors.push_back(err);

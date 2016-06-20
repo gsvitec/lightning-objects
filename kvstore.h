@@ -28,6 +28,7 @@
 #include <set>
 #include <unordered_map>
 #include <type_traits>
+#include <cstdlib>
 
 #include "kvtraits.h"
 

@@ -110,7 +110,7 @@ public:
     _snprintf(buffer, sizeof(buffer),
       "%s: %s", origin(), ::mdb_strerror(code()));
 #else
-    std::snprintf(buffer, sizeof(buffer),
+    snprintf(buffer, sizeof(buffer),
       "%s: %s", origin(), ::mdb_strerror(code()));
 #endif
     return buffer;

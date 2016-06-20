@@ -278,18 +278,6 @@ public:
   {
     byte_t * ret = m_appendptr;
     m_appendptr += size;
-#if DEBUG
-    size_t sz = m_appendptr - m_data;
-    if(sz > m_allocsize) {
-      if(m_growsize == 0)
-        throw std::exception("memory exhausted");
-
-      m_allocsize += m_growsize;
-      m_data = (byte_t *)realloc(m_data, m_allocsize);
-      m_appendptr = m_data + sz;
-      ret = m_appendptr - size;
-    }
-#endif
     return ret;
   }
 
@@ -300,7 +288,6 @@ public:
     memcpy(buf, (byte_t *)data, size * sizeof(T));
   }
 
-  //static_assert(TypeTraits<T>::byteSize == sizeof(T), "raw API only usable for types where sizeof matches TypeTraits<T>::byteSize");
   template<typename T>
   void appendRaw(T num) {
     *(T *)m_appendptr = num;
