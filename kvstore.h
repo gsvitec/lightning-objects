@@ -702,9 +702,6 @@ public:
  */
 class ObjectBuf
 {
-  template<typename T, typename V> friend struct ValueEmbeddedStorage;
-  template<typename T, typename V> friend struct ValueKeyedStorage;
-
 protected:
   const bool makeCopy = false;
   bool dataChecked = false;
@@ -754,6 +751,10 @@ public:
   size_t strlen() {
     checkData();
     return readBuf.strlen();
+  }
+  ReadBuf &getReadBuf() {
+    checkData();
+    return readBuf;
   }
 
   void mark() {readBuf.mark();}
@@ -2918,7 +2919,7 @@ struct ValueEmbeddedStorage : public StoreAccessBase
   size_t size(StoreId storeId, ObjectBuf &buf) const override
   {
     if(TypeTraits<V>::byteSize) return TypeTraits<V>::byteSize;
-    return ValueTraits<V>::size(buf.readBuf);
+    return ValueTraits<V>::size(buf.getReadBuf());
   }
   size_t size(StoreId storeId, void *obj, const PropertyAccessBase *pa) override
   {
