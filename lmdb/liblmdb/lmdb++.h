@@ -1099,11 +1099,12 @@ public:
   }
 };
 
-#if !defined(MSVC12_FIX) && !defined(__COVERITY__)
-static_assert(std::is_pod<lmdb::val>::value, "lmdb::val must be a POD type");
+#if !defined(__COVERITY__)
 static_assert(sizeof(lmdb::val) == sizeof(MDB_val), "sizeof(lmdb::val) != sizeof(MDB_val)");
 #endif
-
+#if(!defined(_MSC_VER))
+static_assert(std::is_pod<lmdb::val>::value, "lmdb::val must be a POD type");
+#endif
 ////////////////////////////////////////////////////////////////////////////////
 /* Resource Interface: Environment */
 
