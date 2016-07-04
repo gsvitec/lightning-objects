@@ -181,6 +181,7 @@ void testValueVectorProperty(KeyValueStore *kv)
     OtherThingA hans("Hans");
     hans.testnames.push_back("Eva");
     hans.testnames.push_back("Rudi");
+    hans.enumtest = TestEnum::Three;
 
     auto wtxn = kv->beginWrite();
 
@@ -195,6 +196,7 @@ void testValueVectorProperty(KeyValueStore *kv)
     assert(hans && hans->testnames.size() == 2);
     assert(hans->testnames[0] == "Eva");
     assert(hans->testnames[1] == "Rudi");
+    assert(hans->enumtest == TestEnum::Three);
 
     rtxn->end();
     delete hans;

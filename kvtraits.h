@@ -102,6 +102,9 @@ struct PropertyType
   }
 };
 
+#define RAWDATA_API_ASSERT(_T) static_assert(TypeTraits<_T>::byteSize == sizeof(_T), \
+"collection data access only supported for fixed-size types with native size equal byteSize");
+
 template <typename T> struct TypeTraits;
 
 /**
@@ -335,6 +338,29 @@ struct ValueTraits : public ValueTraitsBase<true>
     size_t byteSize = TypeTraits<T>::byteSize;
     byte_t *data = buf.allocate(byteSize);
     write_integer(data, val, byteSize);
+  }
+};
+
+/**
+ * base template value handler for enums
+ */
+template <typename E>
+struct ValueTraitsEnum : public ValueTraitsBase<true>
+{
+  using underlying_t = typename std::underlying_type<E>::type;
+  RAWDATA_API_ASSERT(underlying_t)
+
+  static size_t size(ReadBuf &buf) {
+    return TypeTraits<E>::byteSize;
+  }
+  static size_t size(const E &val) {
+    return TypeTraits<E>::byteSize;
+  }
+  static void getBytes(ReadBuf &buf, E &val) {
+    val = static_cast<E>(buf.readRaw<underlying_t>());
+  }
+  static void putBytes(WriteBuf &buf, E &val) {
+    buf.appendRaw(static_cast<underlying_t>(val));
   }
 };
 

@@ -1263,8 +1263,6 @@ public:
   V *data() {return m_data;}
 };
 
-#define RAWDATA_API_ASSERT(_T) static_assert(TypeTraits<_T>::byteSize == sizeof(_T), \
-"collection data access only supported for fixed-size types with native size equal byteSize");
 #define VALUEAPI_ASSERT(_X) static_assert(has_objid<ClassTraits<_X>>::value, \
 "class must define an OBJECT_ID mapping to be usable with value-based API");
 

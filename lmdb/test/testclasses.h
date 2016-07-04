@@ -25,6 +25,7 @@
 #include <vector>
 #include <memory>
 #include <kvstore.h>
+#include <type_traits>
 
 #ifdef TESTCLASSES_IMPL
 #include <traits_impl.h>
@@ -230,9 +231,12 @@ struct ValueTest12 {
 }
 }
 
+enum class TestEnum {One, Two, Three};
+
 struct OtherThing {
   std::string name;
   double dvalue = 7.99765;
+  TestEnum enumtest = TestEnum::Two;
 
   OtherThing() {}
   OtherThing(std::string name) : name(name) {}
@@ -807,6 +811,12 @@ struct ValueTraits<lightningobjects::valuetest::ValueTest12> : public ValueTrait
   }
 };
 
+KV_TYPEDEF(TestEnum, TypeTraits<std::underlying_type<TestEnum>::type>::byteSize, false)
+template <>
+struct ValueTraits<TestEnum> : public ValueTraitsEnum<TestEnum>
+{
+};
+
 
 START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
   MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
@@ -843,9 +853,10 @@ START_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOv
   MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, int, fontSize)
 END_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay)
 
-START_MAPPING_A(OtherThing, name, dvalue)
+START_MAPPING_A(OtherThing, name, dvalue, enumtest)
   MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, std::string, name)
   MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, double, dvalue)
+  MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, TestEnum, enumtest)
 END_MAPPING(OtherThing)
 
 START_MAPPING_SUB(OtherThingA, OtherThing, lvalue, testnames)
