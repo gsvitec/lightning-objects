@@ -44,24 +44,24 @@
 #include <type_traits> /* for std::is_pod<> */
 
 namespace lmdb {
-  using mode = mdb_mode_t;
+using mode = mdb_mode_t;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 /* Error Handling */
 
 namespace lmdb {
-  class error;
-  class logic_error;
-  class fatal_error;
-  class runtime_error;
-  class key_exist_error;
-  class not_found_error;
-  class corrupted_error;
-  class panic_error;
-  class version_mismatch_error;
-  class map_full_error;
-  class bad_dbi_error;
+class error;
+class logic_error;
+class fatal_error;
+class runtime_error;
+class key_exist_error;
+class not_found_error;
+class corrupted_error;
+class panic_error;
+class version_mismatch_error;
+class map_full_error;
+class bad_dbi_error;
 }
 
 /**
@@ -84,8 +84,8 @@ public:
    */
   error(const char* const origin,
         const int rc) noexcept
-    : runtime_error{origin},
-      _code{rc} {}
+      : runtime_error{origin},
+        _code{rc} {}
 
   /**
    * Returns the underlying LMDB error code.
@@ -110,8 +110,8 @@ public:
     _snprintf(buffer, sizeof(buffer),
       "%s: %s", origin(), ::mdb_strerror(code()));
 #else
-    snprintf(buffer, sizeof(buffer),
-      "%s: %s", origin(), ::mdb_strerror(code()));
+    std::snprintf(buffer, sizeof(buffer),
+                  "%s: %s", origin(), ::mdb_strerror(code()));
 #endif
     return buffer;
   }
@@ -242,44 +242,44 @@ lmdb::error::raise(const char* const origin,
 /* Procedural Interface: Metadata */
 
 namespace lmdb {
-  // TODO: mdb_version()
-  // TODO: mdb_strerror()
+// TODO: mdb_version()
+// TODO: mdb_strerror()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 /* Procedural Interface: Environment */
 
 namespace lmdb {
-  static inline void env_create(MDB_env** env);
-  static inline void env_open(MDB_env* env,
-    const char* path, unsigned int flags, mode mode);
+static inline void env_create(MDB_env** env);
+static inline void env_open(MDB_env* env,
+                            const char* path, unsigned int flags, mode mode);
 #if MDB_VERSION_FULL >= MDB_VERINT(0, 9, 14)
-  static inline void env_copy(MDB_env* env, const char* path, unsigned int flags);
-  static inline void env_copy_fd(MDB_env* env, mdb_filehandle_t fd, unsigned int flags);
+static inline void env_copy(MDB_env* env, const char* path, unsigned int flags);
+static inline void env_copy_fd(MDB_env* env, mdb_filehandle_t fd, unsigned int flags);
 #else
-  static inline void env_copy(MDB_env* env, const char* path);
+static inline void env_copy(MDB_env* env, const char* path);
   static inline void env_copy_fd(MDB_env* env, mdb_filehandle_t fd);
 #endif
-  static inline void env_stat(MDB_env* env, MDB_stat* stat);
-  static inline void env_info(MDB_env* env, MDB_envinfo* stat);
-  static inline void env_sync(MDB_env* env, bool force);
-  static inline void env_close(MDB_env* env) noexcept;
-  static inline void env_set_flags(MDB_env* env, unsigned int flags, bool onoff);
-  static inline void env_get_flags(MDB_env* env, unsigned int* flags);
-  static inline void env_get_path(MDB_env* env, const char** path);
-  static inline void env_get_fd(MDB_env* env, mdb_filehandle_t* fd);
-  static inline void env_set_mapsize(MDB_env* env, std::size_t size);
-  static inline void env_set_max_readers(MDB_env* env, unsigned int count);
-  static inline void env_get_max_readers(MDB_env* env, unsigned int* count);
-  static inline void env_set_max_dbs(MDB_env* env, MDB_dbi count);
-  static inline unsigned int env_get_max_keysize(MDB_env* env);
+static inline void env_stat(MDB_env* env, MDB_stat* stat);
+static inline void env_info(MDB_env* env, MDB_envinfo* stat);
+static inline void env_sync(MDB_env* env, bool force);
+static inline void env_close(MDB_env* env) noexcept;
+static inline void env_set_flags(MDB_env* env, unsigned int flags, bool onoff);
+static inline void env_get_flags(MDB_env* env, unsigned int* flags);
+static inline void env_get_path(MDB_env* env, const char** path);
+static inline void env_get_fd(MDB_env* env, mdb_filehandle_t* fd);
+static inline void env_set_mapsize(MDB_env* env, std::size_t size);
+static inline void env_set_max_readers(MDB_env* env, unsigned int count);
+static inline void env_get_max_readers(MDB_env* env, unsigned int* count);
+static inline void env_set_max_dbs(MDB_env* env, MDB_dbi count);
+static inline unsigned int env_get_max_keysize(MDB_env* env);
 #if MDB_VERSION_FULL >= MDB_VERINT(0, 9, 11)
-  static inline void env_set_userctx(MDB_env* env, void* ctx);
-  static inline void* env_get_userctx(MDB_env* env);
+static inline void env_set_userctx(MDB_env* env, void* ctx);
+static inline void* env_get_userctx(MDB_env* env);
 #endif
-  // TODO: mdb_env_set_assert()
-  // TODO: mdb_reader_list()
-  // TODO: mdb_reader_check()
+// TODO: mdb_env_set_assert()
+// TODO: mdb_reader_list()
+// TODO: mdb_reader_check()
 }
 
 /**
@@ -321,7 +321,7 @@ lmdb::env_copy(MDB_env* const env,
                const unsigned int flags = 0) {
   const int rc = ::mdb_env_copy2(env, path, flags);
 #else
-               const char* const path) {
+  const char* const path) {
   const int rc = ::mdb_env_copy(env, path);
 #endif
   if (rc != MDB_SUCCESS) {
@@ -337,11 +337,11 @@ lmdb::env_copy(MDB_env* const env,
 static inline void
 lmdb::env_copy_fd(MDB_env* const env,
 #if MDB_VERSION_FULL >= MDB_VERINT(0, 9, 14)
-                 const mdb_filehandle_t fd,
-                 const unsigned int flags = 0) {
+                  const mdb_filehandle_t fd,
+                  const unsigned int flags = 0) {
   const int rc = ::mdb_env_copyfd2(env, fd, flags);
 #else
-                 const mdb_filehandle_t fd) {
+  const mdb_filehandle_t fd) {
   const int rc = ::mdb_env_copyfd(env, fd);
 #endif
   if (rc != MDB_SUCCESS) {
@@ -544,16 +544,16 @@ lmdb::env_get_userctx(MDB_env* const env) {
 /* Procedural Interface: Transactions */
 
 namespace lmdb {
-  static inline void txn_begin(
+static inline void txn_begin(
     MDB_env* env, MDB_txn* parent, unsigned int flags, MDB_txn** txn);
-  static inline MDB_env* txn_env(MDB_txn* txn) noexcept;
+static inline MDB_env* txn_env(MDB_txn* txn) noexcept;
 #ifdef LMDBXX_TXN_ID
-  static inline std::size_t txn_id(MDB_txn* txn) noexcept;
+static inline std::size_t txn_id(MDB_txn* txn) noexcept;
 #endif
-  static inline void txn_commit(MDB_txn* txn);
-  static inline void txn_abort(MDB_txn* txn) noexcept;
-  static inline void txn_reset(MDB_txn* txn) noexcept;
-  static inline void txn_renew(MDB_txn* txn);
+static inline void txn_commit(MDB_txn* txn);
+static inline void txn_abort(MDB_txn* txn) noexcept;
+static inline void txn_reset(MDB_txn* txn) noexcept;
+static inline void txn_renew(MDB_txn* txn);
 }
 
 /**
@@ -633,21 +633,21 @@ lmdb::txn_renew(MDB_txn* const txn) {
 /* Procedural Interface: Databases */
 
 namespace lmdb {
-  static inline void dbi_open(
+static inline void dbi_open(
     MDB_txn* txn, const char* name, unsigned int flags, MDB_dbi* dbi);
-  static inline void dbi_stat(MDB_txn* txn, MDB_dbi dbi, MDB_stat* stat);
-  static inline void dbi_flags(MDB_txn* txn, MDB_dbi dbi, unsigned int* flags);
-  static inline void dbi_close(MDB_env* env, MDB_dbi dbi) noexcept;
-  static inline void dbi_drop(MDB_txn* txn, MDB_dbi dbi, bool del);
-  static inline void dbi_set_compare(MDB_txn* txn, MDB_dbi dbi, MDB_cmp_func* cmp);
-  static inline void dbi_set_dupsort(MDB_txn* txn, MDB_dbi dbi, MDB_cmp_func* cmp);
-  static inline void dbi_set_relfunc(MDB_txn* txn, MDB_dbi dbi, MDB_rel_func* rel);
-  static inline void dbi_set_relctx(MDB_txn* txn, MDB_dbi dbi, void* ctx);
-  static inline bool dbi_get(MDB_txn* txn, MDB_dbi dbi, const MDB_val* key, MDB_val* data);
-  static inline bool dbi_put(MDB_txn* txn, MDB_dbi dbi, MDB_val* key, MDB_val* data, unsigned int flags);
-  static inline bool dbi_del(MDB_txn* txn, MDB_dbi dbi, const MDB_val* key, const MDB_val* data);
-  // TODO: mdb_cmp()
-  // TODO: mdb_dcmp()
+static inline void dbi_stat(MDB_txn* txn, MDB_dbi dbi, MDB_stat* stat);
+static inline void dbi_flags(MDB_txn* txn, MDB_dbi dbi, unsigned int* flags);
+static inline void dbi_close(MDB_env* env, MDB_dbi dbi) noexcept;
+static inline void dbi_drop(MDB_txn* txn, MDB_dbi dbi, bool del);
+static inline void dbi_set_compare(MDB_txn* txn, MDB_dbi dbi, MDB_cmp_func* cmp);
+static inline void dbi_set_dupsort(MDB_txn* txn, MDB_dbi dbi, MDB_cmp_func* cmp);
+static inline void dbi_set_relfunc(MDB_txn* txn, MDB_dbi dbi, MDB_rel_func* rel);
+static inline void dbi_set_relctx(MDB_txn* txn, MDB_dbi dbi, void* ctx);
+static inline bool dbi_get(MDB_txn* txn, MDB_dbi dbi, const MDB_val* key, MDB_val* data);
+static inline bool dbi_put(MDB_txn* txn, MDB_dbi dbi, const MDB_val* key, MDB_val* data, unsigned int flags);
+static inline bool dbi_del(MDB_txn* txn, MDB_dbi dbi, const MDB_val* key, const MDB_val* data);
+// TODO: mdb_cmp()
+// TODO: mdb_dcmp()
 }
 
 /**
@@ -796,10 +796,10 @@ lmdb::dbi_get(MDB_txn* const txn,
 static inline bool
 lmdb::dbi_put(MDB_txn* const txn,
               const MDB_dbi dbi,
-              MDB_val* const key,
+              const MDB_val* const key,
               MDB_val* const data,
               const unsigned int flags = 0) {
-  const int rc = ::mdb_put(txn, dbi, key, data, flags);
+  const int rc = ::mdb_put(txn, dbi, const_cast<MDB_val*>(key), data, flags);
   if (rc != MDB_SUCCESS && rc != MDB_KEYEXIST) {
     error::raise("mdb_put", rc);
   }
@@ -827,15 +827,15 @@ lmdb::dbi_del(MDB_txn* const txn,
 /* Procedural Interface: Cursors */
 
 namespace lmdb {
-  static inline void cursor_open(MDB_txn* txn, MDB_dbi dbi, MDB_cursor** cursor);
-  static inline void cursor_close(MDB_cursor* cursor) noexcept;
-  static inline void cursor_renew(MDB_txn* txn, MDB_cursor* cursor);
-  static inline MDB_txn* cursor_txn(MDB_cursor* cursor) noexcept;
-  static inline MDB_dbi cursor_dbi(MDB_cursor* cursor) noexcept;
-  static inline bool cursor_get(MDB_cursor* cursor, MDB_val* key, MDB_val* data, MDB_cursor_op op);
-  static inline void cursor_put(MDB_cursor* cursor, MDB_val* key, MDB_val* data, unsigned int flags);
-  static inline void cursor_del(MDB_cursor* cursor, unsigned int flags);
-  static inline void cursor_count(MDB_cursor* cursor, std::size_t& count);
+static inline void cursor_open(MDB_txn* txn, MDB_dbi dbi, MDB_cursor** cursor);
+static inline void cursor_close(MDB_cursor* cursor) noexcept;
+static inline void cursor_renew(MDB_txn* txn, MDB_cursor* cursor);
+static inline MDB_txn* cursor_txn(MDB_cursor* cursor) noexcept;
+static inline MDB_dbi cursor_dbi(MDB_cursor* cursor) noexcept;
+static inline bool cursor_get(MDB_cursor* cursor, MDB_val* key, MDB_val* data, MDB_cursor_op op);
+static inline void cursor_put(MDB_cursor* cursor, MDB_val* key, MDB_val* data, unsigned int flags);
+static inline void cursor_del(MDB_cursor* cursor, unsigned int flags);
+static inline void cursor_count(MDB_cursor* cursor, std::size_t& count);
 }
 
 /**
@@ -950,7 +950,7 @@ lmdb::cursor_count(MDB_cursor* const cursor,
 /* Resource Interface: Values */
 
 namespace lmdb {
-  class val;
+class val;
 }
 
 /**
@@ -973,22 +973,21 @@ public:
    * Constructor.
    */
   val(const std::string& data) noexcept
-    : val{data.data(), data.size()} {}
+      : val{data.data(), data.size()} {}
 
   /**
    * Constructor.
    */
   val(const char* const data) noexcept
-    : val{data, std::strlen(data)} {}
+      : val{data, std::strlen(data)} {}
 
   /**
    * Constructor.
    */
   val(const void* const data,
-      const std::size_t size) noexcept {
-      _val.mv_size = size;
-      _val.mv_data = const_cast<void*>(data);
-  }
+      const std::size_t size) noexcept
+      : _val{size, const_cast<void*>(data)} {}
+
 #ifdef MSVC12_FIX
   /**
    * Move constructor.
@@ -1010,6 +1009,7 @@ public:
    */
   val& operator=(val&& other) noexcept = default;
 #endif
+
   /**
    * Destructor.
    */
@@ -1099,17 +1099,16 @@ public:
   }
 };
 
-#if !defined(__COVERITY__)
+#if !(defined(__COVERITY__) || defined(_MSC_VER))
+static_assert(std::is_pod<lmdb::val>::value, "lmdb::val must be a POD type");
 static_assert(sizeof(lmdb::val) == sizeof(MDB_val), "sizeof(lmdb::val) != sizeof(MDB_val)");
 #endif
-#if(!defined(_MSC_VER))
-static_assert(std::is_pod<lmdb::val>::value, "lmdb::val must be a POD type");
-#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 /* Resource Interface: Environment */
 
 namespace lmdb {
-  class env;
+class env;
 }
 
 /**
@@ -1156,7 +1155,7 @@ public:
    * @param handle a valid `MDB_env*` handle
    */
   env(MDB_env* const handle) noexcept
-    : _handle{handle} {}
+      : _handle{handle} {}
 
   /**
    * Move constructor.
@@ -1277,7 +1276,7 @@ public:
 /* Resource Interface: Transactions */
 
 namespace lmdb {
-  class txn;
+class txn;
 }
 
 /**
@@ -1318,7 +1317,7 @@ public:
    * @param handle a valid `MDB_txn*` handle
    */
   txn(MDB_txn* const handle) noexcept
-    : _handle{handle} {}
+      : _handle{handle} {}
 
   /**
    * Move constructor.
@@ -1410,7 +1409,7 @@ public:
 /* Resource Interface: Databases */
 
 namespace lmdb {
-  class dbi;
+class dbi;
 }
 
 /**
@@ -1450,7 +1449,7 @@ public:
    * @param handle a valid `MDB_dbi` handle
    */
   dbi(const MDB_dbi handle) noexcept
-    : _handle{handle} {}
+      : _handle{handle} {}
 
   /**
    * Move constructor.
@@ -1643,7 +1642,7 @@ public:
    * @throws lmdb::error on failure
    */
   bool put(MDB_txn* const txn,
-           val& key,
+           const val& key,
            val& data,
            const unsigned int flags = default_put_flags) {
     return lmdb::dbi_put(txn, handle(), key, data, flags);
@@ -1661,7 +1660,7 @@ public:
   bool put(MDB_txn* const txn,
            const K& key,
            const unsigned int flags = default_put_flags) {
-    lmdb::val k{&key, sizeof(K)};
+    const lmdb::val k{&key, sizeof(K)};
     lmdb::val v{};
     return lmdb::dbi_put(txn, handle(), k, v, flags);
   }
@@ -1680,7 +1679,7 @@ public:
            const K& key,
            const V& val,
            const unsigned int flags = default_put_flags) {
-    lmdb::val k{&key, sizeof(K)};
+    const lmdb::val k{&key, sizeof(K)};
     lmdb::val v{&val, sizeof(V)};
     return lmdb::dbi_put(txn, handle(), k, v, flags);
   }
@@ -1699,7 +1698,7 @@ public:
            const char* const key,
            const V& val,
            const unsigned int flags = default_put_flags) {
-    lmdb::val k{key, std::strlen(key)};
+    const lmdb::val k{key, std::strlen(key)};
     lmdb::val v{&val, sizeof(V)};
     return lmdb::dbi_put(txn, handle(), k, v, flags);
   }
@@ -1717,7 +1716,7 @@ public:
            const char* const key,
            const char* const val,
            const unsigned int flags = default_put_flags) {
-    lmdb::val k{key, std::strlen(key)};
+    const lmdb::val k{key, std::strlen(key)};
     lmdb::val v{val, std::strlen(val)};
     return lmdb::dbi_put(txn, handle(), k, v, flags);
   }
@@ -1753,7 +1752,7 @@ public:
 /* Resource Interface: Cursors */
 
 namespace lmdb {
-  class cursor;
+class cursor;
 }
 
 /**
@@ -1793,7 +1792,7 @@ public:
    * @param handle a valid `MDB_cursor*` handle
    */
   cursor(MDB_cursor* const handle) noexcept
-    : _handle{handle} {}
+      : _handle{handle} {}
 
   /**
    * Move constructor.
