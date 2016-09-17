@@ -142,12 +142,12 @@ void KeyValueStoreBase::compare(vector<schema_compatibility::Property> &errors,
     }
   };
   schema_compatibility::Property err(pa->name, schema_compatibility::property_modified);
-  if(pa->storage->layout != pi->storeLayout &&
-     ((pa->storage->layout == StoreLayout::all_embedded || pa->storage->layout == StoreLayout::embedded_key)
+  if(pa->storeinfo->layout != pi->storeLayout &&
+     ((pa->storeinfo->layout == StoreLayout::all_embedded || pa->storeinfo->layout == StoreLayout::embedded_key)
       || (pi->storeLayout == StoreLayout::all_embedded || pi->storeLayout != StoreLayout::embedded_key)))
   {
     err.description = "storage layout";
-    err.runtime = layout_msg(pa->storage->layout);
+    err.runtime = layout_msg(pa->storeinfo->layout);
     err.saved = layout_msg(pi->storeLayout);
   }
   else if(pa->type.id != pi->typeId && (!is_integer(pa->type.id) || !is_integer(pi->typeId))) {
@@ -198,7 +198,7 @@ bool KeyValueStoreBase::updateClassSchema(
   map<string, const PropertyAccessBase *> runtimeKeyed;
   for(int i=0; i<numProperties; i++) {
     const PropertyAccessBase *pa = *properties[i];
-    if(is_embedded(pa->storage->layout))
+    if(is_embedded(pa->storeinfo->layout))
       runtimeEmbedded.push_back(pa);
     else
       runtimeKeyed[pa->name] = pa;

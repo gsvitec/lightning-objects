@@ -1029,7 +1029,7 @@ MDB_val KeyValueStoreImpl::make_propertyval(const PropertyAccessBase *prop)
   writePtr += 1;
   write_integer<unsigned>(writePtr, prop->type.byteSize, 2);
   writePtr += 2;
-  write_integer<unsigned>(writePtr, static_cast<unsigned>(prop->storage->layout), 2);
+  write_integer<unsigned>(writePtr, static_cast<unsigned>(prop->storeinfo->layout), 2);
   writePtr += 2;
   if(classLen > 0)
     memcpy(writePtr, prop->type.className, classLen);
