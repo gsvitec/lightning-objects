@@ -41,20 +41,6 @@
 namespace flexis {
 namespace persistence {
 
-/* 2 helper templates for checking for the presence of the "static const bool traits_has_objid"
- * ClassTraits member variable. The variable is always declared, but only defined by the OBJECT_ID
- * macro. The true_type specialization will only be instantiated in that case. Used in static_assert
- * to make sure any use of value-based mappings has an accompanying OBJECT_ID mapping
- */
-template<typename T, typename V = bool>
-struct has_objid : std::false_type
-{};
-
-template<typename T>
-struct has_objid<T,
-    typename std::enable_if<T::traits_has_objid, bool>::type> : std::true_type
-{};
-
 /**
  * predefined ClassId for collections
  */
@@ -463,7 +449,7 @@ public:
       }
 
       //make sure all propertyaccessors have correct classId
-      for(int i=0; i<info.num_decl_props; i++)
+      for(unsigned i=0; i<info.num_decl_props; i++)
         const_cast<kv::PropertyAccessBase *>(*info.decl_props[i])->classId[id] = info.classInfo->data[id].classId;
 
       //initialize lookup maps
@@ -1264,22 +1250,17 @@ public:
   V *data() {return m_data;}
 };
 
-#define VALUEAPI_ASSERT(_X) static_assert(has_objid<ClassTraits<_X>>::value, \
-"class must define an OBJECT_ID mapping to be usable with value-based API");
-
 /**
  * Transaction that allows read operations only. Read transactions can be run concurrently
  */
 class Transaction
 {
-  template<typename T, typename V> friend class ValueEmbeddedStorage;
-  template<typename T, typename V> friend class ValueKeyedStorage;
-  template<typename T, typename V> friend class ValueVectorKeyedStorage;
-  template<typename T, typename V> friend class ValueSetKeyedStorage;
-  template<typename T, typename V> friend class ObjectPropertyStorage;
-  template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
+  template<typename T, typename V> friend struct ValueEmbeddedStorage;
+  template<typename T, typename V> friend struct ValueKeyedStorage;
+  template<typename T, typename V> friend struct ObjectPropertyStorage;
+  template<typename T, typename V> friend struct ObjectPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
-  template<typename T, typename V> friend class ObjectPtrPropertyStorageEmbedded;
+  template<typename T, typename V> friend struct ObjectPtrPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
@@ -1287,7 +1268,7 @@ class Transaction
   template<typename T, typename V, typename KVIter, typename Iter> friend struct CollectionIterPropertyStorage;
   template<typename V> friend class AbstractObjectVectorStorage;
   friend class CollectionCursorBase;
-  template<typename T> friend class ObjectIdStorage;
+  template<typename T> friend struct ObjectIdStorage;
   template <typename T> friend class ObjectCollectionCursor;
   template <typename T> friend class ClassCursor;
   friend class CollectionAppenderBase;
@@ -1872,15 +1853,13 @@ static size_t calculateBuffer(StoreId storeId, T *obj, Properties *properties)
  */
 class WriteTransaction : public virtual Transaction
 {
-  template<typename T, typename V> friend class ValueEmbeddedStorage;
-  template<typename T, typename V> friend class ValueKeyedStorage;
+  template<typename T, typename V> friend struct ValueEmbeddedStorage;
+  template<typename T, typename V> friend struct ValueKeyedStorage;
   template<typename T, typename V> friend class SimplePropertyStorage;
-  template<typename T, typename V> friend class ValueVectorKeyedStorage;
-  template<typename T, typename V> friend class ValueSetKeyedStorage;
-  template<typename T, typename V> friend class ObjectPropertyStorage;
-  template<typename T, typename V> friend class ObjectPropertyStorageEmbedded;
+  template<typename T, typename V> friend struct ObjectPropertyStorage;
+  template<typename T, typename V> friend struct ObjectPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrPropertyStorage;
-  template<typename T, typename V> friend class ObjectPtrPropertyStorageEmbedded;
+  template<typename T, typename V> friend struct ObjectPtrPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectVectorPropertyStorage;
   template<typename T, typename V> friend class ObjectVectorPropertyStorageEmbedded;
   template<typename T, typename V> friend class ObjectPtrVectorPropertyStorage;
@@ -2400,7 +2379,6 @@ public:
                      bool saveMembers=true)
   {
     ObjectKey *key = ClassTraits<T>::getObjectKey(obj);
-    byte_t *data;
     size_t bufSz = vect.size()*ObjectKey_sz+4;
 
     writeBuf().start(bufSz);
@@ -3034,8 +3012,6 @@ struct ObjectIdStorage : public StoreAccessBase<T>
  */
 template<typename T, typename V> struct ObjectPropertyStorage : public StoreAccessEmbeddedKey<T>
 {
-  VALUEAPI_ASSERT(V)
-
   void save(WriteTransaction *tr,
             ClassId classId, ObjectId objectId, T *tp, PrepareData &pd, const PropertyAccessBase *pa, StoreMode mode) const override
   {

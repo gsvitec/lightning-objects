@@ -16,7 +16,11 @@
 #include <errno.h>
 #include <string.h>
 #include <ctype.h>
+#if defined(_MSC_VER)
+#include "getopt.h"
+#else
 #include <unistd.h>
+#endif
 #include "lmdb.h"
 
 #define PRINT	1

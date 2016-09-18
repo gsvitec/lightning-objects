@@ -196,7 +196,7 @@ bool KeyValueStoreBase::updateClassSchema(
   }
   vector<const PropertyAccessBase *> runtimeEmbedded;
   map<string, const PropertyAccessBase *> runtimeKeyed;
-  for(int i=0; i<numProperties; i++) {
+  for(unsigned i=0; i<numProperties; i++) {
     const PropertyAccessBase *pa = *properties[i];
     if(is_embedded(pa->storeinfo->layout))
       runtimeEmbedded.push_back(pa);

@@ -14,7 +14,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_MSC_VER)
+#include "getopt.h"
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#else
 #include <unistd.h>
+#endif
 #include "lmdb.h"
 
 #define Z	MDB_FMT_Z
@@ -174,7 +180,7 @@ int main(int argc, char *argv[])
 			if (freinfo > 1) {
 				char *bad = "";
 				mdb_size_t pg, prev;
-				ssize_t i, j, span = 0;
+        ssize_t i, j, span = 0;
 				j = *iptr++;
 				for (i = j, prev = 1; --i >= 0; ) {
 					pg = iptr[i];

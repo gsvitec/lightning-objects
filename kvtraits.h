@@ -147,7 +147,7 @@ static_assert(sizeof(size_t) == TypeTraits<size_t>::byteSize, "size_t: byteSize 
 
 class Transaction;
 class WriteTransaction;
-class PropertyAccessBase;
+struct PropertyAccessBase;
 class ObjectBuf;
 class PrepareData;
 
@@ -568,7 +568,7 @@ public:
   }
 
   bool preparesUpdates(StoreId storeId, ClassId classId) {
-    for(int i=0; i<numProps; i++)
+    for(unsigned i=0; i<numProps; i++)
       if((*decl_props[i])->storeinfo->preparesUpdates(storeId, classId))
         return true;
     return false;

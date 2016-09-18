@@ -150,7 +150,6 @@ prop_impl_so(_cls, __VA_ARGS__);
  */
 #define START_MAPPING_SUB(_cls, _sup, ...) \
 template <> struct ClassTraits<_cls> : public ClassTraitsBase<_cls, _sup>, public ClassTraitsConcrete<_cls> { \
-static const bool traits_has_objid; \
 static const PropertyAccessBase prop_decl(__VA_ARGS__) ;}; \
 template<> bool ClassTraitsBase<_cls, _sup>::traits_initialized = false; \
 template<> const unsigned ClassTraitsBase<_cls, _sup>::num_decl_props = VA_NUM_ARGS(__VA_ARGS__); \
@@ -252,7 +251,6 @@ const PropertyAccessBase *ClassTraits<cls>::propname = new propkind<cls, proptyp
  * @param the property name. The property must have type ObjectId and be initialized to 0
  */
 #define OBJECT_ID(cls, propname) \
-const bool ClassTraits<cls>::traits_has_objid = true; \
 const PropertyAccessBase *ClassTraits<cls>::propname = new ObjectIdAssign<cls, &cls::propname>();
 
 /**
