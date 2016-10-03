@@ -1056,7 +1056,7 @@ void KeyValueStoreImpl::loadSaveClassMeta(
     bool first = true;
     for (bool read = cursor.get(key, val, MDB_FIRST_DUP); read; read = cursor.get(key, val, MDB_NEXT_DUP)) {
       if(first) {
-        //first record is [propertyId == 0, classId, subclass...]
+        //first record is [propertyId == 0, classId]
         ReadBuf buf(val.data<byte_t>(), val.size());
         buf.read(PropertyId_sz);
         cdata.classId = buf.readInteger<ClassId>(ClassId_sz);
@@ -1080,14 +1080,12 @@ void KeyValueStoreImpl::loadSaveClassMeta(
 
     cdata.classId = ++m_maxClassId;
 
-    //save the first record [0, classId, subclass...]
+    //save the first record [0, classId]
     size_t sz = PropertyId_sz + ClassId_sz;
-    for(auto &sub : classInfo->subs) sz += strlen(sub->name) + 1;
 
     WriteBuf buf(sz);
     buf.appendInteger(0, PropertyId_sz);
     buf.appendInteger(cdata.classId, ClassId_sz);
-    for(auto &sub : classInfo->subs) buf.appendCString(sub->name);
 
     key.assign(classInfo->name);
     val.assign(buf.data(), sz);

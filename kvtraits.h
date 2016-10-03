@@ -924,14 +924,14 @@ struct ClassInfo : public AbstractClassInfo
  * subclass of this class. All calls to access/update mapped object properties should go through here and will be
  * dispatched to the correct location. The correct location is determined by the classId which is uniquely assigned
  * to each mapped class. Many calls here will first determine the correct ClassTraits instance, and from there
- * hand over to specific pprocessing. This ensures that the cast operation at handover from the non-templated PropertyAccessBase
- * to the templated StoreAccessBase happen on the exact type level, i.e., at handover,
- * the ClassTraits template parameter type T is always the exact type of the handed-over object. Thus the cast is without issues.
+ * hand over to specific processing. This ensures that the cast operation at handover from the non-templated PropertyAccessBase
+ * to the templated StoreAccessBase happens on the exact type level, i.e., at handover, the ClassTraits template parameter
+ * type T is always the exact type of the handed-over object. Thus the cast is without issues.
  *
  * Heres an illustration:
  *
  * - mapped type hierarchy: S <- T (T subclasses S)
- * - persistent operation is exectuted with template parameter type S and an operand of type T
+ * - persistent operation is executed with template parameter type S and an operand of type T
  * - the operation needs to hand over to a property mapping resp. StoreAccessBase<T>. For this purpose, the
  *   StoreInfo inside the property mapping must be cast down.
  * - we therefore perform lookup by classId to determine the exact match, which is ClassTraits<T>. Here the cast
@@ -969,6 +969,7 @@ class ClassTraitsBase
   }
 
   /**
+   * helper function which does the cast to the specific store accessor
    * @param pa a property mapping
    * @return pa->storeinfo cast to the correct StorageAccessBase type
    */
