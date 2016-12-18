@@ -25,13 +25,13 @@
 #include <cassert>
 #include "testclasses.h"
 
-using namespace flexis::persistence;
-using namespace flexis::persistence::kv;
-using namespace flexis;
+using namespace lo::persistence;
+using namespace lo::persistence::kv;
+using namespace lo;
 using namespace std;
-using namespace flexis::Overlays;
+using namespace lo::Overlays;
 
-namespace flexislmdb = flexis::persistence::lmdb;
+namespace lolmdb = lo::persistence::lmdb;
 
 static const long rounds = 1000000;
 
@@ -397,7 +397,7 @@ void test_lmdb_read2()
 int main()
 {
 #if 1
-  KeyValueStore *kv = flexislmdb::KeyValueStore::Factory{0, ".", "bench"};
+  KeyValueStore *kv = lolmdb::KeyValueStore::Factory{0, ".", "bench"};
 
   kv->putSchema<Colored2DPoint, ColoredPolygon, FixedSizeObject>();
 

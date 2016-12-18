@@ -18,7 +18,7 @@
  */
 #include <type_traits>
 
-#define BEGIN_KV_NS namespace flexis { namespace persistence { namespace kv {
+#define BEGIN_KV_NS namespace lo { namespace persistence { namespace kv {
 #define END_KV_NS }}}
 
 #ifdef _MSC_VER

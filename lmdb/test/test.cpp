@@ -8,11 +8,11 @@
 #include <lmdb/lmdb_kvstore.h>
 #include "testclasses.h"
 
-using namespace flexis::persistence;
-using namespace flexis::persistence::kv;
-using namespace flexis;
+using namespace lo::persistence;
+using namespace lo::persistence::kv;
+using namespace lo;
 using namespace std;
-using namespace flexis::Overlays;
+using namespace lo::Overlays;
 
 template <typename T>
 bool all_predicate(shared_ptr<T> t=nullptr) {return true;}
@@ -270,7 +270,7 @@ void testCustomValueTypes(KeyValueStore *kv)
 
 void testFlexisProperties(KeyValueStore *kv)
 {
-  flexis::player::SourceInfo si;
+  lo::player::SourceInfo si;
   auto ro = make_obj<TestRectangularOverlay>();
   auto to = make_obj<TimeCodeOverlay>();
 
@@ -757,9 +757,9 @@ void testDataCollection2(KeyValueStore *kv)
 
 void  testObjectPtrPropertyStorage(KeyValueStore *kv)
 {
-  auto sd = make_obj<flexis::player::SourceDisplayConfig>(1, 2, false, 4, 5, 6, 7);
+  auto sd = make_obj<lo::player::SourceDisplayConfig>(1, 2, false, 4, 5, 6, 7);
 
-  flexis::player::SourceInfo *si = new flexis::player::SourceInfo(sd);
+  lo::player::SourceInfo *si = new lo::player::SourceInfo(sd);
 
   auto wtxn = kv->beginWrite();
   ObjectKey key;
@@ -767,7 +767,7 @@ void  testObjectPtrPropertyStorage(KeyValueStore *kv)
   wtxn->commit();
 
   auto rtxn = kv->beginRead();
-  flexis::player::SourceInfo *si2 = rtxn->getObject<flexis::player::SourceInfo>(key);
+  lo::player::SourceInfo *si2 = rtxn->getObject<lo::player::SourceInfo>(key);
   rtxn->end();
 
   assert(si2 && si2->displayConfig && si2->displayConfig->sourceIndex == 1 && si2->displayConfig->attachedIndex == 2);
@@ -1488,9 +1488,9 @@ int main()
       ColoredPolygon,
       player::SourceDisplayConfig,
       player::SourceInfo,
-      flexis::Overlays::IFlexisOverlay,
-      flexis::Overlays::TestRectangularOverlay,
-      flexis::Overlays::TimeCodeOverlay,
+      lo::Overlays::IFlexisOverlay,
+      lo::Overlays::TestRectangularOverlay,
+      lo::Overlays::TimeCodeOverlay,
       OtherThing,
       OtherThingA,
       OtherThingB,

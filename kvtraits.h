@@ -17,8 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FLEXIS_FLEXIS_KVTRAITS_H
-#define FLEXIS_FLEXIS_KVTRAITS_H
+#ifndef LO_LO_KVTRAITS_H
+#define LO_LO_KVTRAITS_H
 
 #include <string>
 #include <vector>
@@ -31,7 +31,7 @@
 #include <type_traits>
 #include "kvbuf.h"
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace kv {
 
@@ -1376,8 +1376,8 @@ static PropertyType object_t() {
 
 } //kv
 } //persistence
-} //flexis
+} //lo
 
-using NO_SUPERCLASS = flexis::persistence::kv::EmptyClass;
+using NO_SUPERCLASS = lo::persistence::kv::EmptyClass;
 
-#endif //FLEXIS_FLEXIS_KVTRAITS_H
+#endif //LO_LO_KVTRAITS_H

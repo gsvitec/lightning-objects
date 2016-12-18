@@ -17,15 +17,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FLEXIS_KVWRITEBUF_H
-#define FLEXIS_KVWRITEBUF_H
+#ifndef LO_KVWRITEBUF_H
+#define LO_KVWRITEBUF_H
 
 #include <string.h>
 #include <memory>
 
 #include "kvkey.h"
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace kv {
 
@@ -344,6 +344,6 @@ public:
 
 } //kv
 } //persistence
-} //flexis
+} //lo
 
-#endif //FLEXIS_KVWRITEBUF_H
+#endif //LO_KVWRITEBUF_H

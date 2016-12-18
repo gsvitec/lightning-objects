@@ -17,16 +17,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FLEXIS_LMDBSTORE_H
-#define FLEXIS_LMDBSTORE_H
+#ifndef LO_LMDBSTORE_H
+#define LO_LMDBSTORE_H
 
 #include "../kvstore.h"
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace lmdb {
 
-class KeyValueStore : public flexis::persistence::KeyValueStore
+class KeyValueStore : public lo::persistence::KeyValueStore
 {
 public:
   struct Options {
@@ -48,11 +48,11 @@ public:
 
     Factory(kv::StoreId storeId, std::string location, std::string name, Options options = Options())
         : storeId(storeId), location(location), name(name), options(options) {}
-    operator flexis::persistence::KeyValueStore *() const;
+    operator lo::persistence::KeyValueStore *() const;
   };
 
 protected:
-  KeyValueStore(kv::StoreId storeId) : flexis::persistence::KeyValueStore(storeId) {}
+  KeyValueStore(kv::StoreId storeId) : lo::persistence::KeyValueStore(storeId) {}
 };
 
 /**
@@ -73,7 +73,7 @@ struct StorageKey
 
 } //lmdb
 } //persistence
-} //flexis
+} //lo
 
 
-#endif //FLEXIS_LMDBSTORE_H
+#endif //LO_LMDBSTORE_H

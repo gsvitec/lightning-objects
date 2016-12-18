@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <sys/stat.h>
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace lmdb {
 
@@ -72,7 +72,7 @@ int key_compare(const MDB_val *a, const MDB_val *b)
 /**
  * class cursor backend. Iterates over all instances of a given set of classes
  */
-class ClassCursorHelper : public flexis::persistence::kv::CursorHelper
+class ClassCursorHelper : public lo::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -177,7 +177,7 @@ public:
 /**
  * cursor over collection chunks
  */
-class ChunkCursorImpl : public flexis::persistence::kv::ChunkCursor
+class ChunkCursorImpl : public lo::persistence::kv::ChunkCursor
 {
   const ClassId m_classId;
   const ObjectId m_objectId;
@@ -247,7 +247,7 @@ public:
 /**
  * collection cursor backend. Iterates over all elements in a top-level collection
  */
-class CollectionCursorHelper : public flexis::persistence::kv::CursorHelper
+class CollectionCursorHelper : public lo::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -337,7 +337,7 @@ public:
 /**
  * LMDB-based class cursor backend. Iterates over all elements in a vector (member vaŕiable)
  */
-class VectorCursorHelper : public flexis::persistence::kv::CursorHelper
+class VectorCursorHelper : public lo::persistence::kv::CursorHelper
 {
   ::lmdb::txn &m_txn;
   ::lmdb::dbi &m_dbi;
@@ -444,8 +444,8 @@ public:
  * LMDB-based Transaction
  */
 class Transaction
-    : public flexis::persistence::kv::WriteTransaction,
-      public flexis::persistence::kv::ExclusiveReadTransaction
+    : public lo::persistence::kv::WriteTransaction,
+      public lo::persistence::kv::ExclusiveReadTransaction
 {
 public:
   enum class Mode {read, write};
@@ -483,9 +483,9 @@ protected:
 
 public:
   Transaction(KeyValueStore &store, Mode mode, ::lmdb::env &env, ::lmdb::dbi &dbi, bool blockWrites=false)
-      : flexis::persistence::kv::Transaction(store),
-        flexis::persistence::kv::WriteTransaction(store, false),
-        flexis::persistence::kv::ExclusiveReadTransaction(store),
+      : lo::persistence::kv::Transaction(store),
+        lo::persistence::kv::WriteTransaction(store, false),
+        lo::persistence::kv::ExclusiveReadTransaction(store),
         m_mode(mode),
         m_env(env),
         m_dbi(dbi),
@@ -549,7 +549,7 @@ public:
   size_t getOptimalChunkSize(size_t reserved) override {return m_pageSize - reserved;};
 };
 
-KeyValueStore::Factory::operator flexis::persistence::KeyValueStore *() const
+KeyValueStore::Factory::operator lo::persistence::KeyValueStore *() const
 {
   try {
     return new KeyValueStoreImpl(storeId, location, name, options);
@@ -1230,4 +1230,4 @@ void KeyValueStoreImpl::registerTypes(std::unordered_map<std::string, kv::ClassI
 
 } //lmdb
 } //persistence
-} //flexis
+} //lo

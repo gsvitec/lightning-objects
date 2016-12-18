@@ -24,8 +24,8 @@
 #include <traits_impl.h>
 
 using namespace std;
-using namespace flexis::persistence;
-using namespace flexis::persistence::kv;
+using namespace lo::persistence;
+using namespace lo::persistence::kv;
 
 struct TestClass1 {
   string name;
@@ -42,7 +42,7 @@ struct TestClass2 {
   vector<shared_ptr<TestClass1>> test1_key;
 };
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace kv {
 

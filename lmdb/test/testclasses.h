@@ -17,8 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FLEXIS_TESTCLASSES_H
-#define FLEXIS_TESTCLASSES_H
+#ifndef LO_TESTCLASSES_H
+#define LO_TESTCLASSES_H
 
 #include <iostream>
 #include <string>
@@ -35,7 +35,7 @@
 
 using namespace std;
 
-namespace flexis {
+namespace lo {
 
 namespace Overlays {
 
@@ -128,7 +128,7 @@ using TimeCodeOverlayPtr = shared_ptr<TimeCodeOverlay>;
 namespace player {
 
 /**
- * describes a display configuration for a flexis source.
+ * describes a display configuration for a lo source.
  */
 struct SourceDisplayConfig
 {
@@ -163,14 +163,14 @@ struct SourceDisplayConfig
 };
 
 /**
- * holds data about one flexis source
+ * holds data about one lo source
  */
 struct SourceInfo {
   using Ptr = std::shared_ptr<SourceInfo>;
 
   unsigned sourceIndex;
   SourceDisplayConfig::Ptr displayConfig;
-  std::vector<flexis::Overlays::IFlexisOverlayPtr> userOverlays;
+  std::vector<lo::Overlays::IFlexisOverlayPtr> userOverlays;
 
   SourceInfo(unsigned sourceIndex = 0) : sourceIndex(sourceIndex) {}
   SourceInfo(SourceDisplayConfig::Ptr displayConfig)
@@ -179,7 +179,7 @@ struct SourceInfo {
 
 } //player
 
-} //flexis
+} //lo
 
 namespace lightningobjects {
 namespace valuetest {
@@ -350,7 +350,7 @@ struct SomethingWithAllValueKeyedProperties
 struct SomethingWithAnObjectIter
 {
   std::string name;
-  flexis::Overlays::ObjectHistoryPtr<FixedSizeObject> history;
+  lo::Overlays::ObjectHistoryPtr<FixedSizeObject> history;
 };
 
 template <typename V>
@@ -442,7 +442,7 @@ struct Wonderful {
   vector<shared_ptr<SomethingVirtual>> virtualsLazy;
 };
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace kv {
 
@@ -453,7 +453,7 @@ namespace kv {
  * whatever is done in the iterator
  */
 template<typename T>
-struct KVObjectHistoryImpl : public flexis::Overlays::ObjectHistory<T>, public IterPropertyBackend
+struct KVObjectHistoryImpl : public lo::Overlays::ObjectHistory<T>, public IterPropertyBackend
 {
   typename WriteTransaction::ObjectCollectionAppender<T>::Ptr appender;
   typename ObjectCollectionCursor<T>::Ptr loader;
@@ -818,40 +818,40 @@ struct ValueTraits<TestEnum> : public ValueTraitsEnum<TestEnum>
 };
 
 
-START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, r)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, g)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, b)
-  MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, a)
-END_MAPPING(flexis::Overlays::Colored2DPoint)
+START_MAPPING(lo::Overlays::Colored2DPoint, x, y, r, g, b, a)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, r)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, g)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, b)
+  MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, a)
+END_MAPPING(lo::Overlays::Colored2DPoint)
 
-START_MAPPING(flexis::Overlays::ColoredPolygon, pts, visible)
-  MAPPED_PROP(flexis::Overlays::ColoredPolygon, ObjectVectorPropertyEmbeddedAssign, flexis::Overlays::Colored2DPoint, pts)
-  MAPPED_PROP(flexis::Overlays::ColoredPolygon, ValuePropertyEmbeddedAssign, bool, visible)
-END_MAPPING(flexis::Overlays::ColoredPolygon)
+START_MAPPING(lo::Overlays::ColoredPolygon, pts, visible)
+  MAPPED_PROP(lo::Overlays::ColoredPolygon, ObjectVectorPropertyEmbeddedAssign, lo::Overlays::Colored2DPoint, pts)
+  MAPPED_PROP(lo::Overlays::ColoredPolygon, ValuePropertyEmbeddedAssign, bool, visible)
+END_MAPPING(lo::Overlays::ColoredPolygon)
 
-START_MAPPING_A(flexis::Overlays::IFlexisOverlay, name, userVisible, opacity, rangeIn, rangeOut)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, std::string, name)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, bool, userVisible)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, double, opacity)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeIn)
-  MAPPED_PROP(flexis::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeOut)
-END_MAPPING(flexis::Overlays::IFlexisOverlay)
+START_MAPPING_A(lo::Overlays::IFlexisOverlay, name, userVisible, opacity, rangeIn, rangeOut)
+  MAPPED_PROP(lo::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, std::string, name)
+  MAPPED_PROP(lo::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, bool, userVisible)
+  MAPPED_PROP(lo::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, double, opacity)
+  MAPPED_PROP(lo::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeIn)
+  MAPPED_PROP(lo::Overlays::IFlexisOverlay, ValuePropertyEmbeddedAssign, long, rangeOut)
+END_MAPPING(lo::Overlays::IFlexisOverlay)
 
-START_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlW)
-  MAPPED_PROP(flexis::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlH)
-END_MAPPING_SUB(flexis::Overlays::TestRectangularOverlay, flexis::Overlays::IFlexisOverlay)
+START_MAPPING_SUB(lo::Overlays::TestRectangularOverlay, lo::Overlays::IFlexisOverlay, ovlX, ovlY, ovlW, ovlH)
+  MAPPED_PROP(lo::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
+  MAPPED_PROP(lo::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
+  MAPPED_PROP(lo::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlW)
+  MAPPED_PROP(lo::Overlays::TestRectangularOverlay, ValuePropertyEmbeddedAssign, double, ovlH)
+END_MAPPING_SUB(lo::Overlays::TestRectangularOverlay, lo::Overlays::IFlexisOverlay)
 
-START_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay, ovlX, ovlY, fontSize)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
-  MAPPED_PROP(flexis::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, int, fontSize)
-END_MAPPING_SUB(flexis::Overlays::TimeCodeOverlay, flexis::Overlays::IFlexisOverlay)
+START_MAPPING_SUB(lo::Overlays::TimeCodeOverlay, lo::Overlays::IFlexisOverlay, ovlX, ovlY, fontSize)
+  MAPPED_PROP(lo::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlX)
+  MAPPED_PROP(lo::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, double, ovlY)
+  MAPPED_PROP(lo::Overlays::TimeCodeOverlay, ValuePropertyEmbeddedAssign, int, fontSize)
+END_MAPPING_SUB(lo::Overlays::TimeCodeOverlay, lo::Overlays::IFlexisOverlay)
 
 START_MAPPING_A(OtherThing, name, dvalue, enumtest)
   MAPPED_PROP(OtherThing, ValuePropertyEmbeddedAssign, std::string, name)
@@ -915,24 +915,24 @@ START_MAPPING(SomethingWithEmbbededObjectVectors, name, sweos, fsos, fsos2, fsos
   MAPPED_PROP(SomethingWithEmbbededObjectVectors, ObjectVectorPropertyEmbeddedAssign, VariableSizeObject, vsos)
 END_MAPPING(SomethingWithEmbbededObjectVectors)
 
-START_MAPPING(flexis::player::SourceDisplayConfig, sourceIndex, attachedIndex, attached, window_x, window_y, window_width, window_height)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, attachedIndex)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, bool, attached)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_x)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_y)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_width)
-  MAPPED_PROP(flexis::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_height)
-END_MAPPING(flexis::player::SourceDisplayConfig)
+START_MAPPING(lo::player::SourceDisplayConfig, sourceIndex, attachedIndex, attached, window_x, window_y, window_width, window_height)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, attachedIndex)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, bool, attached)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_x)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_y)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_width)
+  MAPPED_PROP(lo::player::SourceDisplayConfig, ValuePropertyEmbeddedAssign, unsigned, window_height)
+END_MAPPING(lo::player::SourceDisplayConfig)
 
-START_MAPPING(flexis::player::SourceInfo, sourceIndex, displayConfig, userOverlays)
-  MAPPED_PROP(flexis::player::SourceInfo, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
-  MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrPropertyAssign, flexis::player::SourceDisplayConfig, displayConfig)
-  MAPPED_PROP(flexis::player::SourceInfo, ObjectPtrVectorPropertyAssign, flexis::Overlays::IFlexisOverlay, userOverlays)
-END_MAPPING(flexis::player::SourceInfo)
+START_MAPPING(lo::player::SourceInfo, sourceIndex, displayConfig, userOverlays)
+  MAPPED_PROP(lo::player::SourceInfo, ValuePropertyEmbeddedAssign, unsigned, sourceIndex)
+  MAPPED_PROP(lo::player::SourceInfo, ObjectPtrPropertyAssign, lo::player::SourceDisplayConfig, displayConfig)
+  MAPPED_PROP(lo::player::SourceInfo, ObjectPtrVectorPropertyAssign, lo::Overlays::IFlexisOverlay, userOverlays)
+END_MAPPING(lo::player::SourceInfo)
 
 START_MAPPING(SomethingWithAnObjectIter, history)
-  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistoryImpl, flexis::Overlays::ObjectHistory, history)
+  MAPPED_PROP_ITER(SomethingWithAnObjectIter, CollectionIterPropertyAssign, FixedSizeObject, KVObjectHistoryImpl, lo::Overlays::ObjectHistory, history)
 END_MAPPING(SomethingWithAnObjectIter)
 
 START_MAPPING(SomethingWithAValueIter, values, datas)
@@ -1006,4 +1006,4 @@ END_MAPPING(RefCountingTest)
 }
 }
 }
-#endif //FLEXIS_TESTCLASSES_H
+#endif //LO_TESTCLASSES_H

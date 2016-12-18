@@ -38,17 +38,17 @@ static const char separator_char = '/';
 static const char * CLASSDATA = "classdata";
 static const char * CLASSMETA = "classmeta";
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace lmdb {
 int meta_dup_compare(const MDB_val *a, const MDB_val *b);
 int key_compare(const MDB_val *a, const MDB_val *b);
 }}}
 
-using namespace flexis::persistence::kv;
+using namespace lo::persistence::kv;
 
-static const unsigned ObjectId_off = flexis::persistence::kv::ClassId_sz;
-static const unsigned PropertyId_off = flexis::persistence::kv::ClassId_sz + flexis::persistence::kv::ObjectId_sz;
+static const unsigned ObjectId_off = lo::persistence::kv::ClassId_sz;
+static const unsigned PropertyId_off = lo::persistence::kv::ClassId_sz + lo::persistence::kv::ObjectId_sz;
 
 #define SK_CONSTR(nm, c, o, p) byte_t nm[StorageKey::byteSize]; *(ClassId *)nm = c; *(ObjectId *)(nm+ObjectId_off) = o; \
 *(PropertyId *)(nm+PropertyId_off) = p
@@ -58,9 +58,9 @@ static const unsigned PropertyId_off = flexis::persistence::kv::ClassId_sz + fle
 #define SK_PROPID(k) *(PropertyId *)(k+PropertyId_off)
 
 using namespace std;
-using namespace flexis::persistence::lmdb;
+using namespace lo::persistence::lmdb;
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 namespace kvdump {
 
@@ -319,8 +319,8 @@ struct DatabaseInfo
 }
 }
 
-using namespace flexis::persistence;
-using namespace flexis::persistence::kvdump;
+using namespace lo::persistence;
+using namespace lo::persistence::kvdump;
 
 std::ifstream::pos_type filesize(const char* filename)
 {
@@ -403,12 +403,12 @@ void dumpClassesMeta(DatabaseInfo &dbinfo, string opt)
     dbinfo.loadClassData(ci);
   }
 
-  std::function<bool(flexis::persistence::kvdump::ClassInfo, flexis::persistence::kvdump::ClassInfo)> sortByName =
-      [](flexis::persistence::kvdump::ClassInfo ci1, flexis::persistence::kvdump::ClassInfo ci2) ->bool {
+  std::function<bool(lo::persistence::kvdump::ClassInfo, lo::persistence::kvdump::ClassInfo)> sortByName =
+      [](lo::persistence::kvdump::ClassInfo ci1, lo::persistence::kvdump::ClassInfo ci2) ->bool {
         return ci1.name > ci2.name;
       };
-  std::function<bool(flexis::persistence::kvdump::ClassInfo, flexis::persistence::kvdump::ClassInfo)> sortByCount =
-      [](flexis::persistence::kvdump::ClassInfo ci1, flexis::persistence::kvdump::ClassInfo ci2) ->bool {
+  std::function<bool(lo::persistence::kvdump::ClassInfo, lo::persistence::kvdump::ClassInfo)> sortByCount =
+      [](lo::persistence::kvdump::ClassInfo ci1, lo::persistence::kvdump::ClassInfo ci2) ->bool {
         return ci1.num_objects > ci2.num_objects;
       };
 
@@ -482,7 +482,7 @@ void dumpCollectionInfo(DatabaseInfo &dbinfo, ObjectId collId)
 
 void dumpClassMeta(DatabaseInfo &dbinfo, ClassId classId)
 {
-  flexis::persistence::kvdump::ClassInfo *ci = nullptr;
+  lo::persistence::kvdump::ClassInfo *ci = nullptr;
   for(auto &cls : dbinfo.classInfos) {
     if(cls.classId == classId) {
       ci = &cls;
@@ -540,7 +540,7 @@ template <typename T> void dumpData(const char *tname, PropertyInfo &pi, ReadBuf
   cout << setw(15) << tname << " " << val;
 }
 
-void addSuperProperties(flexis::persistence::kvdump::ClassInfo *ci, DatabaseInfo &dbinfo, vector<PropertyInfo> &properties)
+void addSuperProperties(lo::persistence::kvdump::ClassInfo *ci, DatabaseInfo &dbinfo, vector<PropertyInfo> &properties)
 {
   for(auto &cls : dbinfo.classInfos) {
     if (binary_search(cls.subclasses.begin(), cls.subclasses.end(), ci->name)) {
@@ -552,7 +552,7 @@ void addSuperProperties(flexis::persistence::kvdump::ClassInfo *ci, DatabaseInfo
 
 void dumpClassObjects(DatabaseInfo &dbinfo, ClassId classId)
 {
-  flexis::persistence::kvdump::ClassInfo *ci = nullptr;
+  lo::persistence::kvdump::ClassInfo *ci = nullptr;
   for(auto &cls : dbinfo.classInfos) {
     if(cls.classId == classId) {
       ci = &cls;

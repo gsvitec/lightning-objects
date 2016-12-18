@@ -17,8 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef FLEXIS_FLEXIS_KVSTORE_H
-#define FLEXIS_FLEXIS_KVSTORE_H
+#ifndef LO_LO_KVSTORE_H
+#define LO_LO_KVSTORE_H
 
 #include <string>
 #include <typeinfo>
@@ -32,13 +32,13 @@
 
 #include "kvtraits.h"
 
-#define PROPERTY_ID(__cls, __name) flexis::persistence::kv::ClassTraits<__cls>::__name->id
-#define PROPERTY(__cls, __name) flexis::persistence::kv::ClassTraits<__cls>::__name
+#define PROPERTY_ID(__cls, __name) lo::persistence::kv::ClassTraits<__cls>::__name->id
+#define PROPERTY(__cls, __name) lo::persistence::kv::ClassTraits<__cls>::__name
 
-#define IS_SAME(cls, var, prop, other) flexis::persistence::kv::ClassTraits<cls>::same(\
-  var, flexis::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
+#define IS_SAME(cls, var, prop, other) lo::persistence::kv::ClassTraits<cls>::same(\
+  var, lo::persistence::kv::ClassTraits<cls>::PropertyIds::prop, other)
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 
 /**
@@ -3813,6 +3813,6 @@ struct ValueCollectionIterPropertyAssign : public PropertyAssign<O, std::shared_
 
 } //kv
 } //persistence
-} //flexis
+} //lo
 
-#endif //FLEXIS_FLEXIS_KVSTORE_H
+#endif //LO_LO_KVSTORE_H

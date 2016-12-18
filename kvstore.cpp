@@ -21,7 +21,7 @@
 #include <sstream>
 #include "kvstore.h"
 
-namespace flexis {
+namespace lo {
 namespace persistence {
 
 using namespace std;
@@ -651,4 +651,4 @@ void CollectionAppenderBase::close(bool erase)
 
 } //kv
 } //persistence
-} //flexis
+} //lo

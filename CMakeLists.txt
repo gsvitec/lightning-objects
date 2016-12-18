@@ -4,9 +4,9 @@ set(OBJECTS)
 
 add_subdirectory(lmdb)
 
-add_library(FlexisKVStore OBJECT ${SOURCE_FILES} ${OBJECTS})
+add_library(LightningObjectsDB OBJECT ${SOURCE_FILES} ${OBJECTS})
 
-target_include_directories(FlexisKVStore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(LightningObjectsDB PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 find_package(Doxygen)
 if(DOXYGEN_FOUND)

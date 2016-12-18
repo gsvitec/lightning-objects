@@ -22,14 +22,14 @@ are saved into the KV store.
 Here is a short mapping example:
 
 ~~~{.cpp}
-START_MAPPING(flexis::Overlays::Colored2DPoint, x, y, r, g, b, a)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, r)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, g)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, b)
-    MAPPED_PROP(flexis::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, a)
-END_MAPPING(flexis::Overlays::Colored2DPoint)
+START_MAPPING(lo::Overlays::Colored2DPoint, x, y, r, g, b, a)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, x)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, y)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, r)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, g)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, b)
+    MAPPED_PROP(lo::Overlays::Colored2DPoint, ValuePropertyEmbeddedAssign, float, a)
+END_MAPPING(lo::Overlays::Colored2DPoint)
 ~~~
 
 LO provides a convenient object-oriented API. Most runtime interaction is with transaction objects
